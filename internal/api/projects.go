@@ -1,0 +1,168 @@
+package api
+
+import (
+	"encoding/json"
+	"net/http"
+	"regexp"
+	"strings"
+
+	"github.com/abagile/tokyo3-vault/internal/model"
+	"github.com/abagile/tokyo3-vault/internal/store"
+)
+
+var slugRe = regexp.MustCompile(`^[a-z0-9][a-z0-9\-]{0,61}[a-z0-9]$`)
+
+type projectResponse struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Slug      string `json:"slug"`
+	CreatedAt string `json:"created_at"`
+}
+
+type createProjectRequest struct {
+	Name string `json:"name"`
+	Slug string `json:"slug"`
+}
+
+// handleListProjects returns projects the token's user is a member of.
+// Scoped machine tokens are blocked (they can't enumerate projects globally).
+func (s *Server) handleListProjects(w http.ResponseWriter, r *http.Request) {
+	tok := tokenFromCtx(r)
+	if !s.requireUnscoped(w, tok) {
+		return
+	}
+	var projects []*model.Project
+	var err error
+	if tok.UserID != nil {
+		projects, err = s.store.ListProjectsByMember(r.Context(), *tok.UserID)
+	} else {
+		projects, err = s.store.ListProjects(r.Context())
+	}
+	if err != nil {
+		s.log.Error("list projects", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	resp := make([]projectResponse, 0, len(projects))
+	for _, p := range projects {
+		resp = append(resp, projectToResponse(p))
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// handleCreateProject creates a project and automatically adds the caller as owner.
+func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
+	tok := tokenFromCtx(r)
+	if !s.requireUnscoped(w, tok) {
+		return
+	}
+	if !s.requireWritable(w, tok) {
+		return
+	}
+	var req createProjectRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	req.Name = strings.TrimSpace(req.Name)
+	if req.Slug == "" {
+		req.Slug = toSlug(req.Name)
+	}
+	req.Slug = strings.ToLower(strings.TrimSpace(req.Slug))
+
+	if req.Name == "" {
+		writeError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	if !slugRe.MatchString(req.Slug) {
+		writeError(w, http.StatusBadRequest, "slug must be lowercase alphanumeric with hyphens (2–63 chars)")
+		return
+	}
+
+	p, err := s.store.CreateProject(r.Context(), req.Name, req.Slug)
+	if err == store.ErrConflict {
+		writeError(w, http.StatusConflict, "project name or slug already exists")
+		return
+	}
+	if err != nil {
+		s.log.Error("create project", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	// Auto-add the creating user as owner.
+	if tok.UserID != nil {
+		if err := s.store.AddProjectMember(r.Context(), p.ID, *tok.UserID, model.RoleOwner); err != nil {
+			s.log.Error("add project owner", "err", err)
+			// Non-fatal: project exists, membership can be repaired. Return success.
+		}
+	}
+
+	s.logAudit(r, ActionProjectCreate, p.ID, p.Slug)
+	writeJSON(w, http.StatusCreated, projectToResponse(p))
+}
+
+func (s *Server) handleGetProject(w http.ResponseWriter, r *http.Request) {
+	slug := r.PathValue("project")
+	p, err := s.store.GetProject(r.Context(), slug)
+	if err == store.ErrNotFound {
+		writeError(w, http.StatusNotFound, "project not found")
+		return
+	}
+	if err != nil {
+		s.log.Error("get project", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if !s.authorize(w, r, tokenFromCtx(r), p.ID, "") {
+		return
+	}
+	writeJSON(w, http.StatusOK, projectToResponse(p))
+}
+
+// handleDeleteProject allows only the project owner (a user, not a machine token) to delete.
+func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
+	tok := tokenFromCtx(r)
+	slug := r.PathValue("project")
+	p, err := s.store.GetProject(r.Context(), slug)
+	if err == store.ErrNotFound {
+		writeError(w, http.StatusNotFound, "project not found")
+		return
+	}
+	if err != nil {
+		s.log.Error("get project", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if !s.requireOwner(w, r, tok, p.ID) {
+		return
+	}
+	if err := s.store.DeleteProject(r.Context(), slug); err != nil {
+		s.log.Error("delete project", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	s.logAudit(r, ActionProjectDelete, "", slug)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// toSlug converts a name to a URL-safe slug.
+func toSlug(name string) string {
+	s := strings.ToLower(strings.TrimSpace(name))
+	s = regexp.MustCompile(`[^a-z0-9]+`).ReplaceAllString(s, "-")
+	s = strings.Trim(s, "-")
+	if len(s) < 2 {
+		s = s + "x"
+	}
+	if len(s) > 63 {
+		s = s[:63]
+	}
+	return s
+}
+
+func projectToResponse(p *model.Project) projectResponse {
+	return projectResponse{
+		ID: p.ID, Name: p.Name, Slug: p.Slug,
+		CreatedAt: p.CreatedAt.Format("2006-01-02T15:04:05Z"),
+	}
+}

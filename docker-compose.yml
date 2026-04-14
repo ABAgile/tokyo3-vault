@@ -1,0 +1,78 @@
+# docker-compose.yml — production-style deployment with Litestream S3 replication.
+#
+# Required env vars (set in shell or .env file):
+#   VAULT_MASTER_KEY        64-char hex key (vault keygen)
+#   LITESTREAM_S3_BUCKET    S3 bucket name
+#   AWS_REGION              e.g. us-east-1
+#
+# Auth for S3 — choose one:
+#   a) IAM role attached to the EC2 instance (preferred, no keys needed)
+#   b) Set AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY in the env
+#
+# To use Postgres instead of SQLite+Litestream, see the postgres profile below.
+#
+# Usage:
+#   docker compose up -d                    # SQLite + Litestream
+#   docker compose --profile postgres up -d # Postgres
+
+services:
+  vaultd:
+    build:
+      context: .
+      args:
+        VERSION: ${VERSION:-dev}
+        COMMIT:  ${COMMIT:-unknown}
+    image: abagile/vault:${VERSION:-latest}
+    ports:
+      - "${VAULT_PORT:-8080}:8080"
+    environment:
+      VAULT_MASTER_KEY:       ${VAULT_MASTER_KEY:?VAULT_MASTER_KEY is required}
+      VAULT_DB_PATH:          /data/vault.db
+      VAULT_ADDR:             :8080
+      LITESTREAM_S3_BUCKET:   ${LITESTREAM_S3_BUCKET:-}
+      AWS_REGION:             ${AWS_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID:      ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY:  ${AWS_SECRET_ACCESS_KEY:-}
+    volumes:
+      - vault-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/api/v1/projects"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Postgres profile — run with: docker compose --profile postgres up -d
+  db:
+    profiles: [postgres]
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER:     vault
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required for postgres profile}
+      POSTGRES_DB:       vault
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  vaultd-postgres:
+    profiles: [postgres]
+    build:
+      context: .
+      args:
+        VERSION: ${VERSION:-dev}
+    image: abagile/vault:${VERSION:-latest}
+    ports:
+      - "${VAULT_PORT:-8080}:8080"
+    environment:
+      VAULT_MASTER_KEY:    ${VAULT_MASTER_KEY:?VAULT_MASTER_KEY is required}
+      VAULT_DATABASE_URL:  postgres://vault:${POSTGRES_PASSWORD}@db:5432/vault
+      VAULT_ADDR:          :8080
+    entrypoint: ["/usr/local/bin/vaultd"]
+    depends_on:
+      - db
+    restart: unless-stopped
+
+volumes:
+  vault-data:
+  postgres-data:

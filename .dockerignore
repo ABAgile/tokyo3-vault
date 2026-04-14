@@ -1,0 +1,8 @@
+bin/
+*.db
+*.db-shm
+*.db-wal
+.dev.env
+.git/
+.gitignore
+vault-dev.db

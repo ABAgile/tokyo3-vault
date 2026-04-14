@@ -1,0 +1,580 @@
+package api
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"regexp"
+	"strings"
+
+	"github.com/abagile/tokyo3-vault/internal/crypto"
+	"github.com/abagile/tokyo3-vault/internal/dotenv"
+	"github.com/abagile/tokyo3-vault/internal/model"
+	"github.com/abagile/tokyo3-vault/internal/store"
+)
+
+var keyRe = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
+
+// maskValue returns the first 3 characters of v followed by "...", or just "..."
+// for values shorter than 3 characters. Used in audit log metadata.
+func maskValue(v string) string {
+	const n = 3
+	if len(v) <= n {
+		return "..."
+	}
+	return v[:n] + "..."
+}
+
+// secretAuditMeta builds the JSON metadata string for secret audit entries.
+func secretAuditMeta(maskedValue string) string {
+	b, _ := json.Marshal(map[string]string{"value": maskedValue})
+	return string(b)
+}
+
+type secretResponse struct {
+	Key       string `json:"key"`
+	Value     string `json:"value"`
+	Version   int    `json:"version"`
+	UpdatedAt string `json:"updated_at"`
+}
+
+type secretMeta struct {
+	Key       string `json:"key"`
+	Version   int    `json:"version"`
+	UpdatedAt string `json:"updated_at"`
+}
+
+type setSecretRequest struct {
+	Value string `json:"value"`
+}
+
+type versionResponse struct {
+	ID        string  `json:"id"`
+	Version   int     `json:"version"`
+	CreatedAt string  `json:"created_at"`
+	CreatedBy *string `json:"created_by,omitempty"`
+}
+
+// resolveProjectEnv looks up project + environment from path values and enforces token scope.
+func (s *Server) resolveProjectEnv(r *http.Request, w http.ResponseWriter) (projectID, envID string, ok bool) {
+	p, err := s.store.GetProject(r.Context(), r.PathValue("project"))
+	if err == store.ErrNotFound {
+		writeError(w, http.StatusNotFound, "project not found")
+		return "", "", false
+	}
+	if err != nil {
+		s.log.Error("get project", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return "", "", false
+	}
+	e, err := s.store.GetEnvironment(r.Context(), p.ID, r.PathValue("env"))
+	if err == store.ErrNotFound {
+		writeError(w, http.StatusNotFound, "environment not found")
+		return "", "", false
+	}
+	if err != nil {
+		s.log.Error("get env", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return "", "", false
+	}
+	if !s.authorize(w, r, tokenFromCtx(r), p.ID, e.ID) {
+		return "", "", false
+	}
+	return p.ID, e.ID, true
+}
+
+func (s *Server) handleListSecrets(w http.ResponseWriter, r *http.Request) {
+	projectID, envID, ok := s.resolveProjectEnv(r, w)
+	if !ok {
+		return
+	}
+	secrets, versions, err := s.store.ListSecrets(r.Context(), projectID, envID)
+	if err != nil {
+		s.log.Error("list secrets", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	resp := make([]secretMeta, 0, len(secrets))
+	for i, sec := range secrets {
+		item := secretMeta{Key: sec.Key, UpdatedAt: sec.UpdatedAt.Format("2006-01-02T15:04:05Z")}
+		if versions[i] != nil {
+			item.Version = versions[i].Version
+		}
+		resp = append(resp, item)
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleGetSecret(w http.ResponseWriter, r *http.Request) {
+	projectID, envID, ok := s.resolveProjectEnv(r, w)
+	if !ok {
+		return
+	}
+	key := strings.ToUpper(r.PathValue("key"))
+	sec, sv, err := s.store.GetSecret(r.Context(), projectID, envID, key)
+	if err == store.ErrNotFound {
+		writeError(w, http.StatusNotFound, "secret not found")
+		return
+	}
+	if err != nil {
+		s.log.Error("get secret", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if sv == nil {
+		writeError(w, http.StatusNotFound, "secret has no versions")
+		return
+	}
+	plaintext, err := crypto.DecryptSecret(s.kek, sv.EncryptedDEK, sv.EncryptedValue)
+	if err != nil {
+		s.log.Error("decrypt secret", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	s.logAuditMeta(r, ActionSecretGet, projectID, sec.Key, secretAuditMeta(maskValue(string(plaintext))))
+	writeJSON(w, http.StatusOK, secretResponse{
+		Key:       sec.Key,
+		Value:     string(plaintext),
+		Version:   sv.Version,
+		UpdatedAt: sec.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+	})
+}
+
+func (s *Server) handleSetSecret(w http.ResponseWriter, r *http.Request) {
+	projectID, envID, ok := s.resolveProjectEnv(r, w)
+	if !ok {
+		return
+	}
+	key := strings.ToUpper(r.PathValue("key"))
+	if key == "" {
+		// POST to /secrets — key comes from body
+		var body struct {
+			Key   string `json:"key"`
+			Value string `json:"value"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON")
+			return
+		}
+		key = strings.ToUpper(strings.TrimSpace(body.Key))
+		if key == "" {
+			writeError(w, http.StatusBadRequest, "key is required")
+			return
+		}
+		if !keyRe.MatchString(key) {
+			writeError(w, http.StatusBadRequest, "key must be uppercase alphanumeric with underscores")
+			return
+		}
+		s.writeSetSecret(w, r, projectID, envID, key, body.Value)
+		return
+	}
+	// PUT to /secrets/{key}
+	if !keyRe.MatchString(key) {
+		writeError(w, http.StatusBadRequest, "key must be uppercase alphanumeric with underscores")
+		return
+	}
+	var req setSecretRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	s.writeSetSecret(w, r, projectID, envID, key, req.Value)
+}
+
+func (s *Server) writeSetSecret(w http.ResponseWriter, r *http.Request, projectID, envID, key, value string) {
+	tok := tokenFromCtx(r)
+	if !s.requireWrite(w, r, tok, projectID) {
+		return
+	}
+	var createdBy *string
+	if tok != nil {
+		createdBy = &tok.ID
+	}
+
+	encVal, encDEK, err := crypto.EncryptSecret(s.kek, []byte(value))
+	if err != nil {
+		s.log.Error("encrypt secret", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	sv, err := s.store.SetSecret(r.Context(), projectID, envID, key, nil, encVal, encDEK, createdBy)
+	if err != nil {
+		s.log.Error("set secret", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	s.logAudit(r, ActionSecretSet, projectID, key)
+	writeJSON(w, http.StatusOK, versionResponse{
+		ID:        sv.ID,
+		Version:   sv.Version,
+		CreatedAt: sv.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		CreatedBy: sv.CreatedBy,
+	})
+}
+
+func (s *Server) handleDeleteSecret(w http.ResponseWriter, r *http.Request) {
+	projectID, envID, ok := s.resolveProjectEnv(r, w)
+	if !ok {
+		return
+	}
+	if !s.requireWrite(w, r, tokenFromCtx(r), projectID) {
+		return
+	}
+	key := strings.ToUpper(r.PathValue("key"))
+	if err := s.store.DeleteSecret(r.Context(), projectID, envID, key); err == store.ErrNotFound {
+		writeError(w, http.StatusNotFound, "secret not found")
+		return
+	} else if err != nil {
+		s.log.Error("delete secret", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	s.logAudit(r, ActionSecretDelete, projectID, key)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleListSecretVersions(w http.ResponseWriter, r *http.Request) {
+	projectID, envID, ok := s.resolveProjectEnv(r, w)
+	if !ok {
+		return
+	}
+	key := strings.ToUpper(r.PathValue("key"))
+	sec, _, err := s.store.GetSecret(r.Context(), projectID, envID, key)
+	if err == store.ErrNotFound {
+		writeError(w, http.StatusNotFound, "secret not found")
+		return
+	}
+	if err != nil {
+		s.log.Error("get secret", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	versions, err := s.store.ListSecretVersions(r.Context(), sec.ID)
+	if err != nil {
+		s.log.Error("list versions", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	resp := make([]versionResponse, 0, len(versions))
+	for _, sv := range versions {
+		resp = append(resp, versionToResponse(sv))
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleRollbackSecret(w http.ResponseWriter, r *http.Request) {
+	projectID, envID, ok := s.resolveProjectEnv(r, w)
+	if !ok {
+		return
+	}
+	if !s.requireWrite(w, r, tokenFromCtx(r), projectID) {
+		return
+	}
+	key := strings.ToUpper(r.PathValue("key"))
+
+	sec, _, err := s.store.GetSecret(r.Context(), projectID, envID, key)
+	if err == store.ErrNotFound {
+		writeError(w, http.StatusNotFound, "secret not found")
+		return
+	}
+	if err != nil {
+		s.log.Error("get secret", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	var body struct {
+		VersionID string `json:"version_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.VersionID == "" {
+		writeError(w, http.StatusBadRequest, "version_id is required")
+		return
+	}
+
+	// Verify the version belongs to this secret.
+	versions, err := s.store.ListSecretVersions(r.Context(), sec.ID)
+	if err != nil {
+		s.log.Error("list versions", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	found := false
+	var targetVersion int
+	for _, v := range versions {
+		if v.ID == body.VersionID {
+			found = true
+			targetVersion = v.Version
+			break
+		}
+	}
+	if !found {
+		writeError(w, http.StatusNotFound, "version not found for this secret")
+		return
+	}
+
+	if err := s.store.RollbackSecret(r.Context(), sec.ID, body.VersionID); err != nil {
+		s.log.Error("rollback secret", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	s.logAudit(r, ActionSecretRollback, projectID, key)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"key":        key,
+		"version_id": body.VersionID,
+		"version":    targetVersion,
+	})
+}
+
+type importRequest struct {
+	FromProject string   `json:"from_project"`
+	FromEnv     string   `json:"from_env"`
+	Overwrite   bool     `json:"overwrite"`
+	Keys        []string `json:"keys"` // empty = all keys
+}
+
+func (s *Server) handleImportSecrets(w http.ResponseWriter, r *http.Request) {
+	dstProjectID, dstEnvID, ok := s.resolveProjectEnv(r, w)
+	if !ok {
+		return
+	}
+	if !s.requireWrite(w, r, tokenFromCtx(r), dstProjectID) {
+		return
+	}
+
+	var req importRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if req.FromProject == "" || req.FromEnv == "" {
+		writeError(w, http.StatusBadRequest, "from_project and from_env are required")
+		return
+	}
+
+	// Resolve source project + env and verify token has access.
+	srcProjectID, srcEnvID, ok2 := s.resolveSrcProjectEnv(w, r, req.FromProject, req.FromEnv)
+	if !ok2 {
+		return
+	}
+
+	srcSecrets, srcVersions, err := s.store.ListSecrets(r.Context(), srcProjectID, srcEnvID)
+	if err != nil {
+		s.log.Error("list src secrets", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	keyFilter := make(map[string]bool, len(req.Keys))
+	for _, k := range req.Keys {
+		keyFilter[strings.ToUpper(k)] = true
+	}
+
+	createdBy := tokenCreatedBy(tokenFromCtx(r))
+	imported, skipped := 0, 0
+	for i, sec := range srcSecrets {
+		if !inKeyFilter(keyFilter, sec.Key) {
+			continue
+		}
+		if srcVersions[i] == nil {
+			continue
+		}
+		did, err := s.copySecret(r, sec, srcVersions[i], dstProjectID, dstEnvID, createdBy, req.Overwrite)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if did {
+			imported++
+		} else {
+			skipped++
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"imported": imported,
+		"skipped":  skipped,
+	})
+}
+
+// inKeyFilter reports whether key should be copied. An empty filter means "all keys".
+func inKeyFilter(filter map[string]bool, key string) bool {
+	return len(filter) == 0 || filter[key]
+}
+
+// tokenCreatedBy returns a pointer to the token's ID, or nil if tok is nil.
+func tokenCreatedBy(tok *model.Token) *string {
+	if tok == nil {
+		return nil
+	}
+	return &tok.ID
+}
+
+// resolveSrcProjectEnv looks up the source project and environment for an
+// import request, writes an HTTP error and returns false on any failure.
+func (s *Server) resolveSrcProjectEnv(w http.ResponseWriter, r *http.Request, fromProject, fromEnv string) (projectID, envID string, ok bool) {
+	srcProject, err := s.store.GetProject(r.Context(), fromProject)
+	if err == store.ErrNotFound {
+		writeError(w, http.StatusNotFound, "source project not found")
+		return "", "", false
+	}
+	if err != nil {
+		s.log.Error("get src project", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return "", "", false
+	}
+	srcEnv, err := s.store.GetEnvironment(r.Context(), srcProject.ID, fromEnv)
+	if err == store.ErrNotFound {
+		writeError(w, http.StatusNotFound, "source environment not found")
+		return "", "", false
+	}
+	if err != nil {
+		s.log.Error("get src env", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return "", "", false
+	}
+	if !s.authorize(w, r, tokenFromCtx(r), srcProject.ID, srcEnv.ID) {
+		return "", "", false
+	}
+	return srcProject.ID, srcEnv.ID, true
+}
+
+// copySecret decrypts one source secret and writes it to the destination env.
+// Returns (true, nil) when written, (false, nil) when skipped (already exists
+// and overwrite is false), or (false, err) on failure.
+func (s *Server) copySecret(r *http.Request, sec *model.Secret, sv *model.SecretVersion, dstProjectID, dstEnvID string, createdBy *string, overwrite bool) (bool, error) {
+	if !overwrite {
+		if _, _, err := s.store.GetSecret(r.Context(), dstProjectID, dstEnvID, sec.Key); err == nil {
+			return false, nil
+		}
+	}
+	plaintext, err := crypto.DecryptSecret(s.kek, sv.EncryptedDEK, sv.EncryptedValue)
+	if err != nil {
+		s.log.Error("decrypt src secret", "key", sec.Key, "err", err)
+		return false, fmt.Errorf("failed to decrypt source secret %s", sec.Key)
+	}
+	encVal, encDEK, err := crypto.EncryptSecret(s.kek, plaintext)
+	if err != nil {
+		s.log.Error("encrypt dst secret", "key", sec.Key, "err", err)
+		return false, fmt.Errorf("internal error")
+	}
+	comment := sec.Comment
+	if _, err := s.store.SetSecret(r.Context(), dstProjectID, dstEnvID, sec.Key, &comment, encVal, encDEK, createdBy); err != nil {
+		s.log.Error("set dst secret", "key", sec.Key, "err", err)
+		return false, fmt.Errorf("internal error")
+	}
+	s.logAuditMeta(r, ActionSecretImport, dstProjectID, sec.Key, secretAuditMeta(maskValue(string(plaintext))))
+	return true, nil
+}
+
+func versionToResponse(sv *model.SecretVersion) versionResponse {
+	return versionResponse{
+		ID:        sv.ID,
+		Version:   sv.Version,
+		CreatedAt: sv.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		CreatedBy: sv.CreatedBy,
+	}
+}
+
+// handleUploadDotenv parses a raw .env file body and upserts its secrets.
+// Comments and blank lines preceding each key are stored alongside it.
+// Query param: overwrite=true skips the duplicate check (default: skip existing).
+func (s *Server) handleUploadDotenv(w http.ResponseWriter, r *http.Request) {
+	projectID, envID, ok := s.resolveProjectEnv(r, w)
+	if !ok {
+		return
+	}
+	if !s.requireWrite(w, r, tokenFromCtx(r), projectID) {
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, 10<<20)) // 10 MiB limit
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "failed to read body")
+		return
+	}
+
+	entries, err := dotenv.Parse(string(body))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid .env file: "+err.Error())
+		return
+	}
+
+	overwrite := r.URL.Query().Get("overwrite") == "true"
+
+	tok := tokenFromCtx(r)
+	var createdBy *string
+	if tok != nil {
+		createdBy = &tok.ID
+	}
+
+	uploaded, skipped := 0, 0
+	for _, entry := range entries {
+		if !keyRe.MatchString(entry.Key) {
+			writeError(w, http.StatusBadRequest, "invalid key: "+entry.Key)
+			return
+		}
+		if !overwrite {
+			if _, _, err := s.store.GetSecret(r.Context(), projectID, envID, entry.Key); err == nil {
+				skipped++
+				continue
+			}
+		}
+		encVal, encDEK, err := crypto.EncryptSecret(s.kek, []byte(entry.Value))
+		if err != nil {
+			s.log.Error("encrypt secret", "key", entry.Key, "err", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		comment := entry.Comment
+		if _, err := s.store.SetSecret(r.Context(), projectID, envID, entry.Key, &comment, encVal, encDEK, createdBy); err != nil {
+			s.log.Error("set secret", "key", entry.Key, "err", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		s.logAuditMeta(r, ActionSecretDotenvUpload, projectID, entry.Key, secretAuditMeta(maskValue(entry.Value)))
+		uploaded++
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"uploaded": uploaded, "skipped": skipped})
+}
+
+// handleDownloadDotenv decrypts all secrets for a project+env and returns them
+// as a plain-text .env file, preserving insertion order and stored comments.
+func (s *Server) handleDownloadDotenv(w http.ResponseWriter, r *http.Request) {
+	projectID, envID, ok := s.resolveProjectEnv(r, w)
+	if !ok {
+		return
+	}
+
+	secrets, versions, err := s.store.ListSecrets(r.Context(), projectID, envID)
+	if err != nil {
+		s.log.Error("list secrets", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	entries := make([]dotenv.Entry, 0, len(secrets))
+	for i, sec := range secrets {
+		sv := versions[i]
+		if sv == nil {
+			continue
+		}
+		plaintext, err := crypto.DecryptSecret(s.kek, sv.EncryptedDEK, sv.EncryptedValue)
+		if err != nil {
+			s.log.Error("decrypt secret", "key", sec.Key, "err", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		s.logAuditMeta(r, ActionSecretDotenvDownload, projectID, sec.Key, secretAuditMeta(maskValue(string(plaintext))))
+		entries = append(entries, dotenv.Entry{
+			Comment: sec.Comment,
+			Key:     sec.Key,
+			Value:   string(plaintext),
+		})
+	}
+
+	content := dotenv.Serialize(entries)
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(content))
+}

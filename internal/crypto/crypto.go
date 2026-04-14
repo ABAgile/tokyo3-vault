@@ -1,0 +1,123 @@
+// Package crypto provides AES-256-GCM encryption using a DEK+KEK model.
+//
+// Each secret version gets its own random Data Encryption Key (DEK).
+// The DEK is wrapped (encrypted) by the master Key Encryption Key (KEK).
+// This means rotating the KEK only requires re-wrapping DEKs, never
+// re-encrypting secret values themselves.
+package crypto
+
+import (
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
+	"io"
+)
+
+// ParseKEK decodes a 64-hex-character string into a 32-byte key.
+// The KEK is typically loaded from the VAULT_MASTER_KEY environment variable.
+func ParseKEK(hexKey string) ([]byte, error) {
+	b, err := hex.DecodeString(hexKey)
+	if err != nil {
+		return nil, fmt.Errorf("invalid master key encoding: %w", err)
+	}
+	if len(b) != 32 {
+		return nil, fmt.Errorf("master key must be 32 bytes (64 hex chars), got %d bytes", len(b))
+	}
+	return b, nil
+}
+
+// GenerateKEK returns a random 32-byte key encoded as a 64-char hex string,
+// suitable for use as VAULT_MASTER_KEY.
+func GenerateKEK() (string, error) {
+	b := make([]byte, 32)
+	if _, err := io.ReadFull(rand.Reader, b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+// seal encrypts plaintext with key using AES-256-GCM.
+// Output format: nonce || ciphertext+tag (nonce is prepended).
+func seal(key, plaintext []byte) ([]byte, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, fmt.Errorf("new cipher: %w", err)
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("new gcm: %w", err)
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return nil, fmt.Errorf("generate nonce: %w", err)
+	}
+	return gcm.Seal(nonce, nonce, plaintext, nil), nil
+}
+
+// open decrypts ciphertext (nonce || ciphertext+tag) with key.
+func open(key, ciphertext []byte) ([]byte, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, fmt.Errorf("new cipher: %w", err)
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("new gcm: %w", err)
+	}
+	if len(ciphertext) < gcm.NonceSize() {
+		return nil, fmt.Errorf("ciphertext too short")
+	}
+	nonce, ct := ciphertext[:gcm.NonceSize()], ciphertext[gcm.NonceSize():]
+	plaintext, err := gcm.Open(nil, nonce, ct, nil)
+	if err != nil {
+		return nil, fmt.Errorf("decrypt: %w", err)
+	}
+	return plaintext, nil
+}
+
+// EncryptSecret encrypts plaintext under a fresh random DEK, then wraps the DEK
+// under the KEK. Returns (encryptedValue, encryptedDEK, error).
+func EncryptSecret(kek []byte, plaintext []byte) (encryptedValue, encryptedDEK []byte, err error) {
+	dek := make([]byte, 32)
+	if _, err = io.ReadFull(rand.Reader, dek); err != nil {
+		return nil, nil, fmt.Errorf("generate dek: %w", err)
+	}
+	encryptedValue, err = seal(dek, plaintext)
+	if err != nil {
+		return nil, nil, fmt.Errorf("seal value: %w", err)
+	}
+	encryptedDEK, err = seal(kek, dek)
+	if err != nil {
+		return nil, nil, fmt.Errorf("seal dek: %w", err)
+	}
+	return encryptedValue, encryptedDEK, nil
+}
+
+// DecryptSecret unwraps the DEK using the KEK, then decrypts the value.
+func DecryptSecret(kek, encryptedDEK, encryptedValue []byte) ([]byte, error) {
+	dek, err := open(kek, encryptedDEK)
+	if err != nil {
+		return nil, fmt.Errorf("unwrap dek: %w", err)
+	}
+	plaintext, err := open(dek, encryptedValue)
+	if err != nil {
+		return nil, fmt.Errorf("decrypt value: %w", err)
+	}
+	return plaintext, nil
+}
+
+// RewrapDEK decrypts a DEK under oldKEK and re-encrypts it under newKEK.
+// Use this when rotating the master key without re-encrypting secret values.
+func RewrapDEK(oldKEK, newKEK, encryptedDEK []byte) ([]byte, error) {
+	dek, err := open(oldKEK, encryptedDEK)
+	if err != nil {
+		return nil, fmt.Errorf("unwrap dek: %w", err)
+	}
+	newEncryptedDEK, err := seal(newKEK, dek)
+	if err != nil {
+		return nil, fmt.Errorf("rewrap dek: %w", err)
+	}
+	return newEncryptedDEK, nil
+}
