@@ -21,16 +21,12 @@ BIN_DIR     := bin
 VAULTD_BIN  := $(BIN_DIR)/vaultd
 VAULT_BIN   := $(BIN_DIR)/vault
 
-# Version stamping: use git tag if available, otherwise commit hash.
+# Version/Commit/BuildTime are all read from embedded build info — no ldflags needed.
 GIT_TAG     := $(shell git describe --tags --exact-match 2>/dev/null || true)
 GIT_COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 VERSION     := $(if $(GIT_TAG),$(GIT_TAG),dev-$(GIT_COMMIT))
-BUILD_TIME  := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 
-LDFLAGS := -s -w \
-  -X '$(MODULE)/internal/build.Version=$(VERSION)' \
-  -X '$(MODULE)/internal/build.Commit=$(GIT_COMMIT)' \
-  -X '$(MODULE)/internal/build.BuildTime=$(BUILD_TIME)'
+LDFLAGS := -s -w
 
 GO      := go
 GOFLAGS :=
