@@ -61,9 +61,16 @@ Example:
 				injected = append(injected, m.Key+"="+s.Value)
 			}
 
-			// Build env: current env + injected secrets (secrets win on conflict).
-			env := os.Environ()
-			env = append(env, injected...)
+			// Build env: current env, strip vault CLI vars, inject secrets.
+			// Stripping ensures VAULT_TOKEN and VAULT_SERVER_URL are never
+			// inherited by the child even if they were set to drive this command.
+			filtered := make([]string, 0, len(os.Environ()))
+			for _, kv := range os.Environ() {
+				if !strings.HasPrefix(kv, "VAULT_TOKEN=") && !strings.HasPrefix(kv, "VAULT_SERVER_URL=") {
+					filtered = append(filtered, kv)
+				}
+			}
+			env := append(filtered, injected...)
 
 			// Resolve the binary path.
 			binary, err := exec.LookPath(args[0])

@@ -383,6 +383,8 @@ vault run --env production -- ./bin/migrate
 
 Secrets override any existing environment variables with the same name. The child process replaces the vault process (Unix exec).
 
+`VAULT_TOKEN` and `VAULT_SERVER_URL` are always stripped from the child's environment — even if they were used to authenticate this command. The child process receives only the injected secrets, never vault credentials.
+
 #### `vault export`
 
 Print all secrets as shell `export` statements. Useful for sourcing into a shell session.
@@ -642,9 +644,34 @@ Expired tokens are rejected at the server with a clear error. Common durations: 
 
 ### Usage
 
-Pass the token via the `VAULT_TOKEN` environment variable or store it in `~/.vault/config` by running `vault login` with the token as the password. In CI, inject it as a secret environment variable:
+The CLI resolves credentials in this order:
+
+1. **`VAULT_TOKEN` + `VAULT_SERVER_URL` environment variables** — takes precedence over the config file. Intended for machine and CI contexts where the token must never be written to disk.
+2. **`~/.vault/config`** — written by `vault login`, used for interactive sessions.
+
+**CI/CD (GitHub Actions example):**
 
 ```sh
-# GitHub Actions example
-VAULT_TOKEN=${{ secrets.VAULT_TOKEN }} vault run -- ./deploy.sh
+VAULT_TOKEN=${{ secrets.VAULT_TOKEN }} \
+VAULT_SERVER_URL=https://vault.example.com \
+vault run -- ./deploy.sh
 ```
+
+**EC2 with IAM role (recommended for production):**
+
+Store the machine token in AWS SSM Parameter Store as a `SecureString`, then fetch it at startup using the instance's IAM role. The token is never written to disk and is automatically stripped from the child process by `vault run`.
+
+```sh
+# startup script
+export VAULT_TOKEN=$(aws ssm get-parameter \
+  --name /myapp/prod/vault-token \
+  --with-decryption \
+  --query Parameter.Value \
+  --output text)
+export VAULT_SERVER_URL=https://vault.example.com
+
+exec vault run -- myapp
+# child sees DB_PASSWORD, API_KEY, etc — never VAULT_TOKEN
+```
+
+The IAM role attached to the EC2 instance needs `ssm:GetParameter` and `kms:Decrypt` on the relevant SSM parameter and KMS key. No static credentials are stored anywhere on the instance.

@@ -119,8 +119,17 @@ func SaveRepo(r Repo) error {
 	return toml.NewEncoder(f).Encode(r)
 }
 
-// MustToken returns the token from global config, exiting with a message if absent.
+// MustToken returns auth config, preferring VAULT_TOKEN+VAULT_SERVER_URL env vars
+// over ~/.vault/config. The env var path is intended for machine/CI contexts where
+// the token is injected at runtime and must never be written to disk.
 func MustToken() (Global, error) {
+	if tok := os.Getenv("VAULT_TOKEN"); tok != "" {
+		serverURL := os.Getenv("VAULT_SERVER_URL")
+		if serverURL == "" {
+			return Global{}, errors.New("VAULT_SERVER_URL is required when VAULT_TOKEN is set")
+		}
+		return Global{Token: tok, ServerURL: serverURL}, nil
+	}
 	g, err := LoadGlobal()
 	if err != nil {
 		return g, err
