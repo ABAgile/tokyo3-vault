@@ -7,6 +7,7 @@
 package crypto
 
 import (
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
@@ -78,8 +79,8 @@ func open(key, ciphertext []byte) ([]byte, error) {
 }
 
 // EncryptSecret encrypts plaintext under a fresh random DEK, then wraps the DEK
-// under the KEK. Returns (encryptedValue, encryptedDEK, error).
-func EncryptSecret(kek []byte, plaintext []byte) (encryptedValue, encryptedDEK []byte, err error) {
+// using kp. Returns (encryptedValue, encryptedDEK, error).
+func EncryptSecret(ctx context.Context, kp KeyProvider, plaintext []byte) (encryptedValue, encryptedDEK []byte, err error) {
 	dek := make([]byte, 32)
 	if _, err = io.ReadFull(rand.Reader, dek); err != nil {
 		return nil, nil, fmt.Errorf("generate dek: %w", err)
@@ -88,16 +89,16 @@ func EncryptSecret(kek []byte, plaintext []byte) (encryptedValue, encryptedDEK [
 	if err != nil {
 		return nil, nil, fmt.Errorf("seal value: %w", err)
 	}
-	encryptedDEK, err = seal(kek, dek)
+	encryptedDEK, err = kp.WrapDEK(ctx, dek)
 	if err != nil {
-		return nil, nil, fmt.Errorf("seal dek: %w", err)
+		return nil, nil, fmt.Errorf("wrap dek: %w", err)
 	}
 	return encryptedValue, encryptedDEK, nil
 }
 
-// DecryptSecret unwraps the DEK using the KEK, then decrypts the value.
-func DecryptSecret(kek, encryptedDEK, encryptedValue []byte) ([]byte, error) {
-	dek, err := open(kek, encryptedDEK)
+// DecryptSecret unwraps the DEK using kp, then decrypts the value.
+func DecryptSecret(ctx context.Context, kp KeyProvider, encryptedDEK, encryptedValue []byte) ([]byte, error) {
+	dek, err := kp.UnwrapDEK(ctx, encryptedDEK)
 	if err != nil {
 		return nil, fmt.Errorf("unwrap dek: %w", err)
 	}
@@ -108,14 +109,14 @@ func DecryptSecret(kek, encryptedDEK, encryptedValue []byte) ([]byte, error) {
 	return plaintext, nil
 }
 
-// RewrapDEK decrypts a DEK under oldKEK and re-encrypts it under newKEK.
+// RewrapDEK unwraps a DEK under oldKP and re-wraps it under newKP.
 // Use this when rotating the master key without re-encrypting secret values.
-func RewrapDEK(oldKEK, newKEK, encryptedDEK []byte) ([]byte, error) {
-	dek, err := open(oldKEK, encryptedDEK)
+func RewrapDEK(ctx context.Context, oldKP, newKP KeyProvider, encryptedDEK []byte) ([]byte, error) {
+	dek, err := oldKP.UnwrapDEK(ctx, encryptedDEK)
 	if err != nil {
 		return nil, fmt.Errorf("unwrap dek: %w", err)
 	}
-	newEncryptedDEK, err := seal(newKEK, dek)
+	newEncryptedDEK, err := newKP.WrapDEK(ctx, dek)
 	if err != nil {
 		return nil, fmt.Errorf("rewrap dek: %w", err)
 	}

@@ -2,6 +2,7 @@ package crypto
 
 import (
 	"bytes"
+	"context"
 	"testing"
 )
 
@@ -81,8 +82,10 @@ func TestGenerateKEK(t *testing.T) {
 }
 
 func TestEncryptDecryptRoundTrip(t *testing.T) {
+	ctx := context.Background()
 	kekHex, _ := GenerateKEK()
 	kek, _ := ParseKEK(kekHex)
+	kp := NewLocalKeyProvider(kek)
 
 	plaintexts := []string{
 		"",
@@ -98,12 +101,12 @@ func TestEncryptDecryptRoundTrip(t *testing.T) {
 			label = label[:20]
 		}
 		t.Run(label, func(t *testing.T) {
-			encVal, encDEK, err := EncryptSecret(kek, []byte(pt))
+			encVal, encDEK, err := EncryptSecret(ctx, kp, []byte(pt))
 			if err != nil {
 				t.Fatalf("EncryptSecret: %v", err)
 			}
 
-			got, err := DecryptSecret(kek, encDEK, encVal)
+			got, err := DecryptSecret(ctx, kp, encDEK, encVal)
 			if err != nil {
 				t.Fatalf("DecryptSecret: %v", err)
 			}
@@ -116,15 +119,17 @@ func TestEncryptDecryptRoundTrip(t *testing.T) {
 }
 
 func TestEncryptProducesUniqueCiphertexts(t *testing.T) {
+	ctx := context.Background()
 	kekHex, _ := GenerateKEK()
 	kek, _ := ParseKEK(kekHex)
+	kp := NewLocalKeyProvider(kek)
 	pt := []byte("same plaintext")
 
-	enc1, _, err := EncryptSecret(kek, pt)
+	enc1, _, err := EncryptSecret(ctx, kp, pt)
 	if err != nil {
 		t.Fatal(err)
 	}
-	enc2, _, err := EncryptSecret(kek, pt)
+	enc2, _, err := EncryptSecret(ctx, kp, pt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,38 +139,44 @@ func TestEncryptProducesUniqueCiphertexts(t *testing.T) {
 }
 
 func TestDecryptWithWrongKEK(t *testing.T) {
+	ctx := context.Background()
 	kekHex, _ := GenerateKEK()
 	kek, _ := ParseKEK(kekHex)
+	kp := NewLocalKeyProvider(kek)
 
 	wrongHex, _ := GenerateKEK()
 	wrongKEK, _ := ParseKEK(wrongHex)
+	wrongKP := NewLocalKeyProvider(wrongKEK)
 
-	encVal, encDEK, err := EncryptSecret(kek, []byte("secret"))
+	encVal, encDEK, err := EncryptSecret(ctx, kp, []byte("secret"))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, err = DecryptSecret(wrongKEK, encDEK, encVal)
+	_, err = DecryptSecret(ctx, wrongKP, encDEK, encVal)
 	if err == nil {
 		t.Error("expected error decrypting with wrong KEK, got nil")
 	}
 }
 
 func TestRewrapDEK(t *testing.T) {
+	ctx := context.Background()
 	oldHex, _ := GenerateKEK()
 	oldKEK, _ := ParseKEK(oldHex)
+	oldKP := NewLocalKeyProvider(oldKEK)
 
 	newHex, _ := GenerateKEK()
 	newKEK, _ := ParseKEK(newHex)
+	newKP := NewLocalKeyProvider(newKEK)
 
 	plaintext := []byte("my secret value")
-	encVal, encDEK, err := EncryptSecret(oldKEK, plaintext)
+	encVal, encDEK, err := EncryptSecret(ctx, oldKP, plaintext)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// Rewrap the DEK under the new KEK.
-	newEncDEK, err := RewrapDEK(oldKEK, newKEK, encDEK)
+	newEncDEK, err := RewrapDEK(ctx, oldKP, newKP, encDEK)
 	if err != nil {
 		t.Fatalf("RewrapDEK: %v", err)
 	}
@@ -176,7 +187,7 @@ func TestRewrapDEK(t *testing.T) {
 	}
 
 	// Decrypting the original ciphertext with the rewrapped DEK should work.
-	got, err := DecryptSecret(newKEK, newEncDEK, encVal)
+	got, err := DecryptSecret(ctx, newKP, newEncDEK, encVal)
 	if err != nil {
 		t.Fatalf("DecryptSecret after rewrap: %v", err)
 	}
@@ -185,7 +196,7 @@ func TestRewrapDEK(t *testing.T) {
 	}
 
 	// Old KEK must no longer decrypt.
-	_, err = DecryptSecret(oldKEK, newEncDEK, encVal)
+	_, err = DecryptSecret(ctx, oldKP, newEncDEK, encVal)
 	if err == nil {
 		t.Error("expected error using old KEK on rewrapped DEK")
 	}

@@ -1,8 +1,11 @@
 // vaultd is the Vault secret manager server.
 //
-// Required environment variables:
+// Key provider — exactly one must be set:
 //
-//	VAULT_MASTER_KEY      64-char hex string (32 bytes) — generate with: vault keygen
+//	VAULT_MASTER_KEY      64-char hex string (32 bytes) — local AES-256 KEK, dev only
+//	                      Generate with: vault keygen
+//	VAULT_KMS_KEY_ID      AWS KMS key ID, ARN, or alias — recommended for production
+//	                      AWS credentials loaded from the standard chain (env, IAM role, etc.)
 //
 // Storage — exactly one must be set:
 //
@@ -15,6 +18,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -30,14 +34,9 @@ import (
 func main() {
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 
-	masterKeyHex := os.Getenv("VAULT_MASTER_KEY")
-	if masterKeyHex == "" {
-		fmt.Fprintln(os.Stderr, "VAULT_MASTER_KEY is required (generate with: vault keygen)")
-		os.Exit(1)
-	}
-	kek, err := crypto.ParseKEK(masterKeyHex)
+	kp, err := openKeyProvider(context.Background(), log)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "invalid VAULT_MASTER_KEY: %v\n", err)
+		fmt.Fprintf(os.Stderr, "key provider: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -55,12 +54,36 @@ func main() {
 		addr = ":8080"
 	}
 
-	srv := api.New(st, kek, log)
+	srv := api.New(st, kp, log)
 	log.Info("vaultd starting", "addr", addr)
 	if err := http.ListenAndServe(addr, srv.Routes()); err != nil {
 		fmt.Fprintf(os.Stderr, "server error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// openKeyProvider selects LocalKeyProvider (VAULT_MASTER_KEY) or KMSKeyProvider
+// (VAULT_KMS_KEY_ID). Exactly one must be set; setting both is an error.
+func openKeyProvider(ctx context.Context, log *slog.Logger) (crypto.KeyProvider, error) {
+	masterKeyHex := os.Getenv("VAULT_MASTER_KEY")
+	kmsKeyID := os.Getenv("VAULT_KMS_KEY_ID")
+
+	if masterKeyHex != "" && kmsKeyID != "" {
+		return nil, fmt.Errorf("set either VAULT_MASTER_KEY or VAULT_KMS_KEY_ID, not both")
+	}
+	if kmsKeyID != "" {
+		log.Info("using AWS KMS key provider", "key_id", kmsKeyID)
+		return crypto.NewKMSKeyProvider(ctx, kmsKeyID)
+	}
+	if masterKeyHex == "" {
+		return nil, fmt.Errorf("VAULT_MASTER_KEY or VAULT_KMS_KEY_ID is required")
+	}
+	kek, err := crypto.ParseKEK(masterKeyHex)
+	if err != nil {
+		return nil, fmt.Errorf("invalid VAULT_MASTER_KEY: %w", err)
+	}
+	log.Info("using local master key provider")
+	return crypto.NewLocalKeyProvider(kek), nil
 }
 
 // openStore selects SQLite or Postgres based on environment variables.

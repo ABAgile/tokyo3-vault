@@ -6,7 +6,7 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/abagile/tokyo3-vault)](https://goreportcard.com/report/github.com/abagile/tokyo3-vault)
 [![codecov](https://codecov.io/gh/abagile/tokyo3-vault/branch/main/graph/badge.svg)](https://codecov.io/gh/abagile/tokyo3-vault)
 
-A minimal self-hosted secret manager with versioning, audit logging, and `.env` file support. Secrets are encrypted at rest using per-secret data-encryption keys (DEK) wrapped by a master key (KEK).
+A minimal self-hosted secret manager with versioning, audit logging, and `.env` file support. Secrets are encrypted at rest using per-secret data-encryption keys (DEK) wrapped by a master key (KEK) — either a local AES-256 key or AWS KMS.
 
 ## Contents
 
@@ -46,7 +46,9 @@ Both binaries are installed to `$GOBIN` (default `$HOME/go/bin`). Make sure that
 
 ## Bootstrap
 
-### 1. Generate a master key
+### 1. Choose a key provider
+
+**Local master key (development / single-server)**
 
 ```sh
 vault keygen
@@ -55,18 +57,29 @@ vault keygen
 
 Store this value as `VAULT_MASTER_KEY`. It encrypts every secret's data key — losing it means losing all secrets. Back it up securely.
 
+**AWS KMS (recommended for production)**
+
+Create a symmetric KMS key in your AWS account and note its key ID or ARN. No local key material to manage — AWS handles durability and rotation.
+
+```sh
+# Example ARN
+arn:aws:kms:us-east-1:123456789012:key/mrk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+```
+
+Set `VAULT_KMS_KEY_ID` to the key ID, ARN, or alias. AWS credentials are loaded from the standard chain (env vars, IAM role, instance profile). `VAULT_MASTER_KEY` and `VAULT_KMS_KEY_ID` are mutually exclusive — set exactly one.
+
 ### 2. Start the server
 
-**SQLite (single-file, no extra dependencies):**
+**SQLite — local key (development):**
 
 ```sh
 VAULT_MASTER_KEY=<key> VAULT_DB_PATH=vault.db vaultd
 ```
 
-**PostgreSQL:**
+**PostgreSQL — KMS (production):**
 
 ```sh
-VAULT_MASTER_KEY=<key> VAULT_DATABASE_URL="postgres://user:pass@host/dbname" vaultd
+VAULT_KMS_KEY_ID=<key-id-or-arn> VAULT_DATABASE_URL="postgres://user:pass@host/dbname" vaultd
 ```
 
 The server listens on `:8080` by default. Set `VAULT_ADDR` to change this.
@@ -96,12 +109,25 @@ vault login --server http://localhost:8080
 
 ### Server environment variables
 
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `VAULT_MASTER_KEY` | Yes | — | 64-char hex key (32 bytes). Generate with `vault keygen`. |
-| `VAULT_DATABASE_URL` | One of these two | — | PostgreSQL DSN, e.g. `postgres://user:pass@host/db` |
-| `VAULT_DB_PATH` | One of these two | `vault.db` | SQLite file path |
-| `VAULT_ADDR` | No | `:8080` | TCP listen address |
+**Key provider — exactly one must be set:**
+
+| Variable | Description |
+|---|---|
+| `VAULT_MASTER_KEY` | 64-char hex key (32 bytes). Generate with `vault keygen`. Development only — store securely. |
+| `VAULT_KMS_KEY_ID` | AWS KMS key ID, ARN, or alias (e.g. `alias/vault-prod`). Recommended for production. AWS credentials loaded from the standard chain. |
+
+**Storage — exactly one must be set:**
+
+| Variable | Default | Description |
+|---|---|---|
+| `VAULT_DATABASE_URL` | — | PostgreSQL DSN, e.g. `postgres://user:pass@host/db` |
+| `VAULT_DB_PATH` | `vault.db` | SQLite file path |
+
+**Optional:**
+
+| Variable | Default | Description |
+|---|---|---|
+| `VAULT_ADDR` | `:8080` | TCP listen address |
 
 ### CLI configuration
 

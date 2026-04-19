@@ -126,7 +126,7 @@ func (s *Server) handleGetSecret(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "secret has no versions")
 		return
 	}
-	plaintext, err := crypto.DecryptSecret(s.kek, sv.EncryptedDEK, sv.EncryptedValue)
+	plaintext, err := crypto.DecryptSecret(r.Context(), s.kp, sv.EncryptedDEK, sv.EncryptedValue)
 	if err != nil {
 		s.log.Error("decrypt secret", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -192,7 +192,7 @@ func (s *Server) writeSetSecret(w http.ResponseWriter, r *http.Request, projectI
 		createdBy = &tok.ID
 	}
 
-	encVal, encDEK, err := crypto.EncryptSecret(s.kek, []byte(value))
+	encVal, encDEK, err := crypto.EncryptSecret(r.Context(), s.kp, []byte(value))
 	if err != nil {
 		s.log.Error("encrypt secret", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -447,12 +447,12 @@ func (s *Server) copySecret(r *http.Request, sec *model.Secret, sv *model.Secret
 			return false, nil
 		}
 	}
-	plaintext, err := crypto.DecryptSecret(s.kek, sv.EncryptedDEK, sv.EncryptedValue)
+	plaintext, err := crypto.DecryptSecret(r.Context(), s.kp, sv.EncryptedDEK, sv.EncryptedValue)
 	if err != nil {
 		s.log.Error("decrypt src secret", "key", sec.Key, "err", err)
 		return false, fmt.Errorf("failed to decrypt source secret %s", sec.Key)
 	}
-	encVal, encDEK, err := crypto.EncryptSecret(s.kek, plaintext)
+	encVal, encDEK, err := crypto.EncryptSecret(r.Context(), s.kp, plaintext)
 	if err != nil {
 		s.log.Error("encrypt dst secret", "key", sec.Key, "err", err)
 		return false, fmt.Errorf("internal error")
@@ -519,7 +519,7 @@ func (s *Server) handleUploadDotenv(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 		}
-		encVal, encDEK, err := crypto.EncryptSecret(s.kek, []byte(entry.Value))
+		encVal, encDEK, err := crypto.EncryptSecret(r.Context(), s.kp, []byte(entry.Value))
 		if err != nil {
 			s.log.Error("encrypt secret", "key", entry.Key, "err", err)
 			writeError(w, http.StatusInternalServerError, "internal error")
@@ -559,7 +559,7 @@ func (s *Server) handleDownloadDotenv(w http.ResponseWriter, r *http.Request) {
 		if sv == nil {
 			continue
 		}
-		plaintext, err := crypto.DecryptSecret(s.kek, sv.EncryptedDEK, sv.EncryptedValue)
+		plaintext, err := crypto.DecryptSecret(r.Context(), s.kp, sv.EncryptedDEK, sv.EncryptedValue)
 		if err != nil {
 			s.log.Error("decrypt secret", "key", sec.Key, "err", err)
 			writeError(w, http.StatusInternalServerError, "internal error")

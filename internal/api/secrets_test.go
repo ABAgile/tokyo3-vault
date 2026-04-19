@@ -100,7 +100,8 @@ func encryptForTest(t *testing.T, value string) (encVal, encDEK []byte) {
 	for i := range kek {
 		kek[i] = byte(i + 1)
 	}
-	ev, ed, err := crypto.EncryptSecret(kek, []byte(value))
+	kp := crypto.NewLocalKeyProvider(kek)
+	ev, ed, err := crypto.EncryptSecret(context.Background(), kp, []byte(value))
 	if err != nil {
 		t.Fatal(err)
 	}

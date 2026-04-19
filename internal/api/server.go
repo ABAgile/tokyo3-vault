@@ -6,19 +6,20 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/abagile/tokyo3-vault/internal/crypto"
 	"github.com/abagile/tokyo3-vault/internal/store"
 )
 
 // Server holds shared dependencies for all HTTP handlers.
 type Server struct {
 	store store.Store
-	kek   []byte // master key encryption key (AES-256)
+	kp    crypto.KeyProvider
 	log   *slog.Logger
 }
 
 // New returns a configured Server.
-func New(st store.Store, kek []byte, log *slog.Logger) *Server {
-	return &Server{store: st, kek: kek, log: log}
+func New(st store.Store, kp crypto.KeyProvider, log *slog.Logger) *Server {
+	return &Server{store: st, kp: kp, log: log}
 }
 
 // Routes registers all API routes on mux and returns it.
