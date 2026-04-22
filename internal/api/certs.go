@@ -147,7 +147,7 @@ func (s *Server) handleRegisterCertPrincipal(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-
+	s.logAudit(r, ActionCertPrincipalRegister, "", req.SPIFFEID)
 	writeJSON(w, http.StatusCreated, principalToResp(p))
 }
 
@@ -185,6 +185,7 @@ func (s *Server) handleDeleteCertPrincipal(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	s.logAudit(r, ActionCertPrincipalDelete, "", id)
 	w.WriteHeader(http.StatusNoContent)
 }
 

@@ -131,6 +131,7 @@ func (s *Server) handleSetDynamicBackend(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	s.logAudit(r, ActionDynamicBackendSet, project.ID, backendSlug)
 	writeJSON(w, http.StatusOK, dynamicBackendResponse{
 		Slug:       backend.Slug,
 		ProjectID:  backend.ProjectID,
@@ -192,6 +193,7 @@ func (s *Server) handleDeleteDynamicBackend(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	s.logAudit(r, ActionDynamicBackendDelete, project.ID, backendSlug)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -234,6 +236,7 @@ func (s *Server) handleSetDynamicRole(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	s.logAudit(r, ActionDynamicRoleSet, project.ID, backendSlug+"/"+roleName)
 	writeJSON(w, http.StatusOK, dynamicRoleResponse{
 		Name:           role.Name,
 		CreationTmpl:   role.CreationTmpl,
@@ -312,6 +315,7 @@ func (s *Server) handleDeleteDynamicRole(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	s.logAudit(r, ActionDynamicRoleDelete, project.ID, backendSlug+"/"+roleName)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -387,6 +391,7 @@ func (s *Server) handleIssueCreds(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.logAudit(r, ActionDynamicLeaseIssue, project.ID, backendSlug+"/"+roleName)
 	writeJSON(w, http.StatusCreated, issuedCredsResponse{
 		LeaseID:   lease.ID,
 		Username:  username,
@@ -482,5 +487,6 @@ func (s *Server) handleRevokeDynamicLease(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	s.logAudit(r, ActionDynamicLeaseRevoke, project.ID, leaseID)
 	w.WriteHeader(http.StatusNoContent)
 }

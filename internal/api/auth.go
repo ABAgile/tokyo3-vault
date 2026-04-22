@@ -94,6 +94,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	user, err := s.store.GetUserByEmail(r.Context(), req.Email)
 	if errors.Is(err, store.ErrNotFound) || (err == nil && !auth.CheckPassword(user.PasswordHash, req.Password)) {
+		s.logAudit(r, ActionAuthLoginFailed, "", req.Email)
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}

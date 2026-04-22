@@ -42,6 +42,18 @@ const (
 	ActionMemberAdd    = "member.add"
 	ActionMemberUpdate = "member.update"
 	ActionMemberRemove = "member.remove"
+
+	ActionAuthLoginFailed = "auth.login_failed"
+
+	ActionDynamicBackendSet    = "dynamic.backend.set"
+	ActionDynamicBackendDelete = "dynamic.backend.delete"
+	ActionDynamicRoleSet       = "dynamic.role.set"
+	ActionDynamicRoleDelete    = "dynamic.role.delete"
+	ActionDynamicLeaseIssue    = "dynamic.lease.issue"
+	ActionDynamicLeaseRevoke   = "dynamic.lease.revoke"
+
+	ActionCertPrincipalRegister = "cert.principal.register"
+	ActionCertPrincipalDelete   = "cert.principal.delete"
 )
 
 // logAudit writes an audit entry. projectID and resource are optional.
