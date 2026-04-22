@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -51,7 +52,7 @@ func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		tok, err := auth.Validate(r.Context(), s.store, raw)
-		if err == store.ErrNotFound {
+		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusUnauthorized, "invalid token")
 			return
 		}
@@ -116,7 +117,7 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, tok *model.To
 	} else {
 		_, err = s.store.GetProjectMember(r.Context(), projectID, *tok.UserID)
 	}
-	if err == store.ErrNotFound {
+	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusForbidden, "not a member of this project")
 		return false
 	}
@@ -213,7 +214,7 @@ func (s *Server) requireProjectRole(w http.ResponseWriter, r *http.Request, proj
 		return true
 	}
 	m, err := s.store.GetProjectMember(r.Context(), projectID, *tok.UserID)
-	if err == store.ErrNotFound {
+	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusForbidden, "not a member of this project")
 		return false
 	}
@@ -229,12 +230,13 @@ func (s *Server) requireProjectRole(w http.ResponseWriter, r *http.Request, proj
 	return true
 }
 
+var roleRank = map[string]int{
+	model.RoleViewer: 1,
+	model.RoleEditor: 2,
+	model.RoleOwner:  3,
+}
+
 // roleAtLeast returns true if have >= need in the privilege hierarchy.
 func roleAtLeast(have, need string) bool {
-	rank := map[string]int{
-		model.RoleViewer: 1,
-		model.RoleEditor: 2,
-		model.RoleOwner:  3,
-	}
-	return rank[have] >= rank[need]
+	return roleRank[have] >= roleRank[need]
 }

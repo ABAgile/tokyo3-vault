@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
@@ -109,7 +110,7 @@ func (s *Server) handleDeleteToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	if err := s.store.DeleteToken(r.Context(), id, *tok.UserID); err == store.ErrNotFound {
+	if err := s.store.DeleteToken(r.Context(), id, *tok.UserID); errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "token not found")
 		return
 	} else if err != nil {
@@ -129,7 +130,7 @@ func (s *Server) resolveTokenScope(w http.ResponseWriter, r *http.Request, proje
 		return "", "", false
 	}
 	p, err := s.store.GetProject(r.Context(), projectSlug)
-	if err == store.ErrNotFound {
+	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "project not found: "+projectSlug)
 		return "", "", true
 	}
@@ -142,7 +143,7 @@ func (s *Server) resolveTokenScope(w http.ResponseWriter, r *http.Request, proje
 		return p.ID, "", false
 	}
 	e, err := s.store.GetEnvironment(r.Context(), p.ID, envSlug)
-	if err == store.ErrNotFound {
+	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "environment not found: "+envSlug)
 		return "", "", true
 	}
@@ -160,6 +161,6 @@ func tokenToItem(t *model.Token) tokenListItem {
 		Name:      t.Name,
 		ProjectID: t.ProjectID,
 		EnvID:     t.EnvID,
-		CreatedAt: t.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		CreatedAt: fmtAPITime(t.CreatedAt),
 	}
 }

@@ -2,6 +2,7 @@ package dynamic
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -58,7 +59,7 @@ func (r *Revoker) sweep(ctx context.Context) {
 
 func (r *Revoker) revokeLease(ctx context.Context, lease *model.DynamicLease) error {
 	backend, err := r.store.GetDynamicBackendByID(ctx, lease.BackendID)
-	if err == store.ErrNotFound {
+	if errors.Is(err, store.ErrNotFound) {
 		// Backend deleted — mark revoked without running revocation template.
 		r.log.Warn("dynamic revoker: backend gone, marking lease revoked",
 			"lease_id", lease.ID, "backend_id", lease.BackendID)

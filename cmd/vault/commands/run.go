@@ -13,6 +13,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var dynVarReplacer = strings.NewReplacer("-", "_", ".", "_")
+
 func NewRunCmd() *cobra.Command {
 	var project, env string
 	var dynamicFlags []string
@@ -168,7 +170,7 @@ func NewExportCmd() *cobra.Command {
 // dynVarPrefix converts a backend slug to its VAULT_DYN_ env var prefix.
 // "primary-db" → "VAULT_DYN_PRIMARY_DB_"
 func dynVarPrefix(backendName string) string {
-	up := strings.ToUpper(strings.NewReplacer("-", "_", ".", "_").Replace(backendName))
+	up := strings.ToUpper(dynVarReplacer.Replace(backendName))
 	return "VAULT_DYN_" + up + "_"
 }
 
@@ -197,7 +199,7 @@ func shellQuote(v string) string {
 		if c == '\'' {
 			quoted.WriteString(`'\''`)
 		} else {
-			quoted.WriteString(string(c))
+			quoted.WriteRune(c)
 		}
 	}
 	return quoted.String() + "'"

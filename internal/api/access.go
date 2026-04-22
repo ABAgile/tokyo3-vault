@@ -2,8 +2,6 @@ package api
 
 import (
 	"net/http"
-
-	"github.com/abagile/tokyo3-vault/internal/model"
 )
 
 type accessMemberEntry struct {
@@ -105,12 +103,12 @@ func (s *Server) handleListAccess(w http.ResponseWriter, r *http.Request) {
 			Name:       t.Name,
 			OwnerID:    t.UserID,
 			OwnerEmail: lookupEmail(t.UserID),
-			Scope:      tokenScope(t, project.ID, envID),
+			Scope:      scopeFromPtrs(t.ProjectID, t.EnvID),
 			ReadOnly:   t.ReadOnly,
-			CreatedAt:  t.CreatedAt.Format("2006-01-02T15:04:05Z"),
+			CreatedAt:  fmtAPITime(t.CreatedAt),
 		}
 		if t.ExpiresAt != nil {
-			s := t.ExpiresAt.Format("2006-01-02T15:04:05Z")
+			s := fmtAPITime(t.ExpiresAt)
 			entry.ExpiresAt = &s
 		}
 		tokens = append(tokens, entry)
@@ -132,12 +130,12 @@ func (s *Server) handleListAccess(w http.ResponseWriter, r *http.Request) {
 			Description: p.Description,
 			OwnerID:     p.UserID,
 			OwnerEmail:  lookupEmail(p.UserID),
-			Scope:       principalScope(p, project.ID, envID),
+			Scope:       scopeFromPtrs(p.ProjectID, p.EnvID),
 			ReadOnly:    p.ReadOnly,
-			CreatedAt:   p.CreatedAt.Format("2006-01-02T15:04:05Z"),
+			CreatedAt:   fmtAPITime(p.CreatedAt),
 		}
 		if p.ExpiresAt != nil {
-			s := p.ExpiresAt.Format("2006-01-02T15:04:05Z")
+			s := fmtAPITime(p.ExpiresAt)
 			entry.ExpiresAt = &s
 		}
 		principals = append(principals, entry)
@@ -150,21 +148,11 @@ func (s *Server) handleListAccess(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func tokenScope(t *model.Token, projectID, envID string) string {
-	if t.ProjectID == nil {
+func scopeFromPtrs(projectID, envID *string) string {
+	if projectID == nil {
 		return "unscoped"
 	}
-	if t.EnvID == nil {
-		return "project"
-	}
-	return "env"
-}
-
-func principalScope(p *model.CertPrincipal, projectID, envID string) string {
-	if p.ProjectID == nil {
-		return "unscoped"
-	}
-	if p.EnvID == nil {
+	if envID == nil {
 		return "project"
 	}
 	return "env"

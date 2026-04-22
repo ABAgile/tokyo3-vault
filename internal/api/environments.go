@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -23,7 +24,7 @@ type createEnvRequest struct {
 
 func (s *Server) handleListEnvs(w http.ResponseWriter, r *http.Request) {
 	p, err := s.store.GetProject(r.Context(), r.PathValue("project"))
-	if err == store.ErrNotFound {
+	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "project not found")
 		return
 	}
@@ -45,7 +46,7 @@ func (s *Server) handleListEnvs(w http.ResponseWriter, r *http.Request) {
 	for _, e := range envs {
 		resp = append(resp, envResponse{
 			ID: e.ID, ProjectID: e.ProjectID, Name: e.Name, Slug: e.Slug,
-			CreatedAt: e.CreatedAt.Format("2006-01-02T15:04:05Z"),
+			CreatedAt: fmtAPITime(e.CreatedAt),
 		})
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -57,7 +58,7 @@ func (s *Server) handleCreateEnv(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p, err := s.store.GetProject(r.Context(), r.PathValue("project"))
-	if err == store.ErrNotFound {
+	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "project not found")
 		return
 	}
@@ -91,7 +92,7 @@ func (s *Server) handleCreateEnv(w http.ResponseWriter, r *http.Request) {
 	}
 
 	e, err := s.store.CreateEnvironment(r.Context(), p.ID, req.Name, req.Slug)
-	if err == store.ErrConflict {
+	if errors.Is(err, store.ErrConflict) {
 		writeError(w, http.StatusConflict, "environment already exists")
 		return
 	}
@@ -103,7 +104,7 @@ func (s *Server) handleCreateEnv(w http.ResponseWriter, r *http.Request) {
 	s.logAudit(r, ActionEnvCreate, p.ID, e.Slug)
 	writeJSON(w, http.StatusCreated, envResponse{
 		ID: e.ID, ProjectID: e.ProjectID, Name: e.Name, Slug: e.Slug,
-		CreatedAt: e.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		CreatedAt: fmtAPITime(e.CreatedAt),
 	})
 }
 
@@ -113,7 +114,7 @@ func (s *Server) handleDeleteEnv(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p, err := s.store.GetProject(r.Context(), r.PathValue("project"))
-	if err == store.ErrNotFound {
+	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "project not found")
 		return
 	}
@@ -126,7 +127,7 @@ func (s *Server) handleDeleteEnv(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	envSlug := r.PathValue("env")
-	if err := s.store.DeleteEnvironment(r.Context(), p.ID, envSlug); err == store.ErrNotFound {
+	if err := s.store.DeleteEnvironment(r.Context(), p.ID, envSlug); errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "environment not found")
 		return
 	} else if err != nil {

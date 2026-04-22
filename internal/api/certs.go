@@ -57,7 +57,7 @@ func (s *Server) authFromSPIFFECert(r *http.Request) (*model.Token, error) {
 	}
 
 	p, err := s.store.GetCertPrincipalBySPIFFEID(r.Context(), spiffeID)
-	if err == store.ErrNotFound {
+	if errors.Is(err, store.ErrNotFound) {
 		return nil, errSPIFFEUnregistered
 	}
 	if err != nil {
@@ -139,7 +139,7 @@ func (s *Server) handleRegisterCertPrincipal(w http.ResponseWriter, r *http.Requ
 		p.ExpiresAt = &t
 	}
 
-	if err := s.store.CreateCertPrincipal(r.Context(), p); err == store.ErrConflict {
+	if err := s.store.CreateCertPrincipal(r.Context(), p); errors.Is(err, store.ErrConflict) {
 		writeError(w, http.StatusConflict, "SPIFFE ID already registered")
 		return
 	} else if err != nil {
@@ -177,7 +177,7 @@ func (s *Server) handleDeleteCertPrincipal(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	id := r.PathValue("id")
-	if err := s.store.DeleteCertPrincipal(r.Context(), id, *tok.UserID); err == store.ErrNotFound {
+	if err := s.store.DeleteCertPrincipal(r.Context(), id, *tok.UserID); errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "cert principal not found")
 		return
 	} else if err != nil {
@@ -196,10 +196,10 @@ func principalToResp(p *model.CertPrincipal) certPrincipalResponse {
 		ProjectID:   p.ProjectID,
 		EnvID:       p.EnvID,
 		ReadOnly:    p.ReadOnly,
-		CreatedAt:   p.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		CreatedAt:   fmtAPITime(p.CreatedAt),
 	}
 	if p.ExpiresAt != nil {
-		s := p.ExpiresAt.Format("2006-01-02T15:04:05Z")
+		s := fmtAPITime(p.ExpiresAt)
 		r.ExpiresAt = &s
 	}
 	return r

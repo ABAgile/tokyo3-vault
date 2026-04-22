@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -60,7 +61,7 @@ type versionResponse struct {
 // token scope. Returns the full Project so callers can access EncryptedPEK.
 func (s *Server) resolveProjectEnv(r *http.Request, w http.ResponseWriter) (project *model.Project, envID string, ok bool) {
 	p, err := s.store.GetProject(r.Context(), r.PathValue("project"))
-	if err == store.ErrNotFound {
+	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "project not found")
 		return nil, "", false
 	}
@@ -70,7 +71,7 @@ func (s *Server) resolveProjectEnv(r *http.Request, w http.ResponseWriter) (proj
 		return nil, "", false
 	}
 	e, err := s.store.GetEnvironment(r.Context(), p.ID, r.PathValue("env"))
-	if err == store.ErrNotFound {
+	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "environment not found")
 		return nil, "", false
 	}
@@ -83,6 +84,21 @@ func (s *Server) resolveProjectEnv(r *http.Request, w http.ResponseWriter) (proj
 		return nil, "", false
 	}
 	return p, e.ID, true
+}
+
+// resolveProject looks up a project from the {project} path value.
+func (s *Server) resolveProject(r *http.Request, w http.ResponseWriter) (*model.Project, bool) {
+	p, err := s.store.GetProject(r.Context(), r.PathValue("project"))
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "project not found")
+		return nil, false
+	}
+	if err != nil {
+		s.log.Error("get project", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return nil, false
+	}
+	return p, true
 }
 
 func (s *Server) handleListSecrets(w http.ResponseWriter, r *http.Request) {
@@ -98,7 +114,7 @@ func (s *Server) handleListSecrets(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := make([]secretMeta, 0, len(secrets))
 	for i, sec := range secrets {
-		item := secretMeta{Key: sec.Key, UpdatedAt: sec.UpdatedAt.Format("2006-01-02T15:04:05Z")}
+		item := secretMeta{Key: sec.Key, UpdatedAt: fmtAPITime(sec.UpdatedAt)}
 		if versions[i] != nil {
 			item.Version = versions[i].Version
 		}
@@ -114,7 +130,7 @@ func (s *Server) handleGetSecret(w http.ResponseWriter, r *http.Request) {
 	}
 	key := strings.ToUpper(r.PathValue("key"))
 	sec, sv, err := s.store.GetSecret(r.Context(), project.ID, envID, key)
-	if err == store.ErrNotFound {
+	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "secret not found")
 		return
 	}
@@ -144,7 +160,7 @@ func (s *Server) handleGetSecret(w http.ResponseWriter, r *http.Request) {
 		Key:       sec.Key,
 		Value:     string(plaintext),
 		Version:   sv.Version,
-		UpdatedAt: sec.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+		UpdatedAt: fmtAPITime(sec.UpdatedAt),
 	})
 }
 
@@ -221,7 +237,7 @@ func (s *Server) writeSetSecret(w http.ResponseWriter, r *http.Request, project 
 	writeJSON(w, http.StatusOK, versionResponse{
 		ID:        sv.ID,
 		Version:   sv.Version,
-		CreatedAt: sv.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		CreatedAt: fmtAPITime(sv.CreatedAt),
 		CreatedBy: sv.CreatedBy,
 	})
 }
@@ -235,7 +251,7 @@ func (s *Server) handleDeleteSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := strings.ToUpper(r.PathValue("key"))
-	if err := s.store.DeleteSecret(r.Context(), project.ID, envID, key); err == store.ErrNotFound {
+	if err := s.store.DeleteSecret(r.Context(), project.ID, envID, key); errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "secret not found")
 		return
 	} else if err != nil {
@@ -254,7 +270,7 @@ func (s *Server) handleListSecretVersions(w http.ResponseWriter, r *http.Request
 	}
 	key := strings.ToUpper(r.PathValue("key"))
 	sec, _, err := s.store.GetSecret(r.Context(), project.ID, envID, key)
-	if err == store.ErrNotFound {
+	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "secret not found")
 		return
 	}
@@ -287,7 +303,7 @@ func (s *Server) handleRollbackSecret(w http.ResponseWriter, r *http.Request) {
 	key := strings.ToUpper(r.PathValue("key"))
 
 	sec, _, err := s.store.GetSecret(r.Context(), project.ID, envID, key)
-	if err == store.ErrNotFound {
+	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "secret not found")
 		return
 	}
@@ -440,7 +456,7 @@ func tokenCreatedBy(tok *model.Token) *string {
 // import request, writes an HTTP error and returns false on any failure.
 func (s *Server) resolveSrcProjectEnv(w http.ResponseWriter, r *http.Request, fromProject, fromEnv string) (project *model.Project, envID string, ok bool) {
 	srcProject, err := s.store.GetProject(r.Context(), fromProject)
-	if err == store.ErrNotFound {
+	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "source project not found")
 		return nil, "", false
 	}
@@ -450,7 +466,7 @@ func (s *Server) resolveSrcProjectEnv(w http.ResponseWriter, r *http.Request, fr
 		return nil, "", false
 	}
 	srcEnv, err := s.store.GetEnvironment(r.Context(), srcProject.ID, fromEnv)
-	if err == store.ErrNotFound {
+	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "source environment not found")
 		return nil, "", false
 	}
@@ -497,7 +513,7 @@ func versionToResponse(sv *model.SecretVersion) versionResponse {
 	return versionResponse{
 		ID:        sv.ID,
 		Version:   sv.Version,
-		CreatedAt: sv.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		CreatedAt: fmtAPITime(sv.CreatedAt),
 		CreatedBy: sv.CreatedBy,
 	}
 }
@@ -514,7 +530,7 @@ func (s *Server) handleUploadDotenv(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := io.ReadAll(io.LimitReader(r.Body, 10<<20)) // 10 MiB limit
+	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "failed to read body")
 		return

@@ -3,6 +3,7 @@ package api
 import (
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"regexp"
 	"strings"
@@ -12,6 +13,7 @@ import (
 )
 
 var slugRe = regexp.MustCompile(`^[a-z0-9][a-z0-9\-]{0,61}[a-z0-9]$`)
+var slugSanitizeRe = regexp.MustCompile(`[^a-z0-9]+`)
 
 type projectResponse struct {
 	ID        string `json:"id"`
@@ -81,7 +83,7 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	p, err := s.store.CreateProject(r.Context(), req.Name, req.Slug)
-	if err == store.ErrConflict {
+	if errors.Is(err, store.ErrConflict) {
 		writeError(w, http.StatusConflict, "project name or slug already exists")
 		return
 	}
@@ -120,7 +122,7 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGetProject(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("project")
 	p, err := s.store.GetProject(r.Context(), slug)
-	if err == store.ErrNotFound {
+	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "project not found")
 		return
 	}
@@ -140,7 +142,7 @@ func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 	tok := tokenFromCtx(r)
 	slug := r.PathValue("project")
 	p, err := s.store.GetProject(r.Context(), slug)
-	if err == store.ErrNotFound {
+	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "project not found")
 		return
 	}
@@ -164,10 +166,10 @@ func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 // toSlug converts a name to a URL-safe slug.
 func toSlug(name string) string {
 	s := strings.ToLower(strings.TrimSpace(name))
-	s = regexp.MustCompile(`[^a-z0-9]+`).ReplaceAllString(s, "-")
+	s = slugSanitizeRe.ReplaceAllString(s, "-")
 	s = strings.Trim(s, "-")
 	if len(s) < 2 {
-		s = s + "x"
+		s = s + strings.Repeat("x", 2-len(s))
 	}
 	if len(s) > 63 {
 		s = s[:63]
@@ -178,6 +180,6 @@ func toSlug(name string) string {
 func projectToResponse(p *model.Project) projectResponse {
 	return projectResponse{
 		ID: p.ID, Name: p.Name, Slug: p.Slug,
-		CreatedAt: p.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		CreatedAt: fmtAPITime(p.CreatedAt),
 	}
 }

@@ -102,10 +102,21 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/projects/{project}/envs/{env}/dynamic/leases", s.auth(s.handleListDynamicLeases))
 	mux.HandleFunc("DELETE /api/v1/projects/{project}/envs/{env}/dynamic/leases/{lease_id}", s.auth(s.handleRevokeDynamicLease))
 
-	return mux
+	return limitBody(mux)
+}
+
+func limitBody(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, 4<<20)
+		next.ServeHTTP(w, r)
+	})
 }
 
 // ── response helpers ──────────────────────────────────────────────────────────
+
+func fmtAPITime(t interface{ Format(string) string }) string {
+	return t.Format("2006-01-02T15:04:05Z")
+}
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")

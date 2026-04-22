@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/abagile/tokyo3-vault/internal/model"
@@ -41,14 +42,8 @@ func memberScope(m *model.ProjectMember) string {
 
 // handleListMembers lists all members of a project. Requires viewer+ role.
 func (s *Server) handleListMembers(w http.ResponseWriter, r *http.Request) {
-	p, err := s.store.GetProject(r.Context(), r.PathValue("project"))
-	if err == store.ErrNotFound {
-		writeError(w, http.StatusNotFound, "project not found")
-		return
-	}
-	if err != nil {
-		s.log.Error("get project", "err", err)
-		writeError(w, http.StatusInternalServerError, "internal error")
+	p, ok := s.resolveProject(r, w)
+	if !ok {
 		return
 	}
 	if !s.authorize(w, r, tokenFromCtx(r), p.ID, "") {
@@ -62,19 +57,22 @@ func (s *Server) handleListMembers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	users, _ := s.store.ListUsers(r.Context())
+	emailByID := make(map[string]string, len(users))
+	for _, u := range users {
+		emailByID[u.ID] = u.Email
+	}
+
 	resp := make([]memberResponse, 0, len(members))
 	for _, m := range members {
-		mr := memberResponse{
+		resp = append(resp, memberResponse{
 			UserID:    m.UserID,
+			Email:     emailByID[m.UserID],
 			Role:      m.Role,
 			Scope:     memberScope(m),
 			EnvID:     m.EnvID,
-			CreatedAt: m.CreatedAt.Format("2006-01-02T15:04:05Z"),
-		}
-		if u, err := s.store.GetUserByID(r.Context(), m.UserID); err == nil {
-			mr.Email = u.Email
-		}
-		resp = append(resp, mr)
+			CreatedAt: fmtAPITime(m.CreatedAt),
+		})
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -82,14 +80,8 @@ func (s *Server) handleListMembers(w http.ResponseWriter, r *http.Request) {
 // handleAddMember adds a user to the project. Requires owner role.
 func (s *Server) handleAddMember(w http.ResponseWriter, r *http.Request) {
 	tok := tokenFromCtx(r)
-	p, err := s.store.GetProject(r.Context(), r.PathValue("project"))
-	if err == store.ErrNotFound {
-		writeError(w, http.StatusNotFound, "project not found")
-		return
-	}
-	if err != nil {
-		s.log.Error("get project", "err", err)
-		writeError(w, http.StatusInternalServerError, "internal error")
+	p, ok := s.resolveProject(r, w)
+	if !ok {
 		return
 	}
 	if !s.requireOwner(w, r, tok, p.ID) {
@@ -115,7 +107,7 @@ func (s *Server) handleAddMember(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify user exists.
-	if _, err := s.store.GetUserByID(r.Context(), req.UserID); err == store.ErrNotFound {
+	if _, err := s.store.GetUserByID(r.Context(), req.UserID); errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "user not found")
 		return
 	} else if err != nil {
@@ -136,14 +128,8 @@ func (s *Server) handleAddMember(w http.ResponseWriter, r *http.Request) {
 // handleUpdateMember changes a member's role. Requires owner role.
 func (s *Server) handleUpdateMember(w http.ResponseWriter, r *http.Request) {
 	tok := tokenFromCtx(r)
-	p, err := s.store.GetProject(r.Context(), r.PathValue("project"))
-	if err == store.ErrNotFound {
-		writeError(w, http.StatusNotFound, "project not found")
-		return
-	}
-	if err != nil {
-		s.log.Error("get project", "err", err)
-		writeError(w, http.StatusInternalServerError, "internal error")
+	p, ok := s.resolveProject(r, w)
+	if !ok {
 		return
 	}
 	if !s.requireOwner(w, r, tok, p.ID) {
@@ -165,7 +151,7 @@ func (s *Server) handleUpdateMember(w http.ResponseWriter, r *http.Request) {
 	}
 
 	targetUserID := r.PathValue("user_id")
-	if err := s.store.UpdateProjectMember(r.Context(), p.ID, targetUserID, req.Role, req.EnvID); err == store.ErrNotFound {
+	if err := s.store.UpdateProjectMember(r.Context(), p.ID, targetUserID, req.Role, req.EnvID); errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "member not found")
 		return
 	} else if err != nil {
@@ -181,14 +167,8 @@ func (s *Server) handleUpdateMember(w http.ResponseWriter, r *http.Request) {
 // Optional query param ?env_id=<env-db-id> targets an env-scoped row; absent = project-level row.
 func (s *Server) handleRemoveMember(w http.ResponseWriter, r *http.Request) {
 	tok := tokenFromCtx(r)
-	p, err := s.store.GetProject(r.Context(), r.PathValue("project"))
-	if err == store.ErrNotFound {
-		writeError(w, http.StatusNotFound, "project not found")
-		return
-	}
-	if err != nil {
-		s.log.Error("get project", "err", err)
-		writeError(w, http.StatusInternalServerError, "internal error")
+	p, ok := s.resolveProject(r, w)
+	if !ok {
 		return
 	}
 	if !s.requireOwner(w, r, tok, p.ID) {
@@ -201,7 +181,7 @@ func (s *Server) handleRemoveMember(w http.ResponseWriter, r *http.Request) {
 		envID = &raw
 	}
 
-	if err := s.store.RemoveProjectMember(r.Context(), p.ID, targetUserID, envID); err == store.ErrNotFound {
+	if err := s.store.RemoveProjectMember(r.Context(), p.ID, targetUserID, envID); errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "member not found")
 		return
 	} else if err != nil {

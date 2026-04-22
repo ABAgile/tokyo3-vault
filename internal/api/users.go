@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -28,7 +29,7 @@ func userToResponse(u *model.User) userResponse {
 		ID:        u.ID,
 		Email:     u.Email,
 		Role:      u.Role,
-		CreatedAt: u.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		CreatedAt: fmtAPITime(u.CreatedAt),
 	}
 }
 
@@ -80,7 +81,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user, err := s.store.CreateUser(r.Context(), req.Email, hash, req.Role)
-	if err == store.ErrConflict {
+	if errors.Is(err, store.ErrConflict) {
 		writeError(w, http.StatusConflict, "email already registered")
 		return
 	}
@@ -111,7 +112,7 @@ func (s *Server) handleResetUserPassword(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	targetUserID := r.PathValue("user_id")
-	if _, err := s.store.GetUserByID(r.Context(), targetUserID); err == store.ErrNotFound {
+	if _, err := s.store.GetUserByID(r.Context(), targetUserID); errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "user not found")
 		return
 	} else if err != nil {
@@ -143,7 +144,7 @@ func (s *Server) handleLookupUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user, err := s.store.GetUserByEmail(r.Context(), email)
-	if err == store.ErrNotFound {
+	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "user not found")
 		return
 	}

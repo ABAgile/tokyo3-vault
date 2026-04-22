@@ -151,9 +151,9 @@ func FromFiles(certFile, keyFile, caFile string) (*tls.Config, error) {
 		if err != nil {
 			return nil, fmt.Errorf("read ca file: %w", err)
 		}
-		pool := x509.NewCertPool()
-		if !pool.AppendCertsFromPEM(data) {
-			return nil, fmt.Errorf("no valid certificates in ca file %q", caFile)
+		pool, err := CertPoolFromPEM(data)
+		if err != nil {
+			return nil, fmt.Errorf("ca file %q: %w", caFile, err)
 		}
 		cfg.RootCAs = pool
 	}

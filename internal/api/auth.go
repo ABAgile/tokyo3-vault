@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -63,7 +64,7 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 	}
 	// First user is always admin.
 	user, err := s.store.CreateUser(r.Context(), req.Email, hash, model.UserRoleAdmin)
-	if err == store.ErrConflict {
+	if errors.Is(err, store.ErrConflict) {
 		writeError(w, http.StatusConflict, "email already registered")
 		return
 	}
@@ -92,7 +93,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
 
 	user, err := s.store.GetUserByEmail(r.Context(), req.Email)
-	if err == store.ErrNotFound || (err == nil && !auth.CheckPassword(user.PasswordHash, req.Password)) {
+	if errors.Is(err, store.ErrNotFound) || (err == nil && !auth.CheckPassword(user.PasswordHash, req.Password)) {
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}

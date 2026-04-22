@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -120,7 +121,7 @@ func (s *Server) handleListAuditLogs(w http.ResponseWriter, r *http.Request) {
 
 	if slug := r.URL.Query().Get("project"); slug != "" {
 		p, err := s.store.GetProject(r.Context(), slug)
-		if err == store.ErrNotFound {
+		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "project not found")
 			return
 		}
@@ -170,7 +171,7 @@ func (s *Server) handleListAuditLogs(w http.ResponseWriter, r *http.Request) {
 			Resource:  e.Resource,
 			Metadata:  e.Metadata,
 			IP:        e.IP,
-			CreatedAt: e.CreatedAt.Format("2006-01-02T15:04:05Z"),
+			CreatedAt: fmtAPITime(e.CreatedAt),
 		})
 	}
 	writeJSON(w, http.StatusOK, resp)

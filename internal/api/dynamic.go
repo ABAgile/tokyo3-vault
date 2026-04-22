@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/abagile/tokyo3-vault/internal/crypto"
@@ -62,12 +63,6 @@ type leaseResponse struct {
 	RevokedAt *string `json:"revoked_at,omitempty"`
 	CreatedBy *string `json:"created_by,omitempty"`
 	CreatedAt string  `json:"created_at"`
-}
-
-// ── helpers ───────────────────────────────────────────────────────────────────
-
-func fmtAPITime(t interface{ Format(string) string }) string {
-	return t.Format("2006-01-02T15:04:05Z")
 }
 
 // ── handlers ──────────────────────────────────────────────────────────────────
@@ -157,7 +152,7 @@ func (s *Server) handleGetDynamicBackend(w http.ResponseWriter, r *http.Request)
 	backendSlug := r.PathValue("name")
 
 	backend, err := s.store.GetDynamicBackend(r.Context(), project.ID, envID, backendSlug)
-	if err == store.ErrNotFound {
+	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "no backend configured with slug "+backendSlug)
 		return
 	}
@@ -189,7 +184,7 @@ func (s *Server) handleDeleteDynamicBackend(w http.ResponseWriter, r *http.Reque
 
 	backendSlug := r.PathValue("name")
 
-	if err := s.store.DeleteDynamicBackend(r.Context(), project.ID, envID, backendSlug); err == store.ErrNotFound {
+	if err := s.store.DeleteDynamicBackend(r.Context(), project.ID, envID, backendSlug); errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "no backend configured with slug "+backendSlug)
 		return
 	} else if err != nil {
@@ -213,7 +208,7 @@ func (s *Server) handleSetDynamicRole(w http.ResponseWriter, r *http.Request) {
 	roleName := r.PathValue("role")
 
 	backend, err := s.store.GetDynamicBackend(r.Context(), project.ID, envID, backendSlug)
-	if err == store.ErrNotFound {
+	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "no backend configured with slug "+backendSlug)
 		return
 	}
@@ -257,7 +252,7 @@ func (s *Server) handleListDynamicRoles(w http.ResponseWriter, r *http.Request) 
 	backendSlug := r.PathValue("name")
 
 	backend, err := s.store.GetDynamicBackend(r.Context(), project.ID, envID, backendSlug)
-	if err == store.ErrNotFound {
+	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "no backend configured with slug "+backendSlug)
 		return
 	}
@@ -299,7 +294,7 @@ func (s *Server) handleDeleteDynamicRole(w http.ResponseWriter, r *http.Request)
 	roleName := r.PathValue("role")
 
 	backend, err := s.store.GetDynamicBackend(r.Context(), project.ID, envID, backendSlug)
-	if err == store.ErrNotFound {
+	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "no backend configured with slug "+backendSlug)
 		return
 	}
@@ -309,7 +304,7 @@ func (s *Server) handleDeleteDynamicRole(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if err := s.store.DeleteDynamicRole(r.Context(), backend.ID, roleName); err == store.ErrNotFound {
+	if err := s.store.DeleteDynamicRole(r.Context(), backend.ID, roleName); errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "role not found")
 		return
 	} else if err != nil {
@@ -331,7 +326,7 @@ func (s *Server) handleIssueCreds(w http.ResponseWriter, r *http.Request) {
 	roleName := r.PathValue("role")
 
 	backend, err := s.store.GetDynamicBackend(r.Context(), project.ID, envID, backendSlug)
-	if err == store.ErrNotFound {
+	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "no backend configured with slug "+backendSlug)
 		return
 	}
@@ -342,7 +337,7 @@ func (s *Server) handleIssueCreds(w http.ResponseWriter, r *http.Request) {
 	}
 
 	role, err := s.store.GetDynamicRole(r.Context(), backend.ID, roleName)
-	if err == store.ErrNotFound {
+	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "role not found")
 		return
 	}
@@ -442,7 +437,7 @@ func (s *Server) handleRevokeDynamicLease(w http.ResponseWriter, r *http.Request
 
 	leaseID := r.PathValue("lease_id")
 	lease, err := s.store.GetDynamicLease(r.Context(), leaseID)
-	if err == store.ErrNotFound {
+	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "lease not found")
 		return
 	}
@@ -457,7 +452,7 @@ func (s *Server) handleRevokeDynamicLease(w http.ResponseWriter, r *http.Request
 	}
 
 	backend, err := s.store.GetDynamicBackendByID(r.Context(), lease.BackendID)
-	if err != nil && err != store.ErrNotFound {
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		s.log.Error("get dynamic backend by id", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return

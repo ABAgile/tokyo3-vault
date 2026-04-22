@@ -202,20 +202,7 @@ func (s *DB) ListDynamicLeases(ctx context.Context, projectID, envID string) ([]
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []*model.DynamicLease
-	for rows.Next() {
-		l := &model.DynamicLease{}
-		if err := rows.Scan(&l.ID, &l.ProjectID, &l.EnvID, &l.BackendID, &l.RoleID, &l.RoleName,
-			&l.Username, &l.RevocationTmpl, &l.ExpiresAt, &l.RevokedAt, &l.CreatedBy, &l.CreatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, l)
-	}
-	if out == nil {
-		out = []*model.DynamicLease{}
-	}
-	return out, rows.Err()
+	return scanLeases(rows)
 }
 
 func (s *DB) RevokeDynamicLease(ctx context.Context, id string) error {
@@ -242,6 +229,10 @@ func (s *DB) ListExpiredDynamicLeases(ctx context.Context) ([]*model.DynamicLeas
 	if err != nil {
 		return nil, err
 	}
+	return scanLeases(rows)
+}
+
+func scanLeases(rows *sql.Rows) ([]*model.DynamicLease, error) {
 	defer rows.Close()
 	var out []*model.DynamicLease
 	for rows.Next() {
