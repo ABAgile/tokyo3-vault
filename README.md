@@ -13,6 +13,7 @@ A minimal self-hosted secret manager with versioning, audit logging, and `.env` 
 - [Installation](#installation)
 - [Bootstrap](#bootstrap)
 - [Encryption Architecture](#encryption-architecture)
+- [Identity and Authorization](#identity-and-authorization)
 - [Configuration](#configuration)
 - [Command Reference](#command-reference)
   - [Authentication](#authentication)
@@ -168,6 +169,69 @@ VAULT_MASTER_KEY=<key> VAULT_DB_PATH=vault.db vaultd migrate-keys
 ```
 
 The command is idempotent — already-migrated projects are skipped. All secrets remain readable before and after migration.
+
+---
+
+## Identity and Authorization
+
+Vault has three types of **identity** (who or what is authenticating) and two layers of **roles** (what they can do).
+
+### Identity types
+
+| Identity | Authenticates via | Lifetime | Typical use case |
+|---|---|---|---|
+| **User** | Email + password → session token issued on `vault login` | Until logged out or token deleted | Human operators using the CLI interactively |
+| **Machine token** | Bearer token in `Authorization: Bearer <token>` header | Optional expiry; revoked on deletion | CI/CD pipelines, deployment scripts, background services without a cert infrastructure |
+| **SPIFFE principal** | mTLS client certificate (SVID) matched by SPIFFE ID | Authorization mapping has its own optional expiry, independent of cert rotation | Workloads in SPIFFE/SPIRE environments that already carry automatically-rotated short-lived SVIDs |
+
+All three can access the same secret operations. The choice is about how credentials are issued, stored, and rotated — not about what can be read or written.
+
+### Server roles
+
+Server roles are assigned to **users** and control server-wide access.
+
+| Role | Assigned when | What they can do |
+|---|---|---|
+| `admin` | First signup on a fresh server; or explicitly set by an existing admin | Manage all users; access all projects without membership; view all audit logs |
+| `member` | Every subsequent signup | Create projects (becomes owner automatically); access only projects they belong to |
+
+Machine tokens and SPIFFE principals inherit their server-role capabilities from the user who created them. An unscoped token created by an `admin` user can perform admin operations; one created by a `member` cannot.
+
+### Project roles
+
+Project roles are assigned per-project by a project owner and control access to secrets within that project.
+
+| Role | List & read secrets | Write secrets | Manage members | View project audit log |
+|---|---|---|---|---|
+| `viewer` | Yes | No | No | No |
+| `editor` | Yes | Yes | No | No |
+| `owner` | Yes | Yes | Yes | Yes |
+
+"Write secrets" covers `set`, `delete`, `rollback`, `import`, and `upload`. Project owners can add/update/remove other members but cannot remove themselves if they are the last owner.
+
+Server `admin` users bypass project role checks entirely — they have implicit owner access on every project.
+
+### Machine tokens and SPIFFE principals: scoping and read-only
+
+Both machine tokens and SPIFFE principals support two additional restrictions on top of their inherited role:
+
+| Restriction | Effect |
+|---|---|
+| **Project + env scope** | Token/principal can only access secrets in that specific environment. All other projects and environments return 403. Unscoped tokens can enumerate projects and perform global operations. |
+| **Read-only flag** | All write operations (`set`, `delete`, `import`, `upload`, `rollback`) are rejected regardless of project role. |
+
+These restrictions narrow access — they cannot grant more than the owning user's roles allow.
+
+### Which identity should I use?
+
+| Situation | Recommended identity | Notes |
+|---|---|---|
+| Human operator at a terminal | **User** (`vault login`) | Session token written to `~/.vault/config`; rotates on each login |
+| GitHub Actions / Jenkins CI | **Machine token** scoped to project+env, read-only, short expiry | Store as a CI secret; never committed to source control |
+| Long-running service, no cert infrastructure | **Machine token** stored in a secrets manager (AWS SSM, GCP Secret Manager) | Injected at startup via `VAULT_TOKEN` env var; `vault run` strips it before exec |
+| Kubernetes workload with SPIFFE/SPIRE | **SPIFFE principal** | No token to distribute or rotate; SVID rotation is automatic and transparent to vault |
+| Script that needs to create projects or manage members | Unscoped **machine token** owned by a user with appropriate server role | Scope-less tokens can list projects and call admin endpoints |
+| Short-lived job with compliance-mandated re-authorization | **SPIFFE principal** with `--expires-in` | Mapping expires independently of cert rotation; re-register to renew |
 
 ---
 
