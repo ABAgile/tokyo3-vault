@@ -12,14 +12,15 @@ import (
 
 // Server holds shared dependencies for all HTTP handlers.
 type Server struct {
-	store store.Store
-	kp    crypto.KeyProvider
-	log   *slog.Logger
+	store     store.Store
+	kp        crypto.KeyProvider       // server KEK — used only to wrap/unwrap PEKs
+	projectKP *crypto.ProjectKeyCache  // project-scoped key cache; wraps/unwraps per-secret DEKs
+	log       *slog.Logger
 }
 
 // New returns a configured Server.
-func New(st store.Store, kp crypto.KeyProvider, log *slog.Logger) *Server {
-	return &Server{store: st, kp: kp, log: log}
+func New(st store.Store, kp crypto.KeyProvider, projectKP *crypto.ProjectKeyCache, log *slog.Logger) *Server {
+	return &Server{store: st, kp: kp, projectKP: projectKP, log: log}
 }
 
 // Routes registers all API routes on mux and returns it.

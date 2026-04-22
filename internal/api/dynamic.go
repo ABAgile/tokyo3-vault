@@ -73,11 +73,11 @@ func fmtAPITime(t interface{ Format(string) string }) string {
 // ── handlers ──────────────────────────────────────────────────────────────────
 
 func (s *Server) handleSetDynamicBackend(w http.ResponseWriter, r *http.Request) {
-	projectID, envID, ok := s.resolveProjectEnv(r, w)
+	project, envID, ok := s.resolveProjectEnv(r, w)
 	if !ok {
 		return
 	}
-	if !s.requireWrite(w, r, tokenFromCtx(r), projectID) {
+	if !s.requireWrite(w, r, tokenFromCtx(r), project.ID) {
 		return
 	}
 
@@ -117,14 +117,20 @@ func (s *Server) handleSetDynamicBackend(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	encConfig, encConfigDEK, err := crypto.EncryptSecret(r.Context(), s.kp, configJSON)
+	projectKP, err := s.projectKP.ForProject(r.Context(), project.ID, project.EncryptedPEK)
+	if err != nil {
+		s.log.Error("load project key", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	encConfig, encConfigDEK, err := crypto.EncryptSecret(r.Context(), projectKP, configJSON)
 	if err != nil {
 		s.log.Error("encrypt backend config", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 
-	backend, err := s.store.SetDynamicBackend(r.Context(), projectID, envID, backendSlug, req.Type, encConfig, encConfigDEK, req.DefaultTTL, req.MaxTTL)
+	backend, err := s.store.SetDynamicBackend(r.Context(), project.ID, envID, backendSlug, req.Type, encConfig, encConfigDEK, req.DefaultTTL, req.MaxTTL)
 	if err != nil {
 		s.log.Error("set dynamic backend", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -143,14 +149,14 @@ func (s *Server) handleSetDynamicBackend(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleGetDynamicBackend(w http.ResponseWriter, r *http.Request) {
-	projectID, envID, ok := s.resolveProjectEnv(r, w)
+	project, envID, ok := s.resolveProjectEnv(r, w)
 	if !ok {
 		return
 	}
 
 	backendSlug := r.PathValue("name")
 
-	backend, err := s.store.GetDynamicBackend(r.Context(), projectID, envID, backendSlug)
+	backend, err := s.store.GetDynamicBackend(r.Context(), project.ID, envID, backendSlug)
 	if err == store.ErrNotFound {
 		writeError(w, http.StatusNotFound, "no backend configured with slug "+backendSlug)
 		return
@@ -173,17 +179,17 @@ func (s *Server) handleGetDynamicBackend(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleDeleteDynamicBackend(w http.ResponseWriter, r *http.Request) {
-	projectID, envID, ok := s.resolveProjectEnv(r, w)
+	project, envID, ok := s.resolveProjectEnv(r, w)
 	if !ok {
 		return
 	}
-	if !s.requireWrite(w, r, tokenFromCtx(r), projectID) {
+	if !s.requireWrite(w, r, tokenFromCtx(r), project.ID) {
 		return
 	}
 
 	backendSlug := r.PathValue("name")
 
-	if err := s.store.DeleteDynamicBackend(r.Context(), projectID, envID, backendSlug); err == store.ErrNotFound {
+	if err := s.store.DeleteDynamicBackend(r.Context(), project.ID, envID, backendSlug); err == store.ErrNotFound {
 		writeError(w, http.StatusNotFound, "no backend configured with slug "+backendSlug)
 		return
 	} else if err != nil {
@@ -195,18 +201,18 @@ func (s *Server) handleDeleteDynamicBackend(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *Server) handleSetDynamicRole(w http.ResponseWriter, r *http.Request) {
-	projectID, envID, ok := s.resolveProjectEnv(r, w)
+	project, envID, ok := s.resolveProjectEnv(r, w)
 	if !ok {
 		return
 	}
-	if !s.requireWrite(w, r, tokenFromCtx(r), projectID) {
+	if !s.requireWrite(w, r, tokenFromCtx(r), project.ID) {
 		return
 	}
 
 	backendSlug := r.PathValue("name")
 	roleName := r.PathValue("role")
 
-	backend, err := s.store.GetDynamicBackend(r.Context(), projectID, envID, backendSlug)
+	backend, err := s.store.GetDynamicBackend(r.Context(), project.ID, envID, backendSlug)
 	if err == store.ErrNotFound {
 		writeError(w, http.StatusNotFound, "no backend configured with slug "+backendSlug)
 		return
@@ -243,14 +249,14 @@ func (s *Server) handleSetDynamicRole(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListDynamicRoles(w http.ResponseWriter, r *http.Request) {
-	projectID, envID, ok := s.resolveProjectEnv(r, w)
+	project, envID, ok := s.resolveProjectEnv(r, w)
 	if !ok {
 		return
 	}
 
 	backendSlug := r.PathValue("name")
 
-	backend, err := s.store.GetDynamicBackend(r.Context(), projectID, envID, backendSlug)
+	backend, err := s.store.GetDynamicBackend(r.Context(), project.ID, envID, backendSlug)
 	if err == store.ErrNotFound {
 		writeError(w, http.StatusNotFound, "no backend configured with slug "+backendSlug)
 		return
@@ -281,18 +287,18 @@ func (s *Server) handleListDynamicRoles(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleDeleteDynamicRole(w http.ResponseWriter, r *http.Request) {
-	projectID, envID, ok := s.resolveProjectEnv(r, w)
+	project, envID, ok := s.resolveProjectEnv(r, w)
 	if !ok {
 		return
 	}
-	if !s.requireWrite(w, r, tokenFromCtx(r), projectID) {
+	if !s.requireWrite(w, r, tokenFromCtx(r), project.ID) {
 		return
 	}
 
 	backendSlug := r.PathValue("name")
 	roleName := r.PathValue("role")
 
-	backend, err := s.store.GetDynamicBackend(r.Context(), projectID, envID, backendSlug)
+	backend, err := s.store.GetDynamicBackend(r.Context(), project.ID, envID, backendSlug)
 	if err == store.ErrNotFound {
 		writeError(w, http.StatusNotFound, "no backend configured with slug "+backendSlug)
 		return
@@ -315,7 +321,7 @@ func (s *Server) handleDeleteDynamicRole(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleIssueCreds(w http.ResponseWriter, r *http.Request) {
-	projectID, envID, ok := s.resolveProjectEnv(r, w)
+	project, envID, ok := s.resolveProjectEnv(r, w)
 	if !ok {
 		return
 	}
@@ -324,7 +330,7 @@ func (s *Server) handleIssueCreds(w http.ResponseWriter, r *http.Request) {
 	backendSlug := r.PathValue("name")
 	roleName := r.PathValue("role")
 
-	backend, err := s.store.GetDynamicBackend(r.Context(), projectID, envID, backendSlug)
+	backend, err := s.store.GetDynamicBackend(r.Context(), project.ID, envID, backendSlug)
 	if err == store.ErrNotFound {
 		writeError(w, http.StatusNotFound, "no backend configured with slug "+backendSlug)
 		return
@@ -356,8 +362,15 @@ func (s *Server) handleIssueCreds(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	projectKP, err := s.projectKP.ForProject(r.Context(), project.ID, project.EncryptedPEK)
+	if err != nil {
+		s.log.Error("load project key", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
 	ttl := dynamic.EffectiveTTL(backend, role, req.TTL)
-	username, password, expiresAt, err := issuer.Issue(r.Context(), s.kp, backend, role, ttl)
+	username, password, expiresAt, err := issuer.Issue(r.Context(), projectKP, backend, role, ttl)
 	if err != nil {
 		s.log.Error("issue dynamic creds", "backend", backendSlug, "role", roleName, "err", err)
 		writeError(w, http.StatusInternalServerError, "failed to issue credentials: "+err.Error())
@@ -369,12 +382,12 @@ func (s *Server) handleIssueCreds(w http.ResponseWriter, r *http.Request) {
 		createdBy = &tok.ID
 	}
 	lease, err := s.store.CreateDynamicLease(r.Context(),
-		projectID, envID, backend.ID, role.ID, role.Name,
+		project.ID, envID, backend.ID, role.ID, role.Name,
 		username, role.RevocationTmpl, expiresAt, createdBy)
 	if err != nil {
 		s.log.Error("create dynamic lease", "err", err)
 		// Creds were already created — best effort revoke.
-		_ = issuer.Revoke(r.Context(), s.kp, backend, role.RevocationTmpl, username)
+		_ = issuer.Revoke(r.Context(), projectKP, backend, role.RevocationTmpl, username)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
@@ -388,12 +401,12 @@ func (s *Server) handleIssueCreds(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListDynamicLeases(w http.ResponseWriter, r *http.Request) {
-	projectID, envID, ok := s.resolveProjectEnv(r, w)
+	project, envID, ok := s.resolveProjectEnv(r, w)
 	if !ok {
 		return
 	}
 
-	leases, err := s.store.ListDynamicLeases(r.Context(), projectID, envID)
+	leases, err := s.store.ListDynamicLeases(r.Context(), project.ID, envID)
 	if err != nil {
 		s.log.Error("list dynamic leases", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -419,11 +432,11 @@ func (s *Server) handleListDynamicLeases(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleRevokeDynamicLease(w http.ResponseWriter, r *http.Request) {
-	projectID, _, ok := s.resolveProjectEnv(r, w)
+	project, _, ok := s.resolveProjectEnv(r, w)
 	if !ok {
 		return
 	}
-	if !s.requireWrite(w, r, tokenFromCtx(r), projectID) {
+	if !s.requireWrite(w, r, tokenFromCtx(r), project.ID) {
 		return
 	}
 
@@ -456,7 +469,13 @@ func (s *Server) handleRevokeDynamicLease(w http.ResponseWriter, r *http.Request
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		if err := issuer.Revoke(r.Context(), s.kp, backend, lease.RevocationTmpl, lease.Username); err != nil {
+		projectKP, err := s.projectKP.ForProject(r.Context(), project.ID, project.EncryptedPEK)
+		if err != nil {
+			s.log.Error("load project key", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if err := issuer.Revoke(r.Context(), projectKP, backend, lease.RevocationTmpl, lease.Username); err != nil {
 			s.log.Error("revoke dynamic creds", "lease_id", leaseID, "err", err)
 			writeError(w, http.StatusInternalServerError, "failed to revoke credentials: "+err.Error())
 			return

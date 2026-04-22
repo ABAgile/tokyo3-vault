@@ -35,6 +35,7 @@ type Store interface {
 	// Projects
 	CreateProject(ctx context.Context, name, slug string) (*model.Project, error)
 	GetProject(ctx context.Context, slug string) (*model.Project, error)
+	GetProjectByID(ctx context.Context, id string) (*model.Project, error)
 	ListProjects(ctx context.Context) ([]*model.Project, error)
 	ListProjectsByMember(ctx context.Context, userID string) ([]*model.Project, error)
 	DeleteProject(ctx context.Context, slug string) error
@@ -94,6 +95,14 @@ type Store interface {
 	GetCertPrincipalBySPIFFEID(ctx context.Context, spiffeID string) (*model.CertPrincipal, error)
 	ListCertPrincipals(ctx context.Context, userID string) ([]*model.CertPrincipal, error)
 	DeleteCertPrincipal(ctx context.Context, id, userID string) error
+
+	// Project envelope keys
+	// SetProjectKey stores the KEK-wrapped PEK for a project.
+	SetProjectKey(ctx context.Context, projectID string, encPEK []byte) error
+	// RewrapProjectDEKs re-wraps every secret_versions.encrypted_dek and every
+	// dynamic_backends.encrypted_config_dek for the project in one transaction,
+	// applying rewrap(oldEncDEK) → newEncDEK to each row.
+	RewrapProjectDEKs(ctx context.Context, projectID string, rewrap func([]byte) ([]byte, error)) error
 }
 
 // AuditFilter controls which audit log entries are returned.

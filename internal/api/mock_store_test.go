@@ -117,6 +117,9 @@ func (m *mockStore) GetProject(ctx context.Context, slug string) (*model.Project
 	}
 	return nil, store.ErrNotFound
 }
+func (m *mockStore) GetProjectByID(ctx context.Context, id string) (*model.Project, error) {
+	return nil, store.ErrNotFound
+}
 func (m *mockStore) ListProjects(ctx context.Context) ([]*model.Project, error) {
 	if m.listProjects != nil {
 		return m.listProjects(ctx)
@@ -288,4 +291,10 @@ func (m *mockStore) ListCertPrincipals(ctx context.Context, userID string) ([]*m
 }
 func (m *mockStore) DeleteCertPrincipal(ctx context.Context, id, userID string) error {
 	return store.ErrNotFound
+}
+func (m *mockStore) SetProjectKey(ctx context.Context, projectID string, encPEK []byte) error {
+	return nil
+}
+func (m *mockStore) RewrapProjectDEKs(ctx context.Context, projectID string, rewrap func([]byte) ([]byte, error)) error {
+	return nil
 }

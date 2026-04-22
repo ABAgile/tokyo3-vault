@@ -14,14 +14,15 @@ import (
 // credentials. It also sweeps on startup to handle any leases that expired
 // while the server was down.
 type Revoker struct {
-	store store.Store
-	kp    crypto.KeyProvider
-	log   *slog.Logger
+	store     store.Store
+	kp        crypto.KeyProvider
+	projectKP *crypto.ProjectKeyCache
+	log       *slog.Logger
 }
 
-// NewRevoker returns a Revoker backed by the given store and key provider.
-func NewRevoker(st store.Store, kp crypto.KeyProvider, log *slog.Logger) *Revoker {
-	return &Revoker{store: st, kp: kp, log: log}
+// NewRevoker returns a Revoker backed by the given store and key providers.
+func NewRevoker(st store.Store, kp crypto.KeyProvider, projectKP *crypto.ProjectKeyCache, log *slog.Logger) *Revoker {
+	return &Revoker{store: st, kp: kp, projectKP: projectKP, log: log}
 }
 
 // Run blocks until ctx is cancelled, sweeping for expired leases every minute.
@@ -67,11 +68,20 @@ func (r *Revoker) revokeLease(ctx context.Context, lease *model.DynamicLease) er
 		return err
 	}
 
+	project, err := r.store.GetProjectByID(ctx, backend.ProjectID)
+	if err != nil {
+		return err
+	}
+	projectKP, err := r.projectKP.ForProject(ctx, project.ID, project.EncryptedPEK)
+	if err != nil {
+		return err
+	}
+
 	issuer, err := Get(backend.Type)
 	if err != nil {
 		return err
 	}
-	if err := issuer.Revoke(ctx, r.kp, backend, lease.RevocationTmpl, lease.Username); err != nil {
+	if err := issuer.Revoke(ctx, projectKP, backend, lease.RevocationTmpl, lease.Username); err != nil {
 		return err
 	}
 	return r.store.RevokeDynamicLease(ctx, lease.ID)

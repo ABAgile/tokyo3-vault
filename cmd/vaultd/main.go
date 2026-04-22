@@ -32,11 +32,21 @@
 //
 // Optional:
 //
-//	VAULT_ADDR            Listen address (default: :8443)
+//	VAULT_ADDR                    Listen address (default: :8443)
+//	VAULT_PROJECT_KEY_CACHE_TTL   How long a project's plaintext PEK stays cached in memory
+//	                              (default: 5m). Longer = fewer KMS calls; shorter = faster
+//	                              effect after PEK rotation. Accepts Go duration strings (5m, 1h).
+//
+// Subcommands:
+//
+//	vaultd serve          Start the server (default when no subcommand is given)
+//	vaultd migrate-keys   Migrate all projects to use per-project envelope keys (PEKs).
+//	                      Safe to re-run (idempotent). Requires the same env vars as serve.
 package main
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
 	"fmt"
 	"log/slog"
@@ -44,6 +54,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/abagile/tokyo3-vault/internal/api"
 	"github.com/abagile/tokyo3-vault/internal/crypto"
@@ -60,6 +71,11 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
+	subcommand := "serve"
+	if len(os.Args) > 1 {
+		subcommand = os.Args[1]
+	}
+
 	kp, err := openKeyProvider(ctx, log)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "key provider: %v\n", err)
@@ -75,7 +91,25 @@ func main() {
 		defer closer.Close()
 	}
 
-	revoker := dynamic.NewRevoker(st, kp, log)
+	cacheT := 5 * time.Minute
+	if v := os.Getenv("VAULT_PROJECT_KEY_CACHE_TTL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			cacheT = d
+		} else {
+			log.Warn("invalid VAULT_PROJECT_KEY_CACHE_TTL, using default", "value", v, "default", cacheT)
+		}
+	}
+	projectKP := crypto.NewProjectKeyCache(kp, cacheT)
+
+	if subcommand == "migrate-keys" {
+		if err := runMigrateKeys(ctx, st, kp, log); err != nil {
+			fmt.Fprintf(os.Stderr, "migrate-keys: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	revoker := dynamic.NewRevoker(st, kp, projectKP, log)
 	go revoker.Run(ctx)
 
 	addr := os.Getenv("VAULT_ADDR")
@@ -89,7 +123,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	srv := api.New(st, kp, log)
+	srv := api.New(st, kp, projectKP, log)
 	httpSrv := &http.Server{
 		Addr:      addr,
 		Handler:   srv.Routes(),
@@ -101,6 +135,49 @@ func main() {
 		fmt.Fprintf(os.Stderr, "server error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// runMigrateKeys iterates every project where encrypted_pek IS NULL, generates a
+// PEK, wraps it with the server KEK, and re-wraps all per-secret and per-backend
+// DEKs for that project so they are wrapped by the PEK instead of the server KEK.
+// Safe to re-run (idempotent): projects with an existing PEK are skipped.
+func runMigrateKeys(ctx context.Context, st store.Store, kp crypto.KeyProvider, log *slog.Logger) error {
+	projects, err := st.ListProjects(ctx)
+	if err != nil {
+		return fmt.Errorf("list projects: %w", err)
+	}
+	for _, p := range projects {
+		if p.EncryptedPEK != nil {
+			log.Info("migrate-keys: already migrated, skipping", "slug", p.Slug)
+			continue
+		}
+
+		pek := make([]byte, 32)
+		if _, err := rand.Read(pek); err != nil {
+			return fmt.Errorf("generate PEK for %s: %w", p.Slug, err)
+		}
+		encPEK, err := kp.WrapDEK(ctx, pek)
+		if err != nil {
+			return fmt.Errorf("wrap PEK for %s: %w", p.Slug, err)
+		}
+		if err := st.SetProjectKey(ctx, p.ID, encPEK); err != nil {
+			return fmt.Errorf("store PEK for %s: %w", p.Slug, err)
+		}
+
+		projectKP := crypto.NewProjectKeyProvider(pek)
+		err = st.RewrapProjectDEKs(ctx, p.ID, func(old []byte) ([]byte, error) {
+			dek, err := kp.UnwrapDEK(ctx, old)
+			if err != nil {
+				return nil, err
+			}
+			return projectKP.WrapDEK(ctx, dek)
+		})
+		if err != nil {
+			return fmt.Errorf("rewrap DEKs for %s: %w", p.Slug, err)
+		}
+		log.Info("migrate-keys: migrated", "slug", p.Slug, "id", p.ID)
+	}
+	return nil
 }
 
 // buildServerTLS constructs the server tls.Config.

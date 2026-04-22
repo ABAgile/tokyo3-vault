@@ -1,6 +1,7 @@
 package api
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"net/http"
 	"regexp"
@@ -88,6 +89,20 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 		s.log.Error("create project", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+
+	// Generate and store a project envelope key (PEK) wrapped by the server KEK.
+	// Non-fatal: if KMS is unavailable the project uses the backward-compat path
+	// (master KEK directly) until operator runs `vaultd migrate-keys`.
+	pek := make([]byte, 32)
+	if _, randErr := rand.Read(pek); randErr == nil {
+		if encPEK, wrapErr := s.kp.WrapDEK(r.Context(), pek); wrapErr == nil {
+			if err := s.store.SetProjectKey(r.Context(), p.ID, encPEK); err != nil {
+				s.log.Warn("set project key", "project", p.ID, "err", err)
+			}
+		} else {
+			s.log.Warn("wrap project key", "project", p.ID, "err", wrapErr)
+		}
 	}
 
 	// Auto-add the creating user as owner.

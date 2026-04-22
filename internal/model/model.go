@@ -36,10 +36,11 @@ type Token struct {
 }
 
 type Project struct {
-	ID        string
-	Name      string
-	Slug      string
-	CreatedAt time.Time
+	ID           string
+	Name         string
+	Slug         string
+	EncryptedPEK []byte // PEK wrapped by server KEK; nil until migrated
+	CreatedAt    time.Time
 }
 
 type Environment struct {

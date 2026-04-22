@@ -21,7 +21,9 @@ func newTestServer(t *testing.T, st *mockStore) *Server {
 	for i := range kek {
 		kek[i] = byte(i + 1)
 	}
-	return &Server{store: st, kp: crypto.NewLocalKeyProvider(kek), log: slog.Default()}
+	kp := crypto.NewLocalKeyProvider(kek)
+	projectKP := crypto.NewProjectKeyCache(kp, time.Minute)
+	return &Server{store: st, kp: kp, projectKP: projectKP, log: slog.Default()}
 }
 
 // withToken injects tok into r's context, simulating the auth middleware.

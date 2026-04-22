@@ -56,6 +56,9 @@ func (m *mockStore) CreateProject(_ context.Context, _, _ string) (*model.Projec
 func (m *mockStore) GetProject(_ context.Context, _ string) (*model.Project, error) {
 	return nil, store.ErrNotFound
 }
+func (m *mockStore) GetProjectByID(_ context.Context, _ string) (*model.Project, error) {
+	return nil, store.ErrNotFound
+}
 func (m *mockStore) ListProjects(_ context.Context) ([]*model.Project, error) { return nil, nil }
 func (m *mockStore) ListProjectsByMember(_ context.Context, _ string) ([]*model.Project, error) {
 	return nil, nil
@@ -141,6 +144,10 @@ func (m *mockStore) ListCertPrincipals(_ context.Context, _ string) ([]*model.Ce
 	return nil, nil
 }
 func (m *mockStore) DeleteCertPrincipal(_ context.Context, _, _ string) error { return nil }
+func (m *mockStore) SetProjectKey(_ context.Context, _ string, _ []byte) error { return nil }
+func (m *mockStore) RewrapProjectDEKs(_ context.Context, _ string, _ func([]byte) ([]byte, error)) error {
+	return nil
+}
 
 // ── IssueUserToken ────────────────────────────────────────────────────────────
 
