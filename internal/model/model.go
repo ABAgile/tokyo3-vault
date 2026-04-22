@@ -2,6 +2,8 @@ package model
 
 import "time"
 
+// ── Server-level constants ────────────────────────────────────────────────────
+
 // Server-level user roles.
 const (
 	UserRoleMember = "member"
@@ -15,6 +17,8 @@ const (
 	RoleOwner  = "owner"
 )
 
+// ── Core identity types ───────────────────────────────────────────────────────
+
 type User struct {
 	ID           string
 	Email        string
@@ -23,6 +27,8 @@ type User struct {
 	CreatedAt    time.Time
 }
 
+// Token covers both user session tokens (UserID set, ProjectID nil) and
+// machine tokens (may have ProjectID/EnvID scope and ReadOnly flag).
 type Token struct {
 	ID        string
 	UserID    *string
@@ -34,6 +40,23 @@ type Token struct {
 	ExpiresAt *time.Time
 	CreatedAt time.Time
 }
+
+// CertPrincipal maps a SPIFFE ID to vault authorization scope.
+// Any cert signed by the server's trusted client CA (VAULT_TLS_CLIENT_CA) whose
+// URI SAN matches SPIFFEID is authorized as this principal without per-cert enrollment.
+type CertPrincipal struct {
+	ID          string
+	UserID      *string // owner — who registered this mapping
+	Description string
+	SPIFFEID    string     // URI SAN, e.g. spiffe://cluster.local/ns/myapp/sa/server
+	ProjectID   *string    // nil = unscoped (any project)
+	EnvID       *string    // nil = any env
+	ReadOnly    bool
+	ExpiresAt   *time.Time // when this mapping expires (independent of cert lifetime)
+	CreatedAt   time.Time
+}
+
+// ── Project and environment types ────────────────────────────────────────────
 
 type Project struct {
 	ID           string
@@ -51,6 +74,19 @@ type Environment struct {
 	CreatedAt time.Time
 }
 
+// ProjectMember records a user's role in a project or a specific environment.
+// EnvID nil means project-level access (all environments). Non-nil means access
+// is scoped to that single environment only.
+type ProjectMember struct {
+	ProjectID string
+	UserID    string
+	EnvID     *string // nil = project-level; non-nil = env-specific
+	Role      string  // RoleViewer | RoleEditor | RoleOwner
+	CreatedAt time.Time
+}
+
+// ── Secret types ─────────────────────────────────────────────────────────────
+
 type Secret struct {
 	ID               string
 	ProjectID        string
@@ -62,6 +98,18 @@ type Secret struct {
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
 }
+
+type SecretVersion struct {
+	ID             string
+	SecretID       string
+	EncryptedValue []byte
+	EncryptedDEK   []byte
+	Version        int
+	CreatedAt      time.Time
+	CreatedBy      *string
+}
+
+// ── Audit log ─────────────────────────────────────────────────────────────────
 
 // AuditLog records a single auditable action taken by an actor.
 type AuditLog struct {
@@ -75,26 +123,7 @@ type AuditLog struct {
 	CreatedAt time.Time
 }
 
-// ProjectMember records a user's role in a project or a specific environment.
-// EnvID nil means project-level access (all environments). Non-nil means access
-// is scoped to that single environment only.
-type ProjectMember struct {
-	ProjectID string
-	UserID    string
-	EnvID     *string // nil = project-level; non-nil = env-specific
-	Role      string  // RoleViewer | RoleEditor | RoleOwner
-	CreatedAt time.Time
-}
-
-type SecretVersion struct {
-	ID             string
-	SecretID       string
-	EncryptedValue []byte
-	EncryptedDEK   []byte
-	Version        int
-	CreatedAt      time.Time
-	CreatedBy      *string
-}
+// ── Dynamic secrets types ─────────────────────────────────────────────────────
 
 // DynamicBackend holds the encrypted connection config for a named backend
 // within a project+environment. Uniqueness is (project_id, env_id, slug).
@@ -123,21 +152,6 @@ type DynamicRole struct {
 	RevocationTmpl string
 	TTL            *int // nil = use backend DefaultTTL
 	CreatedAt      time.Time
-}
-
-// CertPrincipal maps a SPIFFE ID to vault authorization scope.
-// Any cert signed by the server's trusted client CA (VAULT_TLS_CLIENT_CA) whose
-// URI SAN matches SPIFFEID is authorized as this principal without per-cert enrollment.
-type CertPrincipal struct {
-	ID          string
-	UserID      *string // owner — who registered this mapping
-	Description string
-	SPIFFEID    string     // URI SAN, e.g. spiffe://cluster.local/ns/myapp/sa/server
-	ProjectID   *string    // nil = unscoped (any project)
-	EnvID       *string    // nil = any env
-	ReadOnly    bool
-	ExpiresAt   *time.Time // when this mapping expires (independent of cert lifetime)
-	CreatedAt   time.Time
 }
 
 // DynamicLease records a single issued credential pair.

@@ -21,6 +21,7 @@ A minimal self-hosted secret manager with versioning, audit logging, and `.env` 
   - [Environments](#environments)
   - [Secrets](#secrets)
   - [Members](#members)
+  - [Access](#access)
   - [Tokens](#tokens)
   - [SPIFFE/mTLS Principals](#spiFFEmtls-principals)
   - [Users](#users)
@@ -199,7 +200,7 @@ Machine tokens and SPIFFE principals inherit their server-role capabilities from
 
 ### Project roles
 
-Project roles are assigned per-project by a project owner and control access to secrets within that project.
+Project roles are assigned per-project by a project owner and control access to secrets within that project. Membership can be **project-level** (all environments) or **env-scoped** (one environment only) — see [Env-scoped membership](#env-scoped-membership).
 
 | Role | List & read secrets | Write secrets | Manage members | View project audit log |
 |---|---|---|---|---|
@@ -207,7 +208,7 @@ Project roles are assigned per-project by a project owner and control access to 
 | `editor` | Yes | Yes | No | No |
 | `owner` | Yes | Yes | Yes | Yes |
 
-"Write secrets" covers `set`, `delete`, `rollback`, `import`, and `upload`. Project owners can add/update/remove other members but cannot remove themselves if they are the last owner.
+"Write secrets" covers `set`, `delete`, `rollback`, `import`, and `upload`. Project owners can add/update/remove other members but cannot remove themselves if they are the last owner. `owner` role cannot be env-scoped.
 
 Server `admin` users bypass project role checks entirely — they have implicit owner access on every project.
 
@@ -557,7 +558,7 @@ vault export --env production > .env.local
 
 ### Members
 
-Manage who has access to a project and at what role.
+Manage who has access to a project and at what role. Membership can be **project-level** (grants access to all environments in the project) or **env-scoped** (grants access to one specific environment only), mirroring the scoping model of machine tokens and SPIFFE principals.
 
 #### `vault members list <project-slug>`
 
@@ -565,18 +566,25 @@ Manage who has access to a project and at what role.
 vault members list myapp
 ```
 
-Output: `USER ID`, `EMAIL`, `ROLE`, `ADDED`
+Output: `USER ID`, `EMAIL`, `ROLE`, `SCOPE`, `ADDED`
+
+The `SCOPE` column shows `project` for project-level membership or `env` for an environment-specific row.
 
 #### `vault members add <project-slug>`
 
 ```sh
+# Project-level (access to all environments)
 vault members add myapp --email alice@example.com --role editor
+
+# Env-scoped (access to one environment only)
+vault members add myapp --email alice@example.com --role viewer --env-id <env-db-id>
 ```
 
 | Flag | Description |
 |---|---|
 | `--email` | User's email address (required) |
 | `--role` | `viewer`, `editor`, or `owner` (default: `viewer`) |
+| `--env-id` | Scope membership to this environment database ID (omit for project-level). `owner` role cannot be env-scoped. |
 
 Requires project owner role.
 
@@ -584,21 +592,66 @@ Requires project owner role.
 
 ```sh
 vault members update myapp <user-id> --role owner
+vault members update myapp <user-id> --role editor --env-id <env-db-id>
 ```
 
 | Flag | Description |
 |---|---|
-| `--role` | New role: `viewer`, `editor`, or `owner` |
+| `--role` | New role: `viewer`, `editor`, or `owner` (required) |
+| `--env-id` | Identifies the env-scoped row to update (omit for project-level row) |
 
 Requires project owner role.
 
 #### `vault members remove <project-slug> <user-id>`
 
 ```sh
+# Remove project-level membership
 vault members remove myapp <user-id>
+
+# Remove env-scoped membership only
+vault members remove myapp <user-id> --env-id <env-db-id>
 ```
 
+| Flag | Description |
+|---|---|
+| `--env-id` | Targets the env-scoped row (omit for project-level row) |
+
 Requires project owner role.
+
+---
+
+### Access
+
+Inspect every identity that has effective access to a project environment, regardless of how that access is granted.
+
+#### `vault access list`
+
+```sh
+vault access list --project myapp --env production
+```
+
+Lists all three identity types with their scope and access level:
+
+- **user** — project members (project-level or env-scoped rows)
+- **token** — machine tokens that reach this env (env-scoped, project-scoped, or unscoped tokens owned by project members)
+- **principal** — SPIFFE principals with matching scope (expired principals excluded)
+
+| Flag | Description |
+|---|---|
+| `--project` | Project slug (default: from `.vault.toml`) |
+| `--env` | Environment slug (default: from `.vault.toml`) |
+
+Output columns: `TYPE`, `IDENTITY`, `SCOPE`, `ACCESS`, `OWNER`, `EXPIRES`
+
+The `SCOPE` column shows how access was granted:
+
+| Value | Meaning |
+|---|---|
+| `env` | Explicitly scoped to this project+environment |
+| `project` | Scoped to the project (any environment) |
+| `unscoped` | No project/env restriction; access derives from the owner's project membership |
+
+Requires at least viewer role on the project.
 
 ---
 
@@ -1048,6 +1101,14 @@ Assigned per-project via `vault members add/update`. Server admins bypass all pr
 "Manage members" covers: `members add/update/remove`.
 
 The user who creates a project is automatically its `owner`.
+
+### Env-scoped membership
+
+By default, project membership grants access to **all** environments in the project. Pass `--env-id` when adding or updating a member to restrict their access to a single environment. This mirrors the scoping model of machine tokens and SPIFFE principals.
+
+A user can hold both a project-level row and one or more env-specific rows in the same project. For any given environment, the most-specific row takes precedence: an env-scoped `editor` row overrides a project-level `viewer` row for that environment.
+
+`owner` role cannot be env-scoped — project ownership is inherently project-wide. Use `vault access list --project <p> --env <e>` to see every identity (members, tokens, principals) with effective access to a specific environment.
 
 ---
 
