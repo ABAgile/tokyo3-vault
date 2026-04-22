@@ -121,6 +121,21 @@ type DynamicRole struct {
 	CreatedAt      time.Time
 }
 
+// CertPrincipal maps a SPIFFE ID to vault authorization scope.
+// Any cert signed by the server's trusted client CA (VAULT_TLS_CLIENT_CA) whose
+// URI SAN matches SPIFFEID is authorized as this principal without per-cert enrollment.
+type CertPrincipal struct {
+	ID          string
+	UserID      *string // owner — who registered this mapping
+	Description string
+	SPIFFEID    string     // URI SAN, e.g. spiffe://cluster.local/ns/myapp/sa/server
+	ProjectID   *string    // nil = unscoped (any project)
+	EnvID       *string    // nil = any env
+	ReadOnly    bool
+	ExpiresAt   *time.Time // when this mapping expires (independent of cert lifetime)
+	CreatedAt   time.Time
+}
+
 // DynamicLease records a single issued credential pair.
 // Rows are never deleted — RevokedAt marks revocation.
 // RevocationTmpl and BackendID are denormalized from the role at issuance time

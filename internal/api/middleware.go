@@ -11,6 +11,7 @@ import (
 	"github.com/abagile/tokyo3-vault/internal/store"
 )
 
+
 // isServerAdmin reports whether userID belongs to a user with the server-admin role.
 func (s *Server) isServerAdmin(ctx context.Context, userID string) bool {
 	user, err := s.store.GetUserByID(ctx, userID)
@@ -24,9 +25,27 @@ type contextKey string
 
 const tokenKey contextKey = "token"
 
-// auth wraps a handler with bearer token authentication.
+// auth wraps a handler with authentication. Client certificate (SPIFFE/mTLS) is
+// checked first when the connection has peer certificates; bearer token is the fallback.
 func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Try SPIFFE/mTLS client cert first.
+		if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
+			tok, err := s.authFromSPIFFECert(r)
+			if err == nil {
+				ctx := context.WithValue(r.Context(), tokenKey, tok)
+				next(w, r.WithContext(ctx))
+				return
+			}
+			// errSPIFFEUnregistered: cert present but no matching principal → fall through to bearer.
+			// Any other error (e.g. expired): explicit denial.
+			if err != errSPIFFEUnregistered {
+				writeError(w, http.StatusUnauthorized, err.Error())
+				return
+			}
+		}
+
+		// Bearer token fallback.
 		raw := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		if raw == "" {
 			writeError(w, http.StatusUnauthorized, "missing token")

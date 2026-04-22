@@ -2,6 +2,7 @@ package commands
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/abagile/tokyo3-vault/cmd/vault/client"
 	"github.com/abagile/tokyo3-vault/cmd/vault/config"
@@ -79,6 +80,7 @@ func newDynBackendCmd() *cobra.Command {
 func newDynBackendSetCmd() *cobra.Command {
 	var project, env, backendType, dsn string
 	var defaultTTL, maxTTL int
+	var clientCertFile, clientKeyFile, caCertFile string
 	cmd := &cobra.Command{
 		Use:   "set <slug>",
 		Short: "Configure (or update) a dynamic backend for a project+env",
@@ -99,11 +101,35 @@ func newDynBackendSetCmd() *cobra.Command {
 			if dsn == "" {
 				return fmt.Errorf("--dsn is required")
 			}
+			if (clientCertFile == "") != (clientKeyFile == "") {
+				return fmt.Errorf("--client-cert-file and --client-key-file must both be provided")
+			}
+
+			cfg := map[string]any{"dsn": dsn}
+
+			if clientCertFile != "" {
+				certPEM, err := os.ReadFile(clientCertFile)
+				if err != nil {
+					return fmt.Errorf("read --client-cert-file: %w", err)
+				}
+				keyPEM, err := os.ReadFile(clientKeyFile)
+				if err != nil {
+					return fmt.Errorf("read --client-key-file: %w", err)
+				}
+				cfg["client_cert"] = string(certPEM)
+				cfg["client_key"] = string(keyPEM)
+			}
+			if caCertFile != "" {
+				caPEM, err := os.ReadFile(caCertFile)
+				if err != nil {
+					return fmt.Errorf("read --ca-cert-file: %w", err)
+				}
+				cfg["ca_cert"] = string(caPEM)
+			}
+
 			body := map[string]any{
-				"type": backendType,
-				"config": map[string]any{
-					"dsn": dsn,
-				},
+				"type":        backendType,
+				"config":      cfg,
 				"default_ttl": defaultTTL,
 				"max_ttl":     maxTTL,
 			}
@@ -122,6 +148,9 @@ func newDynBackendSetCmd() *cobra.Command {
 	cmd.Flags().StringVar(&dsn, "dsn", "", "Admin DSN (required)")
 	cmd.Flags().IntVar(&defaultTTL, "default-ttl", 0, "Default credential TTL in seconds (0 = server default 3600)")
 	cmd.Flags().IntVar(&maxTTL, "max-ttl", 0, "Maximum credential TTL in seconds (0 = server default 86400)")
+	cmd.Flags().StringVar(&clientCertFile, "client-cert-file", "", "Path to client certificate PEM for vault_admin cert auth (optional)")
+	cmd.Flags().StringVar(&clientKeyFile, "client-key-file", "", "Path to client key PEM (required when --client-cert-file is set)")
+	cmd.Flags().StringVar(&caCertFile, "ca-cert-file", "", "Path to CA certificate PEM for server verification (optional)")
 	return cmd
 }
 

@@ -42,6 +42,7 @@ Getting started:
 		commands.NewUsersCmd(),
 		commands.NewChangePasswordCmd(),
 		commands.NewDynamicCmd(),
+		commands.NewPrincipalsCmd(),
 	)
 
 	if err := root.Execute(); err != nil {

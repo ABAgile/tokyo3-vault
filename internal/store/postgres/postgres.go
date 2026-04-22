@@ -14,11 +14,14 @@ import (
 	"strings"
 	"time"
 
+	"crypto/tls"
+
 	"github.com/abagile/tokyo3-vault/internal/model"
 	"github.com/abagile/tokyo3-vault/internal/store"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	_ "github.com/jackc/pgx/v5/stdlib"
+	pgxstdlib "github.com/jackc/pgx/v5/stdlib"
 )
 
 //go:embed migrations
@@ -32,10 +35,28 @@ type DB struct {
 // Open connects to a Postgres database and runs migrations.
 // dsn is a postgres:// URL or a key=value connection string.
 func Open(dsn string) (*DB, error) {
-	db, err := sql.Open("pgx", dsn)
-	if err != nil {
-		return nil, fmt.Errorf("open postgres: %w", err)
+	return OpenWithTLS(dsn, nil)
+}
+
+// OpenWithTLS connects using a custom TLS config, enabling client certificate
+// authentication when tlsCfg is non-nil. Pass nil for a plain (DSN-only) connection.
+func OpenWithTLS(dsn string, tlsCfg *tls.Config) (*DB, error) {
+	var db *sql.DB
+	if tlsCfg != nil {
+		connCfg, err := pgx.ParseConfig(dsn)
+		if err != nil {
+			return nil, fmt.Errorf("parse postgres dsn: %w", err)
+		}
+		connCfg.TLSConfig = tlsCfg
+		db = pgxstdlib.OpenDB(*connCfg)
+	} else {
+		var err error
+		db, err = sql.Open("pgx", dsn)
+		if err != nil {
+			return nil, fmt.Errorf("open postgres: %w", err)
+		}
 	}
+
 	db.SetMaxOpenConns(25)
 	db.SetMaxIdleConns(5)
 	db.SetConnMaxLifetime(5 * time.Minute)

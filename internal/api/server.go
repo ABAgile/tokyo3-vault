@@ -40,6 +40,11 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/v1/tokens", s.auth(s.handleCreateToken))
 	mux.HandleFunc("DELETE /api/v1/tokens/{id}", s.auth(s.handleDeleteToken))
 
+	// SPIFFE/mTLS certificate principals
+	mux.HandleFunc("POST /api/v1/cert-principals", s.auth(s.handleRegisterCertPrincipal))
+	mux.HandleFunc("GET /api/v1/cert-principals", s.auth(s.handleListCertPrincipals))
+	mux.HandleFunc("DELETE /api/v1/cert-principals/{id}", s.auth(s.handleDeleteCertPrincipal))
+
 	// Projects
 	mux.HandleFunc("GET /api/v1/projects", s.auth(s.handleListProjects))
 	mux.HandleFunc("POST /api/v1/projects", s.auth(s.handleCreateProject))

@@ -20,6 +20,7 @@ A minimal self-hosted secret manager with versioning, audit logging, and `.env` 
   - [Secrets](#secrets)
   - [Members](#members)
   - [Tokens](#tokens)
+  - [SPIFFE/mTLS Principals](#spiFFEmtls-principals)
   - [Users](#users)
   - [Audit Log](#audit-log)
   - [Utilities](#utilities)
@@ -83,14 +84,14 @@ VAULT_MASTER_KEY=<key> VAULT_DB_PATH=vault.db vaultd
 VAULT_KMS_KEY_ID=<key-id-or-arn> VAULT_DATABASE_URL="postgres://user:pass@host/dbname" vaultd
 ```
 
-The server listens on `:8080` by default. Set `VAULT_ADDR` to change this.
+The server always uses HTTPS and listens on `:8443` by default. When no `VAULT_TLS_CERT`/`VAULT_TLS_KEY` are provided, a self-signed certificate is auto-generated — suitable for development with `vault login --server https://localhost:8443 --insecure`. Set `VAULT_ADDR` to change the listen address.
 
 ### 3. Create the first user
 
 The first account created on a fresh server is automatically promoted to server admin.
 
 ```sh
-vault signup --server http://localhost:8080
+vault signup --server https://localhost:8443
 # prompts for email and password
 ```
 
@@ -99,7 +100,7 @@ Subsequent `vault signup` calls create regular member accounts.
 ### 4. Log in from the CLI
 
 ```sh
-vault login --server http://localhost:8080
+vault login --server https://localhost:8443
 # prompts for email and password
 # saves credentials to ~/.vault/config
 ```
@@ -124,11 +125,29 @@ vault login --server http://localhost:8080
 | `VAULT_DATABASE_URL` | — | PostgreSQL DSN, e.g. `postgres://user:pass@host/db` |
 | `VAULT_DB_PATH` | `vault.db` | SQLite file path |
 
+**TLS — server HTTPS (server always uses HTTPS; self-signed cert is generated if not configured):**
+
+| Variable | Default | Description |
+|---|---|---|
+| `VAULT_TLS_CERT` | — | Path to PEM-encoded server certificate. If set, `VAULT_TLS_KEY` is also required. The cert is hot-reloaded per-handshake when the file changes, so certificate rotation (e.g. by a SPIFFE/SPIRE agent) never requires a restart. |
+| `VAULT_TLS_KEY` | — | Path to PEM-encoded private key paired with `VAULT_TLS_CERT`. |
+| `VAULT_TLS_CLIENT_CA` | — | Path to a PEM-encoded CA certificate. When set, the server requests a client certificate during the TLS handshake and verifies it against this CA. Used to enable SPIFFE/mTLS authentication (see [SPIFFE/mTLS Principals](#spiFFEmtls-principals)). |
+
+**PostgreSQL TLS — client certificate auth for vault's own database connection:**
+
+| Variable | Default | Description |
+|---|---|---|
+| `VAULT_DB_SSL_CERT` | — | Path to PEM client certificate for the vault store PostgreSQL connection. |
+| `VAULT_DB_SSL_KEY` | — | Path to PEM private key paired with `VAULT_DB_SSL_CERT`. |
+| `VAULT_DB_SSL_ROOTCERT` | — | Path to PEM CA certificate for server verification of the vault store connection. |
+
+Set all three `VAULT_DB_SSL_*` vars together to authenticate vault's admin database connection via client certificate instead of a password in the DSN.
+
 **Optional:**
 
 | Variable | Default | Description |
 |---|---|---|
-| `VAULT_ADDR` | `:8080` | TCP listen address |
+| `VAULT_ADDR` | `:8443` | TCP listen address |
 
 ### CLI configuration
 
@@ -486,6 +505,64 @@ vault tokens delete <token-id>
 
 ---
 
+### SPIFFE/mTLS Principals
+
+SPIFFE principals are an alternative to machine tokens for workloads that already carry a SPIFFE X.509 certificate (SVID) issued by a SPIFFE/SPIRE deployment or any compatible CA. Instead of distributing a long-lived token, you register a SPIFFE ID once; any valid cert signed by the trusted CA whose URI SAN matches that ID is automatically authorized — no re-enrollment when the cert rotates.
+
+**Prerequisites:** start vaultd with `VAULT_TLS_CLIENT_CA` pointing to the SPIFFE CA bundle, so the server requests and verifies client certificates during the TLS handshake.
+
+#### `vault principals register <description>`
+
+Register a SPIFFE ID as a vault principal.
+
+```sh
+vault principals register "myapp-server" \
+  --spiffe-id spiffe://example.org/ns/myapp/sa/server \
+  --project myapp \
+  --env production
+
+# Read-only principal scoped to staging
+vault principals register "ci-runner" \
+  --spiffe-id spiffe://example.org/ns/ci/sa/runner \
+  --project myapp \
+  --env staging \
+  --read-only
+```
+
+| Flag | Description |
+|---|---|
+| `--spiffe-id` | SPIFFE URI SAN to match (required), e.g. `spiffe://example.org/ns/myapp/sa/server` |
+| `--project` | Scope to a project slug (optional) |
+| `--env` | Scope to an environment slug; requires `--project` (optional) |
+| `--read-only` | Restrict to read-only operations |
+| `--expires-in` | Authorization mapping expiry as a Go duration, e.g. `8760h` (1 year). Controls how long this registration grants access — independent of the cert's own lifetime, which is managed by the CA. Useful for time-limited integrations or compliance-driven re-authorization cycles. |
+
+Requires a user session token (scoped tokens cannot register principals).
+
+#### `vault principals list`
+
+```sh
+vault principals list
+```
+
+Output: `ID`, `SPIFFE ID`, `READ_ONLY`, `CREATED`
+
+#### `vault principals revoke <id>`
+
+Remove a registered principal immediately. The next request from a workload presenting that SPIFFE ID falls back to bearer token auth.
+
+```sh
+vault principals revoke <principal-id>
+```
+
+**How it works:**
+
+When `VAULT_TLS_CLIENT_CA` is set, the TLS layer verifies the client certificate against the trusted CA. The auth middleware then extracts the first URI SAN with a `spiffe://` scheme from the verified cert and looks it up in the registered principals table. A match grants the same authorization scope as a machine token (project/env scoping, read-only flag, optional expiry). Bearer token auth is still supported — workloads without a client cert fall through to the `Authorization: Bearer` header as before.
+
+SPIFFE/SPIRE issues short-lived SVIDs that rotate automatically; because authorization is tied to the SPIFFE ID rather than a specific certificate, rotation is transparent — no vault restart, no re-enrollment, no token redistribution required.
+
+---
+
 ### Users
 
 Server-level user management. Requires server admin role.
@@ -612,6 +689,24 @@ vault dynamic backend set primary \
 | `--dsn` | Admin connection string (required). Encrypted before storage. |
 | `--default-ttl` | Default credential lifetime in seconds (default: 3600) |
 | `--max-ttl` | Hard ceiling on any lease in seconds (default: 86400) |
+| `--client-cert-file` | Path to PEM client certificate for the vault_admin → target DB connection. Must be paired with `--client-key-file`. |
+| `--client-key-file` | Path to PEM private key paired with `--client-cert-file`. |
+| `--ca-cert-file` | Path to PEM CA certificate for server verification of the target DB connection (optional, standalone). |
+
+The cert/key/CA PEM content is encrypted and stored alongside the DSN, so no certificate files need to be present on the server at runtime.
+
+**Cert-authenticated admin connection (no password):**
+
+```sh
+vault dynamic backend set primary \
+  --type postgresql \
+  --dsn "postgres://vault_admin@db.host:5432/mydb?sslmode=verify-full" \
+  --client-cert-file ./vault_admin.crt \
+  --client-key-file ./vault_admin.key \
+  --ca-cert-file ./db-ca.crt \
+  --default-ttl 3600 \
+  --max-ttl 86400
+```
 
 The admin user needs `CREATEROLE` on the target database:
 
@@ -820,7 +915,7 @@ The user who creates a project is automatically its `owner`.
 
 ## Machine Tokens
 
-Machine tokens are designed for non-interactive contexts such as CI/CD pipelines, deployment scripts, and automated tooling.
+Machine tokens are designed for non-interactive contexts such as CI/CD pipelines, deployment scripts, and automated tooling. For workloads that already carry a SPIFFE/SPIRE certificate, consider [SPIFFE/mTLS Principals](#spiFFEmtls-principals) as a zero-token alternative.
 
 ### Scope
 

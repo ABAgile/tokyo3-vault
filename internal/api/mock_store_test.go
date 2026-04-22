@@ -277,3 +277,15 @@ func (m *mockStore) RevokeDynamicLease(ctx context.Context, id string) error {
 func (m *mockStore) ListExpiredDynamicLeases(ctx context.Context) ([]*model.DynamicLease, error) {
 	return []*model.DynamicLease{}, nil
 }
+func (m *mockStore) CreateCertPrincipal(ctx context.Context, p *model.CertPrincipal) error {
+	return store.ErrNotFound
+}
+func (m *mockStore) GetCertPrincipalBySPIFFEID(ctx context.Context, spiffeID string) (*model.CertPrincipal, error) {
+	return nil, store.ErrNotFound
+}
+func (m *mockStore) ListCertPrincipals(ctx context.Context, userID string) ([]*model.CertPrincipal, error) {
+	return nil, nil
+}
+func (m *mockStore) DeleteCertPrincipal(ctx context.Context, id, userID string) error {
+	return store.ErrNotFound
+}

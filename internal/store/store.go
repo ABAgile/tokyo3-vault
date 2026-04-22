@@ -88,6 +88,12 @@ type Store interface {
 	ListDynamicLeases(ctx context.Context, projectID, envID string) ([]*model.DynamicLease, error)
 	RevokeDynamicLease(ctx context.Context, id string) error
 	ListExpiredDynamicLeases(ctx context.Context) ([]*model.DynamicLease, error)
+
+	// SPIFFE/mTLS certificate principals
+	CreateCertPrincipal(ctx context.Context, p *model.CertPrincipal) error
+	GetCertPrincipalBySPIFFEID(ctx context.Context, spiffeID string) (*model.CertPrincipal, error)
+	ListCertPrincipals(ctx context.Context, userID string) ([]*model.CertPrincipal, error)
+	DeleteCertPrincipal(ctx context.Context, id, userID string) error
 }
 
 // AuditFilter controls which audit log entries are returned.
