@@ -91,3 +91,51 @@ type SecretVersion struct {
 	CreatedAt      time.Time
 	CreatedBy      *string
 }
+
+// DynamicBackend holds the encrypted connection config for a named backend
+// within a project+environment. Uniqueness is (project_id, env_id, slug).
+// Multiple backends of the same type can coexist under different slugs.
+type DynamicBackend struct {
+	ID                 string
+	ProjectID          string
+	EnvID              string
+	Slug               string // user-defined slug, e.g. "primary", "analytics"
+	Type               string // backend type, e.g. "postgresql"
+	EncryptedConfig    []byte
+	EncryptedConfigDEK []byte
+	DefaultTTL         int // seconds
+	MaxTTL             int // seconds
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+}
+
+// DynamicRole defines templates for creating and revoking credentials.
+// Placeholders: {{name}}, {{password}}, {{expiry}}.
+type DynamicRole struct {
+	ID             string
+	BackendID      string
+	Name           string
+	CreationTmpl   string
+	RevocationTmpl string
+	TTL            *int // nil = use backend DefaultTTL
+	CreatedAt      time.Time
+}
+
+// DynamicLease records a single issued credential pair.
+// Rows are never deleted — RevokedAt marks revocation.
+// RevocationTmpl and BackendID are denormalized from the role at issuance time
+// so leases can be revoked even if the role or backend is later deleted.
+type DynamicLease struct {
+	ID             string
+	ProjectID      string
+	EnvID          string
+	BackendID      string
+	RoleID         string
+	RoleName       string
+	Username       string
+	RevocationTmpl string
+	ExpiresAt      time.Time
+	RevokedAt      *time.Time
+	CreatedBy      *string
+	CreatedAt      time.Time
+}

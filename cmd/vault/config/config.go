@@ -18,10 +18,19 @@ type Global struct {
 	Token     string `toml:"token"`
 }
 
+// DynamicRun declares a dynamic backend credential to issue during vault run.
+// Slug is the backend slug; Role is the role name. TTL overrides the role default (0 = use default).
+type DynamicRun struct {
+	Slug string `toml:"slug"`
+	Role string `toml:"role"`
+	TTL  int    `toml:"ttl"`
+}
+
 // Repo holds the per-repository config stored in .vault.toml.
 type Repo struct {
-	Project string `toml:"project"`
-	Env     string `toml:"env"`
+	Project string       `toml:"project"`
+	Env     string       `toml:"env"`
+	Dynamic []DynamicRun `toml:"dynamic"`
 }
 
 // GlobalPath returns the absolute path to ~/.vault/config.

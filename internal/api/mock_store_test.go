@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"time"
 
 	"github.com/abagile/tokyo3-vault/internal/model"
 	"github.com/abagile/tokyo3-vault/internal/store"
@@ -235,4 +236,44 @@ func (m *mockStore) ListAuditLogs(ctx context.Context, filter store.AuditFilter)
 		return m.listAuditLogs(ctx, filter)
 	}
 	return nil, nil
+}
+
+func (m *mockStore) SetDynamicBackend(ctx context.Context, projectID, envID, slug, backendType string, encConfig, encConfigDEK []byte, defaultTTL, maxTTL int) (*model.DynamicBackend, error) {
+	return nil, store.ErrNotFound
+}
+func (m *mockStore) GetDynamicBackend(ctx context.Context, projectID, envID, slug string) (*model.DynamicBackend, error) {
+	return nil, store.ErrNotFound
+}
+func (m *mockStore) GetDynamicBackendByID(ctx context.Context, id string) (*model.DynamicBackend, error) {
+	return nil, store.ErrNotFound
+}
+func (m *mockStore) DeleteDynamicBackend(ctx context.Context, projectID, envID, slug string) error {
+	return store.ErrNotFound
+}
+func (m *mockStore) SetDynamicRole(ctx context.Context, backendID, name, creationTmpl, revocationTmpl string, ttl *int) (*model.DynamicRole, error) {
+	return nil, store.ErrNotFound
+}
+func (m *mockStore) GetDynamicRole(ctx context.Context, backendID, name string) (*model.DynamicRole, error) {
+	return nil, store.ErrNotFound
+}
+func (m *mockStore) ListDynamicRoles(ctx context.Context, backendID string) ([]*model.DynamicRole, error) {
+	return []*model.DynamicRole{}, nil
+}
+func (m *mockStore) DeleteDynamicRole(ctx context.Context, backendID, name string) error {
+	return store.ErrNotFound
+}
+func (m *mockStore) CreateDynamicLease(ctx context.Context, projectID, envID, backendID, roleID, roleName, username, revocationTmpl string, expiresAt time.Time, createdBy *string) (*model.DynamicLease, error) {
+	return nil, store.ErrNotFound
+}
+func (m *mockStore) GetDynamicLease(ctx context.Context, id string) (*model.DynamicLease, error) {
+	return nil, store.ErrNotFound
+}
+func (m *mockStore) ListDynamicLeases(ctx context.Context, projectID, envID string) ([]*model.DynamicLease, error) {
+	return []*model.DynamicLease{}, nil
+}
+func (m *mockStore) RevokeDynamicLease(ctx context.Context, id string) error {
+	return store.ErrNotFound
+}
+func (m *mockStore) ListExpiredDynamicLeases(ctx context.Context) ([]*model.DynamicLease, error) {
+	return []*model.DynamicLease{}, nil
 }

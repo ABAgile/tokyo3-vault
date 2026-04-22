@@ -98,6 +98,39 @@ func (m *mockStore) CreateAuditLog(_ context.Context, _ *model.AuditLog) error {
 func (m *mockStore) ListAuditLogs(_ context.Context, _ store.AuditFilter) ([]*model.AuditLog, error) {
 	return nil, nil
 }
+func (m *mockStore) SetDynamicBackend(_ context.Context, _, _, _, _ string, _, _ []byte, _, _ int) (*model.DynamicBackend, error) {
+	return nil, store.ErrNotFound
+}
+func (m *mockStore) GetDynamicBackend(_ context.Context, _, _, _ string) (*model.DynamicBackend, error) {
+	return nil, store.ErrNotFound
+}
+func (m *mockStore) GetDynamicBackendByID(_ context.Context, _ string) (*model.DynamicBackend, error) {
+	return nil, store.ErrNotFound
+}
+func (m *mockStore) DeleteDynamicBackend(_ context.Context, _, _, _ string) error { return nil }
+func (m *mockStore) SetDynamicRole(_ context.Context, _, _, _, _ string, _ *int) (*model.DynamicRole, error) {
+	return nil, store.ErrNotFound
+}
+func (m *mockStore) GetDynamicRole(_ context.Context, _, _ string) (*model.DynamicRole, error) {
+	return nil, store.ErrNotFound
+}
+func (m *mockStore) ListDynamicRoles(_ context.Context, _ string) ([]*model.DynamicRole, error) {
+	return nil, nil
+}
+func (m *mockStore) DeleteDynamicRole(_ context.Context, _, _ string) error { return nil }
+func (m *mockStore) CreateDynamicLease(_ context.Context, _, _, _, _, _, _, _ string, _ time.Time, _ *string) (*model.DynamicLease, error) {
+	return nil, store.ErrNotFound
+}
+func (m *mockStore) GetDynamicLease(_ context.Context, _ string) (*model.DynamicLease, error) {
+	return nil, store.ErrNotFound
+}
+func (m *mockStore) ListDynamicLeases(_ context.Context, _, _ string) ([]*model.DynamicLease, error) {
+	return nil, nil
+}
+func (m *mockStore) RevokeDynamicLease(_ context.Context, _ string) error { return nil }
+func (m *mockStore) ListExpiredDynamicLeases(_ context.Context) ([]*model.DynamicLease, error) {
+	return nil, nil
+}
 
 // ── IssueUserToken ────────────────────────────────────────────────────────────
 

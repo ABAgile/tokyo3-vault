@@ -23,6 +23,7 @@ A minimal self-hosted secret manager with versioning, audit logging, and `.env` 
   - [Users](#users)
   - [Audit Log](#audit-log)
   - [Utilities](#utilities)
+- [Dynamic Secrets](#dynamic-secrets)
 - [Permissions and Roles](#permissions-and-roles)
 - [Machine Tokens](#machine-tokens)
 
@@ -576,6 +577,213 @@ Print version, commit hash, and build time.
 ```sh
 vault version
 ```
+
+---
+
+## Dynamic Secrets
+
+Dynamic secrets are ephemeral credentials issued on demand and automatically revoked when they expire. Instead of storing a long-lived database password, an application asks vault for a short-lived username and password that is created in the target system at request time and dropped when the lease expires.
+
+The server runs a background revoker that sweeps every 60 seconds and executes the revocation template for any expired lease. Revocation also runs on server startup to catch leases that expired while the server was down.
+
+### Concepts
+
+| Concept | Description |
+|---|---|
+| **Backend** | A named connection config (admin DSN) for a target system. Identified by a user-defined slug, scoped to one project+environment. |
+| **Role** | A named pair of SQL templates (creation + revocation) attached to a backend. Controls what privileges the issued user receives. |
+| **Lease** | A record of one issued credential pair. Never deleted — `revoked_at` marks revocation. |
+
+### 1. Configure a backend
+
+Register the admin connection for a project+environment. The DSN is encrypted at rest using the same DEK+KEK model as regular secrets.
+
+```sh
+vault dynamic backend set primary \
+  --type postgresql \
+  --dsn "postgres://vault_admin:adminpass@db.host:5432/mydb" \
+  --default-ttl 3600 \
+  --max-ttl 86400
+```
+
+| Flag | Description |
+|---|---|
+| `--type` | Backend type (required). Currently: `postgresql` |
+| `--dsn` | Admin connection string (required). Encrypted before storage. |
+| `--default-ttl` | Default credential lifetime in seconds (default: 3600) |
+| `--max-ttl` | Hard ceiling on any lease in seconds (default: 86400) |
+
+The admin user needs `CREATEROLE` on the target database:
+
+```sql
+GRANT CREATEROLE ON DATABASE mydb TO vault_admin;
+```
+
+To rotate the admin password: update it in PostgreSQL, then re-run `backend set` with the new DSN. Active leases are unaffected — they were already issued as separate DB users.
+
+Multiple backends of the same type can coexist under different slugs:
+
+```sh
+vault dynamic backend set primary   --type postgresql --dsn "postgres://...primary..."
+vault dynamic backend set analytics --type postgresql --dsn "postgres://...analytics..."
+```
+
+```sh
+vault dynamic backend get primary
+vault dynamic backend delete primary
+```
+
+### 2. Define a role
+
+A role holds SQL templates executed against the target database at issue and revocation time.
+
+**Template placeholders:**
+
+| Placeholder | Value |
+|---|---|
+| `{{username}}` | Generated username, e.g. `vault_3f9a1c2b` |
+| `{{password}}` | Generated 48-char hex password |
+| `{{expiry}}` | Expiry timestamp: `2006-01-02 15:04:05+00` |
+
+```sh
+vault dynamic roles set primary readonly \
+  --creation-tmpl "CREATE USER {{username}} WITH PASSWORD '{{password}}' VALID UNTIL '{{expiry}}'; GRANT SELECT ON ALL TABLES IN SCHEMA public TO {{username}};" \
+  --revocation-tmpl "DROP USER IF EXISTS {{username}};" \
+  --ttl 1800
+```
+
+| Flag | Description |
+|---|---|
+| `--creation-tmpl` | SQL executed to create the credential (required) |
+| `--revocation-tmpl` | SQL executed to revoke the credential (required) |
+| `--ttl` | Role-specific TTL in seconds; overrides backend `default_ttl` (optional) |
+
+```sh
+vault dynamic roles list primary
+vault dynamic roles delete primary readonly
+```
+
+### 3. Issue credentials
+
+```sh
+vault dynamic issue primary readonly
+```
+
+Output:
+
+```
+lease_id:   550e8400-e29b-41d4-a716-446655440000
+username:   vault_3f9a1c2b
+password:   a7f2e1...
+expires_at: 2026-04-22 14:30:00 UTC
+```
+
+With a per-request TTL override (capped at backend `max_ttl`):
+
+```sh
+vault dynamic issue primary readonly --ttl 600
+```
+
+### 4. Manage leases
+
+```sh
+# List all leases for the current project+environment
+vault dynamic leases list
+
+# Revoke a lease immediately (drops the DB user)
+vault dynamic leases revoke 550e8400-e29b-41d4-a716-446655440000
+```
+
+### 5. Inject credentials with `vault run`
+
+The cleanest integration pattern: declare dynamic backends in `.vault.toml` and let `vault run` issue credentials and inject them as environment variables before starting the process.
+
+**`.vault.toml`:**
+
+```toml
+project = "myapp"
+env     = "production"
+
+[[dynamic]]
+slug = "primary"
+role = "readonly"
+
+[[dynamic]]
+slug = "analytics"
+role = "readonly"
+ttl  = 7200
+```
+
+**Static secrets stored in vault** can reference dynamic credential vars using `$VAR` syntax — they are expanded before the child process starts:
+
+```
+DATABASE_URL   = postgres://$VAULT_DYN_PRIMARY_USERNAME:$VAULT_DYN_PRIMARY_PASSWORD@db.host/mydb
+ANALYTICS_URL  = postgres://$VAULT_DYN_ANALYTICS_USERNAME:$VAULT_DYN_ANALYTICS_PASSWORD@analytics.host/analytics
+API_KEY        = sk-...
+```
+
+```sh
+vault run -- ./bin/server
+```
+
+**How it works:**
+
+1. Dynamic creds are issued first, keyed as `VAULT_DYN_<SLUG>_USERNAME`, `VAULT_DYN_<SLUG>_PASSWORD`, `VAULT_DYN_<SLUG>_EXPIRES_AT` (slug uppercased, hyphens → underscores).
+2. Static secrets are fetched and any `$VAULT_DYN_*` references in their values are expanded.
+3. `VAULT_DYN_*` vars are **stripped** from the final environment — the child process only sees the composed values (e.g. `DATABASE_URL`), never the raw credentials.
+4. `VAULT_TOKEN` and `VAULT_SERVER_URL` are also stripped.
+5. The child process replaces vault via Unix exec.
+
+**Env var naming:**
+
+| Backend slug | Env var prefix |
+|---|---|
+| `primary` | `VAULT_DYN_PRIMARY_` |
+| `analytics` | `VAULT_DYN_ANALYTICS_` |
+| `primary-db` | `VAULT_DYN_PRIMARY_DB_` |
+
+**Machine token / CI usage** — use `--dynamic slug:role` flags instead of `.vault.toml`:
+
+```sh
+VAULT_TOKEN=tok_xxx \
+VAULT_SERVER_URL=https://vault.internal \
+  vault run \
+    --project myapp \
+    --env production \
+    --dynamic primary:readonly \
+    --dynamic analytics:readonly \
+    -- ./bin/server
+```
+
+The `--dynamic` flag format is `slug:role` or `slug:role:ttl`. It is repeatable and appends to any `.vault.toml` `[[dynamic]]` blocks.
+
+### Certificate-based authentication: comparison and trade-offs
+
+PostgreSQL supports client certificate authentication (`cert` in `pg_hba.conf`), which removes passwords from the picture entirely: the client presents an X.509 certificate and the server verifies it against a trusted CA. This is sometimes proposed as a replacement for dynamic secrets. The two approaches overlap on the "no long-lived passwords" goal but differ in what they can and cannot address.
+
+**Where cert auth works well**
+
+- Zero password material in transit or in config files.
+- Certificate lifetime is enforced by the CA — short-lived certs (e.g. 1–8 hours via SPIFFE/SPIRE) provide automatic expiry without a separate revoker.
+- Works naturally in Kubernetes with a service mesh that mints SVIDs per workload.
+
+**Where cert auth falls short**
+
+| Limitation | Detail |
+|---|---|
+| **PgBouncer / pgpool** | Connection poolers terminate TLS and do not forward the client certificate to PostgreSQL. The pooler authenticates with its own cert; per-workload identity is lost at the pooler boundary. |
+| **Managed PostgreSQL** | RDS, Cloud SQL, and AlloyDB restrict `pg_hba.conf` to vendor-approved auth methods. Client cert auth is either not available or requires using the vendor's certificate infrastructure, not your own CA. |
+| **Per-issuance identity** | Cert auth provisions one (or a few) fixed database roles. Multiple workloads sharing a cert CA land on the same DB user. Dynamic secrets create a distinct `vault_<random>` user per issuance, giving row-level audit trails and tightly scoped revocation. |
+| **CRL propagation latency** | Revoking a certificate requires distributing a CRL (or OCSP response) and waiting for PostgreSQL to pick it up. The revoker in vault drops the DB user immediately on lease expiry — no propagation window. |
+| **Certificate distribution** | Each workload needs a private key and cert, a renewal mechanism, and a CA the database trusts. This is solved infrastructure in a service mesh but adds meaningful operational complexity outside one. |
+
+**Verdict: complement, not replace**
+
+The best use for certificate auth in this stack is securing the vault server's own admin connection to the target database (the DSN stored in the backend). A cert-authenticated `vault_admin` user removes the admin password from the backend config entirely, and the admin role itself never needs to be issued to applications.
+
+For application credentials, dynamic secrets remain the right tool: they work across poolers, managed databases, and bare-metal Postgres without requiring a service mesh, and they provide true per-issuance identity with immediate revocation.
+
+If you are running Kubernetes with SPIFFE/SPIRE, the two models converge: mint a short-lived SVID for the vault service account, use it to authenticate vault's admin connection, and continue issuing dynamic secrets for application workloads.
 
 ---
 

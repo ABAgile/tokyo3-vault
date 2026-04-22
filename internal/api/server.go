@@ -78,6 +78,21 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/projects/{project}/envs/{env}/secrets/dotenv", s.auth(s.handleDownloadDotenv))
 	mux.HandleFunc("POST /api/v1/projects/{project}/envs/{env}/secrets/dotenv", s.auth(s.handleUploadDotenv))
 
+	// Dynamic backends — backend configuration (keyed by user-defined name slug)
+	mux.HandleFunc("PUT /api/v1/projects/{project}/envs/{env}/dynamic/{name}", s.auth(s.handleSetDynamicBackend))
+	mux.HandleFunc("GET /api/v1/projects/{project}/envs/{env}/dynamic/{name}", s.auth(s.handleGetDynamicBackend))
+	mux.HandleFunc("DELETE /api/v1/projects/{project}/envs/{env}/dynamic/{name}", s.auth(s.handleDeleteDynamicBackend))
+
+	// Dynamic backends — roles
+	mux.HandleFunc("PUT /api/v1/projects/{project}/envs/{env}/dynamic/{name}/roles/{role}", s.auth(s.handleSetDynamicRole))
+	mux.HandleFunc("GET /api/v1/projects/{project}/envs/{env}/dynamic/{name}/roles", s.auth(s.handleListDynamicRoles))
+	mux.HandleFunc("DELETE /api/v1/projects/{project}/envs/{env}/dynamic/{name}/roles/{role}", s.auth(s.handleDeleteDynamicRole))
+
+	// Dynamic backends — creds & leases (leases are project+env scoped, no backend name needed)
+	mux.HandleFunc("POST /api/v1/projects/{project}/envs/{env}/dynamic/{name}/{role}/creds", s.auth(s.handleIssueCreds))
+	mux.HandleFunc("GET /api/v1/projects/{project}/envs/{env}/dynamic/leases", s.auth(s.handleListDynamicLeases))
+	mux.HandleFunc("DELETE /api/v1/projects/{project}/envs/{env}/dynamic/leases/{lease_id}", s.auth(s.handleRevokeDynamicLease))
+
 	return mux
 }
 

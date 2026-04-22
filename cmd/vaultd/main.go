@@ -23,9 +23,12 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/abagile/tokyo3-vault/internal/api"
 	"github.com/abagile/tokyo3-vault/internal/crypto"
+	"github.com/abagile/tokyo3-vault/internal/dynamic"
 	"github.com/abagile/tokyo3-vault/internal/store"
 	"github.com/abagile/tokyo3-vault/internal/store/postgres"
 	"github.com/abagile/tokyo3-vault/internal/store/sqlite"
@@ -34,7 +37,10 @@ import (
 func main() {
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 
-	kp, err := openKeyProvider(context.Background(), log)
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
+	kp, err := openKeyProvider(ctx, log)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "key provider: %v\n", err)
 		os.Exit(1)
@@ -48,6 +54,9 @@ func main() {
 	if closer, ok := st.(interface{ Close() error }); ok {
 		defer closer.Close()
 	}
+
+	revoker := dynamic.NewRevoker(st, kp, log)
+	go revoker.Run(ctx)
 
 	addr := os.Getenv("VAULT_ADDR")
 	if addr == "" {

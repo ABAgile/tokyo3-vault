@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/abagile/tokyo3-vault/internal/model"
 )
@@ -68,6 +69,25 @@ type Store interface {
 	// Audit
 	CreateAuditLog(ctx context.Context, entry *model.AuditLog) error
 	ListAuditLogs(ctx context.Context, filter AuditFilter) ([]*model.AuditLog, error)
+
+	// Dynamic backends — configuration per project+env+slug
+	SetDynamicBackend(ctx context.Context, projectID, envID, slug, backendType string, encConfig, encConfigDEK []byte, defaultTTL, maxTTL int) (*model.DynamicBackend, error)
+	GetDynamicBackend(ctx context.Context, projectID, envID, slug string) (*model.DynamicBackend, error)
+	GetDynamicBackendByID(ctx context.Context, id string) (*model.DynamicBackend, error)
+	DeleteDynamicBackend(ctx context.Context, projectID, envID, slug string) error
+
+	// Dynamic roles — templates per backend
+	SetDynamicRole(ctx context.Context, backendID, name, creationTmpl, revocationTmpl string, ttl *int) (*model.DynamicRole, error)
+	GetDynamicRole(ctx context.Context, backendID, name string) (*model.DynamicRole, error)
+	ListDynamicRoles(ctx context.Context, backendID string) ([]*model.DynamicRole, error)
+	DeleteDynamicRole(ctx context.Context, backendID, name string) error
+
+	// Dynamic leases
+	CreateDynamicLease(ctx context.Context, projectID, envID, backendID, roleID, roleName, username, revocationTmpl string, expiresAt time.Time, createdBy *string) (*model.DynamicLease, error)
+	GetDynamicLease(ctx context.Context, id string) (*model.DynamicLease, error)
+	ListDynamicLeases(ctx context.Context, projectID, envID string) ([]*model.DynamicLease, error)
+	RevokeDynamicLease(ctx context.Context, id string) error
+	ListExpiredDynamicLeases(ctx context.Context) ([]*model.DynamicLease, error)
 }
 
 // AuditFilter controls which audit log entries are returned.
