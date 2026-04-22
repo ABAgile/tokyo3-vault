@@ -210,10 +210,7 @@ func (s *Server) writeSetSecret(w http.ResponseWriter, r *http.Request, project 
 	if !s.requireWrite(w, r, tok, project.ID) {
 		return
 	}
-	var createdBy *string
-	if tok != nil {
-		createdBy = &tok.ID
-	}
+	createdBy := tokenCreatedBy(tok)
 
 	projectKP, err := s.projectKP.ForProject(r.Context(), project.ID, project.EncryptedPEK)
 	if err != nil {
@@ -251,10 +248,12 @@ func (s *Server) handleDeleteSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := strings.ToUpper(r.PathValue("key"))
-	if err := s.store.DeleteSecret(r.Context(), project.ID, envID, key); errors.Is(err, store.ErrNotFound) {
+	err := s.store.DeleteSecret(r.Context(), project.ID, envID, key)
+	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "secret not found")
 		return
-	} else if err != nil {
+	}
+	if err != nil {
 		s.log.Error("delete secret", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -526,7 +525,8 @@ func (s *Server) handleUploadDotenv(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !s.requireWrite(w, r, tokenFromCtx(r), project.ID) {
+	tok := tokenFromCtx(r)
+	if !s.requireWrite(w, r, tok, project.ID) {
 		return
 	}
 
@@ -543,12 +543,7 @@ func (s *Server) handleUploadDotenv(w http.ResponseWriter, r *http.Request) {
 	}
 
 	overwrite := r.URL.Query().Get("overwrite") == "true"
-
-	tok := tokenFromCtx(r)
-	var createdBy *string
-	if tok != nil {
-		createdBy = &tok.ID
-	}
+	createdBy := tokenCreatedBy(tok)
 
 	projectKP, err := s.projectKP.ForProject(r.Context(), project.ID, project.EncryptedPEK)
 	if err != nil {

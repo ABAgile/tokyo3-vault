@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/abagile/tokyo3-vault/internal/crypto"
 	"github.com/abagile/tokyo3-vault/internal/store"
@@ -116,6 +117,14 @@ func limitBody(next http.Handler) http.Handler {
 
 func fmtAPITime(t interface{ Format(string) string }) string {
 	return t.Format("2006-01-02T15:04:05Z")
+}
+
+func fmtOptionalTime(t *time.Time) *string {
+	if t == nil {
+		return nil
+	}
+	s := fmtAPITime(*t)
+	return &s
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

@@ -139,10 +139,12 @@ func (s *Server) handleRegisterCertPrincipal(w http.ResponseWriter, r *http.Requ
 		p.ExpiresAt = &t
 	}
 
-	if err := s.store.CreateCertPrincipal(r.Context(), p); errors.Is(err, store.ErrConflict) {
+	err = s.store.CreateCertPrincipal(r.Context(), p)
+	if errors.Is(err, store.ErrConflict) {
 		writeError(w, http.StatusConflict, "SPIFFE ID already registered")
 		return
-	} else if err != nil {
+	}
+	if err != nil {
 		s.log.Error("create cert principal", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -177,10 +179,12 @@ func (s *Server) handleDeleteCertPrincipal(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	id := r.PathValue("id")
-	if err := s.store.DeleteCertPrincipal(r.Context(), id, *tok.UserID); errors.Is(err, store.ErrNotFound) {
+	err := s.store.DeleteCertPrincipal(r.Context(), id, *tok.UserID)
+	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "cert principal not found")
 		return
-	} else if err != nil {
+	}
+	if err != nil {
 		s.log.Error("delete cert principal", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -199,9 +203,6 @@ func principalToResp(p *model.CertPrincipal) certPrincipalResponse {
 		ReadOnly:    p.ReadOnly,
 		CreatedAt:   fmtAPITime(p.CreatedAt),
 	}
-	if p.ExpiresAt != nil {
-		s := fmtAPITime(p.ExpiresAt)
-		r.ExpiresAt = &s
-	}
+	r.ExpiresAt = fmtOptionalTime(p.ExpiresAt)
 	return r
 }

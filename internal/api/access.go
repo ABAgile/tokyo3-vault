@@ -107,10 +107,7 @@ func (s *Server) handleListAccess(w http.ResponseWriter, r *http.Request) {
 			ReadOnly:   t.ReadOnly,
 			CreatedAt:  fmtAPITime(t.CreatedAt),
 		}
-		if t.ExpiresAt != nil {
-			s := fmtAPITime(t.ExpiresAt)
-			entry.ExpiresAt = &s
-		}
+		entry.ExpiresAt = fmtOptionalTime(t.ExpiresAt)
 		tokens = append(tokens, entry)
 	}
 
@@ -134,10 +131,7 @@ func (s *Server) handleListAccess(w http.ResponseWriter, r *http.Request) {
 			ReadOnly:    p.ReadOnly,
 			CreatedAt:   fmtAPITime(p.CreatedAt),
 		}
-		if p.ExpiresAt != nil {
-			s := fmtAPITime(p.ExpiresAt)
-			entry.ExpiresAt = &s
-		}
+		entry.ExpiresAt = fmtOptionalTime(p.ExpiresAt)
 		principals = append(principals, entry)
 	}
 

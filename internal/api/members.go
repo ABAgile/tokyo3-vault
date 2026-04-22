@@ -107,10 +107,12 @@ func (s *Server) handleAddMember(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify user exists.
-	if _, err := s.store.GetUserByID(r.Context(), req.UserID); errors.Is(err, store.ErrNotFound) {
+	_, err := s.store.GetUserByID(r.Context(), req.UserID)
+	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "user not found")
 		return
-	} else if err != nil {
+	}
+	if err != nil {
 		s.log.Error("get user", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -151,10 +153,12 @@ func (s *Server) handleUpdateMember(w http.ResponseWriter, r *http.Request) {
 	}
 
 	targetUserID := r.PathValue("user_id")
-	if err := s.store.UpdateProjectMember(r.Context(), p.ID, targetUserID, req.Role, req.EnvID); errors.Is(err, store.ErrNotFound) {
+	err := s.store.UpdateProjectMember(r.Context(), p.ID, targetUserID, req.Role, req.EnvID)
+	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "member not found")
 		return
-	} else if err != nil {
+	}
+	if err != nil {
 		s.log.Error("update member", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -181,10 +185,12 @@ func (s *Server) handleRemoveMember(w http.ResponseWriter, r *http.Request) {
 		envID = &raw
 	}
 
-	if err := s.store.RemoveProjectMember(r.Context(), p.ID, targetUserID, envID); errors.Is(err, store.ErrNotFound) {
+	err := s.store.RemoveProjectMember(r.Context(), p.ID, targetUserID, envID)
+	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "member not found")
 		return
-	} else if err != nil {
+	}
+	if err != nil {
 		s.log.Error("remove member", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return

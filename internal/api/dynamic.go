@@ -185,10 +185,12 @@ func (s *Server) handleDeleteDynamicBackend(w http.ResponseWriter, r *http.Reque
 
 	backendSlug := r.PathValue("name")
 
-	if err := s.store.DeleteDynamicBackend(r.Context(), project.ID, envID, backendSlug); errors.Is(err, store.ErrNotFound) {
+	err := s.store.DeleteDynamicBackend(r.Context(), project.ID, envID, backendSlug)
+	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "no backend configured with slug "+backendSlug)
 		return
-	} else if err != nil {
+	}
+	if err != nil {
 		s.log.Error("delete dynamic backend", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -307,10 +309,12 @@ func (s *Server) handleDeleteDynamicRole(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if err := s.store.DeleteDynamicRole(r.Context(), backend.ID, roleName); errors.Is(err, store.ErrNotFound) {
+	err = s.store.DeleteDynamicRole(r.Context(), backend.ID, roleName)
+	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "role not found")
 		return
-	} else if err != nil {
+	}
+	if err != nil {
 		s.log.Error("delete dynamic role", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -376,10 +380,7 @@ func (s *Server) handleIssueCreds(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var createdBy *string
-	if tok != nil {
-		createdBy = &tok.ID
-	}
+	createdBy := tokenCreatedBy(tok)
 	lease, err := s.store.CreateDynamicLease(r.Context(),
 		project.ID, envID, backend.ID, role.ID, role.Name,
 		username, role.RevocationTmpl, expiresAt, createdBy)
@@ -422,10 +423,7 @@ func (s *Server) handleListDynamicLeases(w http.ResponseWriter, r *http.Request)
 			CreatedBy: l.CreatedBy,
 			CreatedAt: fmtAPITime(l.CreatedAt),
 		}
-		if l.RevokedAt != nil {
-			s := fmtAPITime(*l.RevokedAt)
-			item.RevokedAt = &s
-		}
+		item.RevokedAt = fmtOptionalTime(l.RevokedAt)
 		resp = append(resp, item)
 	}
 	writeJSON(w, http.StatusOK, resp)

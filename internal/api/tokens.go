@@ -110,10 +110,12 @@ func (s *Server) handleDeleteToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	if err := s.store.DeleteToken(r.Context(), id, *tok.UserID); errors.Is(err, store.ErrNotFound) {
+	err := s.store.DeleteToken(r.Context(), id, *tok.UserID)
+	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "token not found")
 		return
-	} else if err != nil {
+	}
+	if err != nil {
 		s.log.Error("delete token", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return

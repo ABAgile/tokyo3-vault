@@ -127,10 +127,12 @@ func (s *Server) handleDeleteEnv(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	envSlug := r.PathValue("env")
-	if err := s.store.DeleteEnvironment(r.Context(), p.ID, envSlug); errors.Is(err, store.ErrNotFound) {
+	err = s.store.DeleteEnvironment(r.Context(), p.ID, envSlug)
+	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "environment not found")
 		return
-	} else if err != nil {
+	}
+	if err != nil {
 		s.log.Error("delete env", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return

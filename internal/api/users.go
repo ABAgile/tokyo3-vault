@@ -112,10 +112,12 @@ func (s *Server) handleResetUserPassword(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	targetUserID := r.PathValue("user_id")
-	if _, err := s.store.GetUserByID(r.Context(), targetUserID); errors.Is(err, store.ErrNotFound) {
+	_, err := s.store.GetUserByID(r.Context(), targetUserID)
+	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "user not found")
 		return
-	} else if err != nil {
+	}
+	if err != nil {
 		s.log.Error("get user", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
