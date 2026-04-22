@@ -26,11 +26,13 @@ type mockStore struct {
 	listProjects         func(ctx context.Context) ([]*model.Project, error)
 	listProjectsByMember func(ctx context.Context, userID string) ([]*model.Project, error)
 	deleteProject        func(ctx context.Context, slug string) error
-	addProjectMember     func(ctx context.Context, projectID, userID, role string) error
-	getProjectMember     func(ctx context.Context, projectID, userID string) (*model.ProjectMember, error)
-	listProjectMembers   func(ctx context.Context, projectID string) ([]*model.ProjectMember, error)
-	updateProjectMember  func(ctx context.Context, projectID, userID, role string) error
-	removeProjectMember  func(ctx context.Context, projectID, userID string) error
+	addProjectMember              func(ctx context.Context, projectID, userID, role string, envID *string) error
+	getProjectMember              func(ctx context.Context, projectID, userID string) (*model.ProjectMember, error)
+	getProjectMemberForEnv        func(ctx context.Context, projectID, envID, userID string) (*model.ProjectMember, error)
+	listProjectMembers            func(ctx context.Context, projectID string) ([]*model.ProjectMember, error)
+	listProjectMembersWithAccess  func(ctx context.Context, projectID, envID string) ([]*model.ProjectMember, error)
+	updateProjectMember           func(ctx context.Context, projectID, userID, role string, envID *string) error
+	removeProjectMember           func(ctx context.Context, projectID, userID string, envID *string) error
 	createEnvironment    func(ctx context.Context, projectID, name, slug string) (*model.Environment, error)
 	getEnvironment       func(ctx context.Context, projectID, slug string) (*model.Environment, error)
 	listEnvironments     func(ctx context.Context, projectID string) ([]*model.Environment, error)
@@ -141,9 +143,9 @@ func (m *mockStore) DeleteProject(ctx context.Context, slug string) error {
 	}
 	return nil
 }
-func (m *mockStore) AddProjectMember(ctx context.Context, projectID, userID, role string) error {
+func (m *mockStore) AddProjectMember(ctx context.Context, projectID, userID, role string, envID *string) error {
 	if m.addProjectMember != nil {
-		return m.addProjectMember(ctx, projectID, userID, role)
+		return m.addProjectMember(ctx, projectID, userID, role, envID)
 	}
 	return nil
 }
@@ -153,21 +155,34 @@ func (m *mockStore) GetProjectMember(ctx context.Context, projectID, userID stri
 	}
 	return nil, store.ErrNotFound
 }
+func (m *mockStore) GetProjectMemberForEnv(ctx context.Context, projectID, envID, userID string) (*model.ProjectMember, error) {
+	if m.getProjectMemberForEnv != nil {
+		return m.getProjectMemberForEnv(ctx, projectID, envID, userID)
+	}
+	// Fall back to project-level lookup so existing tests that set getProjectMember continue to work.
+	return m.GetProjectMember(ctx, projectID, userID)
+}
 func (m *mockStore) ListProjectMembers(ctx context.Context, projectID string) ([]*model.ProjectMember, error) {
 	if m.listProjectMembers != nil {
 		return m.listProjectMembers(ctx, projectID)
 	}
 	return nil, nil
 }
-func (m *mockStore) UpdateProjectMember(ctx context.Context, projectID, userID, role string) error {
+func (m *mockStore) ListProjectMembersWithAccess(ctx context.Context, projectID, envID string) ([]*model.ProjectMember, error) {
+	if m.listProjectMembersWithAccess != nil {
+		return m.listProjectMembersWithAccess(ctx, projectID, envID)
+	}
+	return nil, nil
+}
+func (m *mockStore) UpdateProjectMember(ctx context.Context, projectID, userID, role string, envID *string) error {
 	if m.updateProjectMember != nil {
-		return m.updateProjectMember(ctx, projectID, userID, role)
+		return m.updateProjectMember(ctx, projectID, userID, role, envID)
 	}
 	return nil
 }
-func (m *mockStore) RemoveProjectMember(ctx context.Context, projectID, userID string) error {
+func (m *mockStore) RemoveProjectMember(ctx context.Context, projectID, userID string, envID *string) error {
 	if m.removeProjectMember != nil {
-		return m.removeProjectMember(ctx, projectID, userID)
+		return m.removeProjectMember(ctx, projectID, userID, envID)
 	}
 	return nil
 }

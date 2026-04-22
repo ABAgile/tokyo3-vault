@@ -221,8 +221,8 @@ func TestListProjectsByMember(t *testing.T) {
 	p2, _ := db.CreateProject(ctx, "Beta", "beta")
 	db.CreateProject(ctx, "Gamma", "gamma") // not a member
 
-	db.AddProjectMember(ctx, p1.ID, u.ID, model.RoleViewer)
-	db.AddProjectMember(ctx, p2.ID, u.ID, model.RoleViewer)
+	db.AddProjectMember(ctx, p1.ID, u.ID, model.RoleViewer, nil)
+	db.AddProjectMember(ctx, p2.ID, u.ID, model.RoleViewer, nil)
 
 	projects, err := db.ListProjectsByMember(ctx, u.ID)
 	if err != nil || len(projects) != 2 {
@@ -239,17 +239,17 @@ func TestProjectMembers_CRUD(t *testing.T) {
 	u, _ := db.CreateUser(ctx, "pm@example.com", "h", model.UserRoleMember)
 	p, _ := db.CreateProject(ctx, "PM Project", "pm-proj")
 
-	// AddProjectMember.
-	if err := db.AddProjectMember(ctx, p.ID, u.ID, model.RoleOwner); err != nil {
+	// AddProjectMember (project-level).
+	if err := db.AddProjectMember(ctx, p.ID, u.ID, model.RoleOwner, nil); err != nil {
 		t.Fatalf("AddProjectMember: %v", err)
 	}
 
 	// AddProjectMember is idempotent (upsert).
-	if err := db.AddProjectMember(ctx, p.ID, u.ID, model.RoleEditor); err != nil {
+	if err := db.AddProjectMember(ctx, p.ID, u.ID, model.RoleEditor, nil); err != nil {
 		t.Errorf("AddProjectMember upsert: %v", err)
 	}
 
-	// GetProjectMember.
+	// GetProjectMember (project-level only).
 	m, err := db.GetProjectMember(ctx, p.ID, u.ID)
 	if err != nil || m.Role != model.RoleEditor {
 		t.Errorf("GetProjectMember: role=%q err=%v", m.Role, err)
@@ -261,29 +261,29 @@ func TestProjectMembers_CRUD(t *testing.T) {
 
 	// ListProjectMembers.
 	u2, _ := db.CreateUser(ctx, "pm2@example.com", "h", model.UserRoleMember)
-	db.AddProjectMember(ctx, p.ID, u2.ID, model.RoleViewer)
+	db.AddProjectMember(ctx, p.ID, u2.ID, model.RoleViewer, nil)
 	members, err := db.ListProjectMembers(ctx, p.ID)
 	if err != nil || len(members) != 2 {
 		t.Errorf("ListProjectMembers: len=%d err=%v", len(members), err)
 	}
 
-	// UpdateProjectMember.
-	if err := db.UpdateProjectMember(ctx, p.ID, u.ID, model.RoleViewer); err != nil {
+	// UpdateProjectMember (project-level).
+	if err := db.UpdateProjectMember(ctx, p.ID, u.ID, model.RoleViewer, nil); err != nil {
 		t.Errorf("UpdateProjectMember: %v", err)
 	}
 	updated, _ := db.GetProjectMember(ctx, p.ID, u.ID)
 	if updated.Role != model.RoleViewer {
 		t.Errorf("role after update: %q", updated.Role)
 	}
-	if err := db.UpdateProjectMember(ctx, p.ID, "ghost", model.RoleViewer); err != store.ErrNotFound {
+	if err := db.UpdateProjectMember(ctx, p.ID, "ghost", model.RoleViewer, nil); err != store.ErrNotFound {
 		t.Errorf("UpdateProjectMember missing: err = %v, want ErrNotFound", err)
 	}
 
-	// RemoveProjectMember.
-	if err := db.RemoveProjectMember(ctx, p.ID, u.ID); err != nil {
+	// RemoveProjectMember (project-level).
+	if err := db.RemoveProjectMember(ctx, p.ID, u.ID, nil); err != nil {
 		t.Errorf("RemoveProjectMember: %v", err)
 	}
-	if err := db.RemoveProjectMember(ctx, p.ID, u.ID); err != store.ErrNotFound {
+	if err := db.RemoveProjectMember(ctx, p.ID, u.ID, nil); err != store.ErrNotFound {
 		t.Errorf("RemoveProjectMember missing: err = %v, want ErrNotFound", err)
 	}
 }

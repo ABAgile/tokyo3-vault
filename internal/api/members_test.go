@@ -83,7 +83,7 @@ func TestHandleListMembers_OK(t *testing.T) {
 func TestHandleAddMember_OK(t *testing.T) {
 	added := false
 	st := ownerStore()
-	st.addProjectMember = func(_ context.Context, _, _, _ string) error {
+	st.addProjectMember = func(_ context.Context, _, _, _ string, _ *string) error {
 		added = true
 		return nil
 	}
@@ -139,7 +139,7 @@ func TestHandleAddMember_MissingUserID(t *testing.T) {
 func TestHandleUpdateMember_OK(t *testing.T) {
 	updated := false
 	st := ownerStore()
-	st.updateProjectMember = func(_ context.Context, _, _, _ string) error {
+	st.updateProjectMember = func(_ context.Context, _, _, _ string, _ *string) error {
 		updated = true
 		return nil
 	}
@@ -157,7 +157,7 @@ func TestHandleUpdateMember_OK(t *testing.T) {
 
 func TestHandleUpdateMember_NotFound(t *testing.T) {
 	st := ownerStore()
-	st.updateProjectMember = func(_ context.Context, _, _, _ string) error {
+	st.updateProjectMember = func(_ context.Context, _, _, _ string, _ *string) error {
 		return store.ErrNotFound
 	}
 	srv := newTestServer(t, st)
@@ -182,7 +182,7 @@ func TestHandleUpdateMember_InvalidRole(t *testing.T) {
 func TestHandleRemoveMember_OK(t *testing.T) {
 	removed := false
 	st := ownerStore()
-	st.removeProjectMember = func(_ context.Context, _, _ string) error {
+	st.removeProjectMember = func(_ context.Context, _, _ string, _ *string) error {
 		removed = true
 		return nil
 	}
@@ -200,7 +200,7 @@ func TestHandleRemoveMember_OK(t *testing.T) {
 
 func TestHandleRemoveMember_NotFound(t *testing.T) {
 	st := ownerStore()
-	st.removeProjectMember = func(_ context.Context, _, _ string) error {
+	st.removeProjectMember = func(_ context.Context, _, _ string, _ *string) error {
 		return store.ErrNotFound
 	}
 	srv := newTestServer(t, st)

@@ -448,12 +448,23 @@ func (s *DB) DeleteProject(ctx context.Context, slug string) error {
 
 // ── Project members ───────────────────────────────────────────────────────────
 
-func (s *DB) AddProjectMember(ctx context.Context, projectID, userID, role string) error {
+func (s *DB) AddProjectMember(ctx context.Context, projectID, userID, role string, envID *string) error {
+	if envID == nil {
+		_, err := s.db.ExecContext(ctx,
+			`INSERT INTO project_members (project_id, user_id, env_id, role)
+			 VALUES (?, ?, NULL, ?)
+			 ON CONFLICT(project_id, user_id) WHERE env_id IS NULL
+			 DO UPDATE SET role = excluded.role`,
+			projectID, userID, role,
+		)
+		return err
+	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO project_members (project_id, user_id, role)
-		 VALUES (?, ?, ?)
-		 ON CONFLICT(project_id, user_id) DO UPDATE SET role = excluded.role`,
-		projectID, userID, role,
+		`INSERT INTO project_members (project_id, user_id, env_id, role)
+		 VALUES (?, ?, ?, ?)
+		 ON CONFLICT(project_id, user_id, env_id) WHERE env_id IS NOT NULL
+		 DO UPDATE SET role = excluded.role`,
+		projectID, userID, *envID, role,
 	)
 	return err
 }
@@ -461,9 +472,24 @@ func (s *DB) AddProjectMember(ctx context.Context, projectID, userID, role strin
 func (s *DB) GetProjectMember(ctx context.Context, projectID, userID string) (*model.ProjectMember, error) {
 	m := &model.ProjectMember{}
 	err := s.db.QueryRowContext(ctx,
-		`SELECT project_id, user_id, role, created_at FROM project_members
-		 WHERE project_id = ? AND user_id = ?`, projectID, userID,
-	).Scan(&m.ProjectID, &m.UserID, &m.Role, &m.CreatedAt)
+		`SELECT project_id, user_id, env_id, role, created_at FROM project_members
+		 WHERE project_id = ? AND user_id = ? AND env_id IS NULL`, projectID, userID,
+	).Scan(&m.ProjectID, &m.UserID, &m.EnvID, &m.Role, &m.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, store.ErrNotFound
+	}
+	return m, err
+}
+
+func (s *DB) GetProjectMemberForEnv(ctx context.Context, projectID, envID, userID string) (*model.ProjectMember, error) {
+	m := &model.ProjectMember{}
+	err := s.db.QueryRowContext(ctx,
+		`SELECT project_id, user_id, env_id, role, created_at FROM project_members
+		 WHERE project_id = ? AND user_id = ? AND (env_id = ? OR env_id IS NULL)
+		 ORDER BY CASE WHEN env_id IS NULL THEN 1 ELSE 0 END
+		 LIMIT 1`,
+		projectID, userID, envID,
+	).Scan(&m.ProjectID, &m.UserID, &m.EnvID, &m.Role, &m.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, store.ErrNotFound
 	}
@@ -472,7 +498,7 @@ func (s *DB) GetProjectMember(ctx context.Context, projectID, userID string) (*m
 
 func (s *DB) ListProjectMembers(ctx context.Context, projectID string) ([]*model.ProjectMember, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT project_id, user_id, role, created_at FROM project_members
+		`SELECT project_id, user_id, env_id, role, created_at FROM project_members
 		 WHERE project_id = ? ORDER BY created_at`, projectID,
 	)
 	if err != nil {
@@ -482,7 +508,7 @@ func (s *DB) ListProjectMembers(ctx context.Context, projectID string) ([]*model
 	var members []*model.ProjectMember
 	for rows.Next() {
 		m := &model.ProjectMember{}
-		if err := rows.Scan(&m.ProjectID, &m.UserID, &m.Role, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.ProjectID, &m.UserID, &m.EnvID, &m.Role, &m.CreatedAt); err != nil {
 			return nil, err
 		}
 		members = append(members, m)
@@ -490,11 +516,42 @@ func (s *DB) ListProjectMembers(ctx context.Context, projectID string) ([]*model
 	return members, rows.Err()
 }
 
-func (s *DB) UpdateProjectMember(ctx context.Context, projectID, userID, role string) error {
-	res, err := s.db.ExecContext(ctx,
-		`UPDATE project_members SET role = ? WHERE project_id = ? AND user_id = ?`,
-		role, projectID, userID,
+func (s *DB) ListProjectMembersWithAccess(ctx context.Context, projectID, envID string) ([]*model.ProjectMember, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT project_id, user_id, env_id, role, created_at FROM project_members
+		 WHERE project_id = ? AND (env_id IS NULL OR env_id = ?)
+		 ORDER BY created_at`,
+		projectID, envID,
 	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var members []*model.ProjectMember
+	for rows.Next() {
+		m := &model.ProjectMember{}
+		if err := rows.Scan(&m.ProjectID, &m.UserID, &m.EnvID, &m.Role, &m.CreatedAt); err != nil {
+			return nil, err
+		}
+		members = append(members, m)
+	}
+	return members, rows.Err()
+}
+
+func (s *DB) UpdateProjectMember(ctx context.Context, projectID, userID, role string, envID *string) error {
+	var res sql.Result
+	var err error
+	if envID == nil {
+		res, err = s.db.ExecContext(ctx,
+			`UPDATE project_members SET role = ? WHERE project_id = ? AND user_id = ? AND env_id IS NULL`,
+			role, projectID, userID,
+		)
+	} else {
+		res, err = s.db.ExecContext(ctx,
+			`UPDATE project_members SET role = ? WHERE project_id = ? AND user_id = ? AND env_id = ?`,
+			role, projectID, userID, *envID,
+		)
+	}
 	if err != nil {
 		return err
 	}
@@ -505,11 +562,20 @@ func (s *DB) UpdateProjectMember(ctx context.Context, projectID, userID, role st
 	return nil
 }
 
-func (s *DB) RemoveProjectMember(ctx context.Context, projectID, userID string) error {
-	res, err := s.db.ExecContext(ctx,
-		`DELETE FROM project_members WHERE project_id = ? AND user_id = ?`,
-		projectID, userID,
-	)
+func (s *DB) RemoveProjectMember(ctx context.Context, projectID, userID string, envID *string) error {
+	var res sql.Result
+	var err error
+	if envID == nil {
+		res, err = s.db.ExecContext(ctx,
+			`DELETE FROM project_members WHERE project_id = ? AND user_id = ? AND env_id IS NULL`,
+			projectID, userID,
+		)
+	} else {
+		res, err = s.db.ExecContext(ctx,
+			`DELETE FROM project_members WHERE project_id = ? AND user_id = ? AND env_id = ?`,
+			projectID, userID, *envID,
+		)
+	}
 	if err != nil {
 		return err
 	}

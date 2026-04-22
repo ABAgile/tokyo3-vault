@@ -75,11 +75,14 @@ type AuditLog struct {
 	CreatedAt time.Time
 }
 
-// ProjectMember records a user's role in a project.
+// ProjectMember records a user's role in a project or a specific environment.
+// EnvID nil means project-level access (all environments). Non-nil means access
+// is scoped to that single environment only.
 type ProjectMember struct {
 	ProjectID string
 	UserID    string
-	Role      string // RoleViewer | RoleEditor | RoleOwner
+	EnvID     *string // nil = project-level; non-nil = env-specific
+	Role      string  // RoleViewer | RoleEditor | RoleOwner
 	CreatedAt time.Time
 }
 

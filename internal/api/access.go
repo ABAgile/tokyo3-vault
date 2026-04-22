@@ -10,6 +10,7 @@ type accessMemberEntry struct {
 	UserID string `json:"user_id"`
 	Email  string `json:"email"`
 	Role   string `json:"role"`
+	Scope  string `json:"scope"` // "project" | "env"
 }
 
 type accessTokenEntry struct {
@@ -69,7 +70,7 @@ func (s *Server) handleListAccess(w http.ResponseWriter, r *http.Request) {
 
 	// ── members ──────────────────────────────────────────────────────────────
 
-	projectMembers, err := s.store.ListProjectMembers(ctx, project.ID)
+	projectMembers, err := s.store.ListProjectMembersWithAccess(ctx, project.ID, envID)
 	if err != nil {
 		s.log.Error("list access: members", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -77,10 +78,15 @@ func (s *Server) handleListAccess(w http.ResponseWriter, r *http.Request) {
 	}
 	members := make([]accessMemberEntry, 0, len(projectMembers))
 	for _, m := range projectMembers {
+		scope := "project"
+		if m.EnvID != nil {
+			scope = "env"
+		}
 		members = append(members, accessMemberEntry{
 			UserID: m.UserID,
 			Email:  lookupEmail(&m.UserID),
 			Role:   m.Role,
+			Scope:  scope,
 		})
 	}
 

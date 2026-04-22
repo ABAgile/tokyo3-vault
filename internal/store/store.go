@@ -45,11 +45,22 @@ type Store interface {
 	DeleteProject(ctx context.Context, slug string) error
 
 	// Project members
-	AddProjectMember(ctx context.Context, projectID, userID, role string) error
+	// AddProjectMember upserts a project-level (envID nil) or env-specific (envID non-nil) membership.
+	AddProjectMember(ctx context.Context, projectID, userID, role string, envID *string) error
+	// GetProjectMember returns the project-level (env_id IS NULL) membership row only.
+	// Used for owner checks and unscoped auth. Returns ErrNotFound if absent.
 	GetProjectMember(ctx context.Context, projectID, userID string) (*model.ProjectMember, error)
+	// GetProjectMemberForEnv returns the most-specific membership for a user in a given
+	// project+env: env-specific row (env_id = envID) preferred over project-level (env_id IS NULL).
+	// Returns ErrNotFound if neither exists.
+	GetProjectMemberForEnv(ctx context.Context, projectID, envID, userID string) (*model.ProjectMember, error)
+	// ListProjectMembers returns all membership rows for a project (project-level and env-level).
 	ListProjectMembers(ctx context.Context, projectID string) ([]*model.ProjectMember, error)
-	UpdateProjectMember(ctx context.Context, projectID, userID, role string) error
-	RemoveProjectMember(ctx context.Context, projectID, userID string) error
+	// ListProjectMembersWithAccess returns membership rows that grant access to the given
+	// project+env: project-level rows (env_id IS NULL) and env-specific rows for this env.
+	ListProjectMembersWithAccess(ctx context.Context, projectID, envID string) ([]*model.ProjectMember, error)
+	UpdateProjectMember(ctx context.Context, projectID, userID, role string, envID *string) error
+	RemoveProjectMember(ctx context.Context, projectID, userID string, envID *string) error
 
 	// Environments
 	CreateEnvironment(ctx context.Context, projectID, name, slug string) (*model.Environment, error)

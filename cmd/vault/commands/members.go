@@ -10,10 +10,12 @@ import (
 )
 
 type memberItem struct {
-	UserID    string `json:"user_id"`
-	Email     string `json:"email"`
-	Role      string `json:"role"`
-	CreatedAt string `json:"created_at"`
+	UserID    string  `json:"user_id"`
+	Email     string  `json:"email"`
+	Role      string  `json:"role"`
+	Scope     string  `json:"scope"`
+	EnvID     *string `json:"env_id,omitempty"`
+	CreatedAt string  `json:"created_at"`
 }
 
 type userLookup struct {
@@ -54,9 +56,13 @@ func newMembersListCmd() *cobra.Command {
 				fmt.Println("No members found.")
 				return nil
 			}
-			fmt.Printf("%-36s  %-30s  %-8s  %s\n", "USER ID", "EMAIL", "ROLE", "ADDED")
+			fmt.Printf("%-36s  %-30s  %-8s  %-9s  %s\n", "USER ID", "EMAIL", "ROLE", "SCOPE", "ADDED")
 			for _, m := range members {
-				fmt.Printf("%-36s  %-30s  %-8s  %s\n", m.UserID, m.Email, m.Role, fmtTime(m.CreatedAt))
+				scope := m.Scope
+				if scope == "" {
+					scope = "project"
+				}
+				fmt.Printf("%-36s  %-30s  %-8s  %-9s  %s\n", m.UserID, m.Email, m.Role, scope, fmtTime(m.CreatedAt))
 			}
 			return nil
 		},
@@ -64,7 +70,7 @@ func newMembersListCmd() *cobra.Command {
 }
 
 func newMembersAddCmd() *cobra.Command {
-	var email, role string
+	var email, role, envID string
 	cmd := &cobra.Command{
 		Use:   "add <project-slug>",
 		Short: "Add a user to a project (owner only)",
@@ -82,22 +88,30 @@ func newMembersAddCmd() *cobra.Command {
 				return fmt.Errorf("user lookup: %w", err)
 			}
 
-			body := map[string]string{"user_id": u.ID, "role": role}
+			body := map[string]any{"user_id": u.ID, "role": role}
+			if envID != "" {
+				body["env_id"] = envID
+			}
 			if err := c.Post("/api/v1/projects/"+args[0]+"/members", body, nil); err != nil {
 				return err
 			}
-			fmt.Printf("Added %s to %s as %s.\n", email, args[0], role)
+			scope := "project"
+			if envID != "" {
+				scope = "env " + envID
+			}
+			fmt.Printf("Added %s to %s as %s (%s scope).\n", email, args[0], role, scope)
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&email, "email", "", "Email address of the user to add (required)")
 	cmd.Flags().StringVar(&role, "role", "viewer", "Role to assign: viewer, editor, or owner")
+	cmd.Flags().StringVar(&envID, "env-id", "", "Scope membership to this environment ID (omit for project-level)")
 	_ = cmd.MarkFlagRequired("email")
 	return cmd
 }
 
 func newMembersUpdateCmd() *cobra.Command {
-	var role string
+	var role, envID string
 	cmd := &cobra.Command{
 		Use:   "update <project-slug> <user-id>",
 		Short: "Change a member's role (owner only)",
@@ -108,7 +122,10 @@ func newMembersUpdateCmd() *cobra.Command {
 				return err
 			}
 			c := client.New(g.ServerURL, g.Token)
-			body := map[string]string{"role": role}
+			body := map[string]any{"role": role}
+			if envID != "" {
+				body["env_id"] = envID
+			}
 			path := "/api/v1/projects/" + args[0] + "/members/" + args[1]
 			if err := c.Put(path, body, nil); err != nil {
 				return err
@@ -118,12 +135,14 @@ func newMembersUpdateCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&role, "role", "", "New role: viewer, editor, or owner (required)")
+	cmd.Flags().StringVar(&envID, "env-id", "", "Target env-scoped membership (omit for project-level)")
 	_ = cmd.MarkFlagRequired("role")
 	return cmd
 }
 
 func newMembersRemoveCmd() *cobra.Command {
-	return &cobra.Command{
+	var envID string
+	cmd := &cobra.Command{
 		Use:   "remove <project-slug> <user-id>",
 		Short: "Remove a member from a project (owner only)",
 		Args:  cobra.ExactArgs(2),
@@ -134,6 +153,9 @@ func newMembersRemoveCmd() *cobra.Command {
 			}
 			c := client.New(g.ServerURL, g.Token)
 			path := "/api/v1/projects/" + args[0] + "/members/" + args[1]
+			if envID != "" {
+				path += "?env_id=" + url.QueryEscape(envID)
+			}
 			if err := c.Delete(path); err != nil {
 				return err
 			}
@@ -141,4 +163,6 @@ func newMembersRemoveCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&envID, "env-id", "", "Target env-scoped membership (omit for project-level)")
+	return cmd
 }

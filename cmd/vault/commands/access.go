@@ -13,6 +13,7 @@ type accessMemberEntry struct {
 	UserID string `json:"user_id"`
 	Email  string `json:"email"`
 	Role   string `json:"role"`
+	Scope  string `json:"scope"`
 }
 
 type accessTokenEntry struct {
@@ -95,8 +96,12 @@ The SCOPE column shows how the token or principal was scoped:
 
 			for _, m := range resp.Members {
 				access := roleAccess(m.Role)
+				scope := m.Scope
+				if scope == "" {
+					scope = "project"
+				}
 				fmt.Printf("%-12s  %-42s  %-10s  %-12s  %-24s  %s\n",
-					"user", m.Email, "project", access, "—", "—")
+					"user", m.Email, scope, access, "—", "—")
 			}
 
 			for _, t := range resp.Tokens {

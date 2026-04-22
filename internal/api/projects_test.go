@@ -52,7 +52,7 @@ func TestHandleCreateProject_OK(t *testing.T) {
 		createProject: func(_ context.Context, name, slug string) (*model.Project, error) {
 			return &model.Project{ID: "new-p", Name: name, Slug: slug}, nil
 		},
-		addProjectMember: func(_ context.Context, _, _, _ string) error { return nil },
+		addProjectMember: func(_ context.Context, _, _, _ string, _ *string) error { return nil },
 		createAuditLog:   func(_ context.Context, _ *model.AuditLog) error { return nil },
 	}
 	srv := newTestServer(t, st)
@@ -75,7 +75,7 @@ func TestHandleCreateProject_SlugDerived(t *testing.T) {
 			capturedSlug = slug
 			return &model.Project{ID: "p1", Name: "Hello World", Slug: slug}, nil
 		},
-		addProjectMember: func(_ context.Context, _, _, _ string) error { return nil },
+		addProjectMember: func(_ context.Context, _, _, _ string, _ *string) error { return nil },
 		createAuditLog:   func(_ context.Context, _ *model.AuditLog) error { return nil },
 	}
 	srv := newTestServer(t, st)

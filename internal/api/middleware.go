@@ -110,7 +110,13 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, tok *model.To
 	if s.isServerAdmin(r.Context(), *tok.UserID) {
 		return true
 	}
-	_, err := s.store.GetProjectMember(r.Context(), projectID, *tok.UserID)
+	// When an env is specified, accept either an env-specific or project-level membership.
+	var err error
+	if envID != "" {
+		_, err = s.store.GetProjectMemberForEnv(r.Context(), projectID, envID, *tok.UserID)
+	} else {
+		_, err = s.store.GetProjectMember(r.Context(), projectID, *tok.UserID)
+	}
 	if err == store.ErrNotFound {
 		writeError(w, http.StatusForbidden, "not a member of this project")
 		return false

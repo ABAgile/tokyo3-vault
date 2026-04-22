@@ -107,7 +107,7 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 
 	// Auto-add the creating user as owner.
 	if tok.UserID != nil {
-		if err := s.store.AddProjectMember(r.Context(), p.ID, *tok.UserID, model.RoleOwner); err != nil {
+		if err := s.store.AddProjectMember(r.Context(), p.ID, *tok.UserID, model.RoleOwner, nil); err != nil {
 			s.log.Error("add project owner", "err", err)
 			// Non-fatal: project exists, membership can be repaired. Return success.
 		}

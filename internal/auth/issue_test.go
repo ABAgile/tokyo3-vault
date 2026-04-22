@@ -67,15 +67,27 @@ func (m *mockStore) ListProjectsByMember(_ context.Context, _ string) ([]*model.
 	return nil, nil
 }
 func (m *mockStore) DeleteProject(_ context.Context, _ string) error          { return nil }
-func (m *mockStore) AddProjectMember(_ context.Context, _, _, _ string) error { return nil }
+func (m *mockStore) AddProjectMember(_ context.Context, _, _, _ string, _ *string) error {
+	return nil
+}
 func (m *mockStore) GetProjectMember(_ context.Context, _, _ string) (*model.ProjectMember, error) {
+	return nil, store.ErrNotFound
+}
+func (m *mockStore) GetProjectMemberForEnv(_ context.Context, _, _, _ string) (*model.ProjectMember, error) {
 	return nil, store.ErrNotFound
 }
 func (m *mockStore) ListProjectMembers(_ context.Context, _ string) ([]*model.ProjectMember, error) {
 	return nil, nil
 }
-func (m *mockStore) UpdateProjectMember(_ context.Context, _, _, _ string) error { return nil }
-func (m *mockStore) RemoveProjectMember(_ context.Context, _, _ string) error    { return nil }
+func (m *mockStore) ListProjectMembersWithAccess(_ context.Context, _, _ string) ([]*model.ProjectMember, error) {
+	return nil, nil
+}
+func (m *mockStore) UpdateProjectMember(_ context.Context, _, _, _ string, _ *string) error {
+	return nil
+}
+func (m *mockStore) RemoveProjectMember(_ context.Context, _, _ string, _ *string) error {
+	return nil
+}
 func (m *mockStore) CreateEnvironment(_ context.Context, _, _, _ string) (*model.Environment, error) {
 	return nil, store.ErrNotFound
 }
