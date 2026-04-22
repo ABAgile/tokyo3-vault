@@ -11,40 +11,40 @@ import (
 // mockStore implements store.Store via overridable function fields.
 // Any method not overridden returns store.ErrNotFound by default.
 type mockStore struct {
-	createUser           func(ctx context.Context, email, hash, role string) (*model.User, error)
-	getUserByEmail       func(ctx context.Context, email string) (*model.User, error)
-	getUserByID          func(ctx context.Context, id string) (*model.User, error)
-	listUsers            func(ctx context.Context) ([]*model.User, error)
-	hasAdminUser         func(ctx context.Context) (bool, error)
-	updateUserPassword   func(ctx context.Context, userID, hash string) error
-	createToken          func(ctx context.Context, t *model.Token) error
-	getTokenByHash       func(ctx context.Context, hash string) (*model.Token, error)
-	listTokens           func(ctx context.Context, userID string) ([]*model.Token, error)
-	deleteToken          func(ctx context.Context, id, userID string) error
-	createProject        func(ctx context.Context, name, slug string) (*model.Project, error)
-	getProject           func(ctx context.Context, slug string) (*model.Project, error)
-	listProjects         func(ctx context.Context) ([]*model.Project, error)
-	listProjectsByMember func(ctx context.Context, userID string) ([]*model.Project, error)
-	deleteProject        func(ctx context.Context, slug string) error
-	addProjectMember              func(ctx context.Context, projectID, userID, role string, envID *string) error
-	getProjectMember              func(ctx context.Context, projectID, userID string) (*model.ProjectMember, error)
-	getProjectMemberForEnv        func(ctx context.Context, projectID, envID, userID string) (*model.ProjectMember, error)
-	listProjectMembers            func(ctx context.Context, projectID string) ([]*model.ProjectMember, error)
-	listProjectMembersWithAccess  func(ctx context.Context, projectID, envID string) ([]*model.ProjectMember, error)
-	updateProjectMember           func(ctx context.Context, projectID, userID, role string, envID *string) error
-	removeProjectMember           func(ctx context.Context, projectID, userID string, envID *string) error
-	createEnvironment    func(ctx context.Context, projectID, name, slug string) (*model.Environment, error)
-	getEnvironment       func(ctx context.Context, projectID, slug string) (*model.Environment, error)
-	listEnvironments     func(ctx context.Context, projectID string) ([]*model.Environment, error)
-	deleteEnvironment    func(ctx context.Context, projectID, slug string) error
-	setSecret            func(ctx context.Context, projectID, envID, key string, comment *string, encVal, encDEK []byte, createdBy *string) (*model.SecretVersion, error)
-	getSecret            func(ctx context.Context, projectID, envID, key string) (*model.Secret, *model.SecretVersion, error)
-	listSecrets          func(ctx context.Context, projectID, envID string) ([]*model.Secret, []*model.SecretVersion, error)
-	deleteSecret         func(ctx context.Context, projectID, envID, key string) error
-	listSecretVersions   func(ctx context.Context, secretID string) ([]*model.SecretVersion, error)
-	rollbackSecret       func(ctx context.Context, secretID, versionID string) error
-	createAuditLog       func(ctx context.Context, entry *model.AuditLog) error
-	listAuditLogs        func(ctx context.Context, filter store.AuditFilter) ([]*model.AuditLog, error)
+	createUser                   func(ctx context.Context, email, hash, role string) (*model.User, error)
+	getUserByEmail               func(ctx context.Context, email string) (*model.User, error)
+	getUserByID                  func(ctx context.Context, id string) (*model.User, error)
+	listUsers                    func(ctx context.Context) ([]*model.User, error)
+	hasAdminUser                 func(ctx context.Context) (bool, error)
+	updateUserPassword           func(ctx context.Context, userID, hash string) error
+	createToken                  func(ctx context.Context, t *model.Token) error
+	getTokenByHash               func(ctx context.Context, hash string) (*model.Token, error)
+	listTokens                   func(ctx context.Context, userID string) ([]*model.Token, error)
+	deleteToken                  func(ctx context.Context, id, userID string) error
+	createProject                func(ctx context.Context, name, slug string) (*model.Project, error)
+	getProject                   func(ctx context.Context, slug string) (*model.Project, error)
+	listProjects                 func(ctx context.Context) ([]*model.Project, error)
+	listProjectsByMember         func(ctx context.Context, userID string) ([]*model.Project, error)
+	deleteProject                func(ctx context.Context, slug string) error
+	addProjectMember             func(ctx context.Context, projectID, userID, role string, envID *string) error
+	getProjectMember             func(ctx context.Context, projectID, userID string) (*model.ProjectMember, error)
+	getProjectMemberForEnv       func(ctx context.Context, projectID, envID, userID string) (*model.ProjectMember, error)
+	listProjectMembers           func(ctx context.Context, projectID string) ([]*model.ProjectMember, error)
+	listProjectMembersWithAccess func(ctx context.Context, projectID, envID string) ([]*model.ProjectMember, error)
+	updateProjectMember          func(ctx context.Context, projectID, userID, role string, envID *string) error
+	removeProjectMember          func(ctx context.Context, projectID, userID string, envID *string) error
+	createEnvironment            func(ctx context.Context, projectID, name, slug string) (*model.Environment, error)
+	getEnvironment               func(ctx context.Context, projectID, slug string) (*model.Environment, error)
+	listEnvironments             func(ctx context.Context, projectID string) ([]*model.Environment, error)
+	deleteEnvironment            func(ctx context.Context, projectID, slug string) error
+	setSecret                    func(ctx context.Context, projectID, envID, key string, comment *string, encVal, encDEK []byte, createdBy *string) (*model.SecretVersion, error)
+	getSecret                    func(ctx context.Context, projectID, envID, key string) (*model.Secret, *model.SecretVersion, error)
+	listSecrets                  func(ctx context.Context, projectID, envID string) ([]*model.Secret, []*model.SecretVersion, error)
+	deleteSecret                 func(ctx context.Context, projectID, envID, key string) error
+	listSecretVersions           func(ctx context.Context, secretID string) ([]*model.SecretVersion, error)
+	rollbackSecret               func(ctx context.Context, secretID, versionID string) error
+	createAuditLog               func(ctx context.Context, entry *model.AuditLog) error
+	listAuditLogs                func(ctx context.Context, filter store.AuditFilter) ([]*model.AuditLog, error)
 }
 
 func (m *mockStore) CreateUser(ctx context.Context, email, hash, role string) (*model.User, error) {

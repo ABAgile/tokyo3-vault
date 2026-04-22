@@ -12,7 +12,7 @@ type memberResponse struct {
 	UserID    string  `json:"user_id"`
 	Email     string  `json:"email"`
 	Role      string  `json:"role"`
-	Scope     string  `json:"scope"`           // "project" | "env"
+	Scope     string  `json:"scope"`            // "project" | "env"
 	EnvID     *string `json:"env_id,omitempty"` // populated when scope = "env"
 	CreatedAt string  `json:"created_at"`
 }

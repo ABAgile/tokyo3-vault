@@ -11,7 +11,6 @@ import (
 	"github.com/abagile/tokyo3-vault/internal/store"
 )
 
-
 // isServerAdmin reports whether userID belongs to a user with the server-admin role.
 func (s *Server) isServerAdmin(ctx context.Context, userID string) bool {
 	user, err := s.store.GetUserByID(ctx, userID)

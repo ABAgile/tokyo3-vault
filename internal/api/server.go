@@ -13,8 +13,8 @@ import (
 // Server holds shared dependencies for all HTTP handlers.
 type Server struct {
 	store     store.Store
-	kp        crypto.KeyProvider       // server KEK — used only to wrap/unwrap PEKs
-	projectKP *crypto.ProjectKeyCache  // project-scoped key cache; wraps/unwraps per-secret DEKs
+	kp        crypto.KeyProvider      // server KEK — used only to wrap/unwrap PEKs
+	projectKP *crypto.ProjectKeyCache // project-scoped key cache; wraps/unwraps per-secret DEKs
 	log       *slog.Logger
 }
 

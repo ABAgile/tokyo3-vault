@@ -48,9 +48,9 @@ type CertPrincipal struct {
 	ID          string
 	UserID      *string // owner — who registered this mapping
 	Description string
-	SPIFFEID    string     // URI SAN, e.g. spiffe://cluster.local/ns/myapp/sa/server
-	ProjectID   *string    // nil = unscoped (any project)
-	EnvID       *string    // nil = any env
+	SPIFFEID    string  // URI SAN, e.g. spiffe://cluster.local/ns/myapp/sa/server
+	ProjectID   *string // nil = unscoped (any project)
+	EnvID       *string // nil = any env
 	ReadOnly    bool
 	ExpiresAt   *time.Time // when this mapping expires (independent of cert lifetime)
 	CreatedAt   time.Time

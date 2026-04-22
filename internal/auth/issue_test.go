@@ -66,7 +66,7 @@ func (m *mockStore) ListProjects(_ context.Context) ([]*model.Project, error) { 
 func (m *mockStore) ListProjectsByMember(_ context.Context, _ string) ([]*model.Project, error) {
 	return nil, nil
 }
-func (m *mockStore) DeleteProject(_ context.Context, _ string) error          { return nil }
+func (m *mockStore) DeleteProject(_ context.Context, _ string) error { return nil }
 func (m *mockStore) AddProjectMember(_ context.Context, _, _, _ string, _ *string) error {
 	return nil
 }
@@ -161,7 +161,7 @@ func (m *mockStore) ListCertPrincipals(_ context.Context, _ string) ([]*model.Ce
 func (m *mockStore) ListCertPrincipalsWithAccess(_ context.Context, _, _ string) ([]*model.CertPrincipal, error) {
 	return nil, nil
 }
-func (m *mockStore) DeleteCertPrincipal(_ context.Context, _, _ string) error { return nil }
+func (m *mockStore) DeleteCertPrincipal(_ context.Context, _, _ string) error  { return nil }
 func (m *mockStore) SetProjectKey(_ context.Context, _ string, _ []byte) error { return nil }
 func (m *mockStore) RewrapProjectDEKs(_ context.Context, _ string, _ func([]byte) ([]byte, error)) error {
 	return nil
