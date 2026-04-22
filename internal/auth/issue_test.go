@@ -49,6 +49,9 @@ func (m *mockStore) UpdateUserPassword(_ context.Context, _, _ string) error { r
 func (m *mockStore) ListTokens(_ context.Context, _ string) ([]*model.Token, error) {
 	return nil, nil
 }
+func (m *mockStore) ListTokensWithAccess(_ context.Context, _, _ string) ([]*model.Token, error) {
+	return nil, nil
+}
 func (m *mockStore) DeleteToken(_ context.Context, _, _ string) error { return nil }
 func (m *mockStore) CreateProject(_ context.Context, _, _ string) (*model.Project, error) {
 	return nil, store.ErrNotFound
@@ -141,6 +144,9 @@ func (m *mockStore) GetCertPrincipalBySPIFFEID(_ context.Context, _ string) (*mo
 	return nil, store.ErrNotFound
 }
 func (m *mockStore) ListCertPrincipals(_ context.Context, _ string) ([]*model.CertPrincipal, error) {
+	return nil, nil
+}
+func (m *mockStore) ListCertPrincipalsWithAccess(_ context.Context, _, _ string) ([]*model.CertPrincipal, error) {
 	return nil, nil
 }
 func (m *mockStore) DeleteCertPrincipal(_ context.Context, _, _ string) error { return nil }

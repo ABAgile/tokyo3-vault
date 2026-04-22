@@ -99,6 +99,9 @@ func (m *mockStore) ListTokens(ctx context.Context, userID string) ([]*model.Tok
 	}
 	return nil, nil
 }
+func (m *mockStore) ListTokensWithAccess(ctx context.Context, projectID, envID string) ([]*model.Token, error) {
+	return nil, nil
+}
 func (m *mockStore) DeleteToken(ctx context.Context, id, userID string) error {
 	if m.deleteToken != nil {
 		return m.deleteToken(ctx, id, userID)
@@ -287,6 +290,9 @@ func (m *mockStore) GetCertPrincipalBySPIFFEID(ctx context.Context, spiffeID str
 	return nil, store.ErrNotFound
 }
 func (m *mockStore) ListCertPrincipals(ctx context.Context, userID string) ([]*model.CertPrincipal, error) {
+	return nil, nil
+}
+func (m *mockStore) ListCertPrincipalsWithAccess(ctx context.Context, projectID, envID string) ([]*model.CertPrincipal, error) {
 	return nil, nil
 }
 func (m *mockStore) DeleteCertPrincipal(ctx context.Context, id, userID string) error {

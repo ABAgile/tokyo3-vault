@@ -72,6 +72,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/v1/projects/{project}/envs", s.auth(s.handleCreateEnv))
 	mux.HandleFunc("DELETE /api/v1/projects/{project}/envs/{env}", s.auth(s.handleDeleteEnv))
 
+	// Access — unified identity list for a project+env
+	mux.HandleFunc("GET /api/v1/projects/{project}/envs/{env}/access", s.auth(s.handleListAccess))
+
 	// Secrets
 	mux.HandleFunc("GET /api/v1/projects/{project}/envs/{env}/secrets", s.auth(s.handleListSecrets))
 	mux.HandleFunc("POST /api/v1/projects/{project}/envs/{env}/secrets", s.auth(s.handleSetSecret))

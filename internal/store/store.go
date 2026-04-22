@@ -30,6 +30,10 @@ type Store interface {
 	CreateToken(ctx context.Context, t *model.Token) error
 	GetTokenByHash(ctx context.Context, hash string) (*model.Token, error)
 	ListTokens(ctx context.Context, userID string) ([]*model.Token, error)
+	// ListTokensWithAccess returns all non-expired tokens that can reach the given
+	// project+env: explicitly scoped to it (project-only or project+env), and
+	// unscoped tokens owned by project members.
+	ListTokensWithAccess(ctx context.Context, projectID, envID string) ([]*model.Token, error)
 	DeleteToken(ctx context.Context, id, userID string) error
 
 	// Projects
@@ -94,6 +98,10 @@ type Store interface {
 	CreateCertPrincipal(ctx context.Context, p *model.CertPrincipal) error
 	GetCertPrincipalBySPIFFEID(ctx context.Context, spiffeID string) (*model.CertPrincipal, error)
 	ListCertPrincipals(ctx context.Context, userID string) ([]*model.CertPrincipal, error)
+	// ListCertPrincipalsWithAccess returns all non-expired principals that can reach
+	// the given project+env: explicitly scoped to it, and unscoped principals owned
+	// by project members.
+	ListCertPrincipalsWithAccess(ctx context.Context, projectID, envID string) ([]*model.CertPrincipal, error)
 	DeleteCertPrincipal(ctx context.Context, id, userID string) error
 
 	// Project envelope keys

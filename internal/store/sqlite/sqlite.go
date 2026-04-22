@@ -219,6 +219,33 @@ func (s *DB) ListTokens(ctx context.Context, userID string) ([]*model.Token, err
 	return tokens, rows.Err()
 }
 
+func (s *DB) ListTokensWithAccess(ctx context.Context, projectID, envID string) ([]*model.Token, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, user_id, token_hash, name, project_id, env_id, read_only, expires_at, created_at
+		 FROM tokens
+		 WHERE
+		   (project_id = ? AND env_id = ?)
+		   OR (project_id = ? AND env_id IS NULL)
+		   OR (project_id IS NULL AND user_id IN (
+		         SELECT user_id FROM project_members WHERE project_id = ?
+		       ))
+		 ORDER BY created_at DESC`, projectID, envID, projectID, projectID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var tokens []*model.Token
+	for rows.Next() {
+		t := &model.Token{}
+		if err := rows.Scan(&t.ID, &t.UserID, &t.TokenHash, &t.Name, &t.ProjectID, &t.EnvID, &t.ReadOnly, &t.ExpiresAt, &t.CreatedAt); err != nil {
+			return nil, err
+		}
+		tokens = append(tokens, t)
+	}
+	return tokens, rows.Err()
+}
+
 func (s *DB) DeleteToken(ctx context.Context, id, userID string) error {
 	res, err := s.db.ExecContext(ctx,
 		`DELETE FROM tokens WHERE id = ? AND user_id = ?`, id, userID,
