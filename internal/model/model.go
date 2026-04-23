@@ -20,11 +20,32 @@ const (
 // ── Core identity types ───────────────────────────────────────────────────────
 
 type User struct {
-	ID           string
-	Email        string
-	PasswordHash string
-	Role         string // UserRoleAdmin | UserRoleMember
-	CreatedAt    time.Time
+	ID             string
+	Email          string
+	PasswordHash   string  // empty for OIDC-only users
+	Role           string  // UserRoleAdmin | UserRoleMember
+	OIDCIssuer     *string // nil for local accounts
+	OIDCSubject    *string // nil for local accounts; unique per issuer when set
+	Active         bool    // false = deprovisioned by SCIM
+	SCIMExternalID *string // IdP externalId for correlation
+	CreatedAt      time.Time
+}
+
+type SCIMToken struct {
+	ID          string
+	TokenHash   string
+	Description string
+	CreatedAt   time.Time
+}
+
+type SCIMGroupRole struct {
+	ID          string
+	GroupID     string
+	DisplayName string
+	ProjectID   *string
+	EnvID       *string
+	Role        string
+	CreatedAt   time.Time
 }
 
 // Token covers both user session tokens (UserID set, ProjectID nil) and

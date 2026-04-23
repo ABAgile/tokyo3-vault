@@ -97,7 +97,7 @@ func TestHandleSignup_EmailConflict(t *testing.T) {
 
 func TestHandleLogin_ValidCredentials(t *testing.T) {
 	hash, _ := auth.HashPassword("correctpass")
-	user := &model.User{ID: "u1", Email: "a@b.com", PasswordHash: hash}
+	user := &model.User{ID: "u1", Email: "a@b.com", PasswordHash: hash, Active: true}
 	st := &mockStore{
 		getUserByEmail: func(_ context.Context, _ string) (*model.User, error) { return user, nil },
 		createToken:    func(_ context.Context, _ *model.Token) error { return nil },

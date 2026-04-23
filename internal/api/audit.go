@@ -54,6 +54,18 @@ const (
 
 	ActionCertPrincipalRegister = "cert.principal.register"
 	ActionCertPrincipalDelete   = "cert.principal.delete"
+
+	ActionAuthOIDCLogin          = "auth.oidc.login"
+	ActionAuthOIDCJITProvision   = "auth.oidc.jit_provision"
+	ActionAuthOIDCIdentityLinked = "auth.oidc.identity_linked"
+
+	ActionSCIMUserCreate     = "scim.user.create"
+	ActionSCIMUserUpdate     = "scim.user.update"
+	ActionSCIMUserDeactivate = "scim.user.deactivate"
+	ActionSCIMGroupSync      = "scim.group.sync"
+
+	ActionSCIMTokenCreate = "scim.token.create"
+	ActionSCIMTokenDelete = "scim.token.delete"
 )
 
 // logAudit writes an audit entry. projectID and resource are optional.

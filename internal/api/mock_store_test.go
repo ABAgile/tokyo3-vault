@@ -319,3 +319,45 @@ func (m *mockStore) SetProjectKey(ctx context.Context, projectID string, encPEK 
 func (m *mockStore) RewrapProjectDEKs(ctx context.Context, projectID string, rewrap func([]byte) ([]byte, error)) error {
 	return nil
 }
+func (m *mockStore) CreateOIDCUser(ctx context.Context, email, oidcIssuer, oidcSubject, role string) (*model.User, error) {
+	return nil, store.ErrNotFound
+}
+func (m *mockStore) GetUserByOIDCSubject(ctx context.Context, issuer, subject string) (*model.User, error) {
+	return nil, store.ErrNotFound
+}
+func (m *mockStore) SetUserOIDCIdentity(ctx context.Context, userID, issuer, subject string) error {
+	return nil
+}
+func (m *mockStore) SetUserActive(ctx context.Context, userID string, active bool) error {
+	return nil
+}
+func (m *mockStore) DeleteAllTokensForUser(ctx context.Context, userID string) error {
+	return nil
+}
+func (m *mockStore) CreateSCIMToken(ctx context.Context, t *model.SCIMToken) error {
+	return nil
+}
+func (m *mockStore) GetSCIMTokenByHash(ctx context.Context, hash string) (*model.SCIMToken, error) {
+	return nil, store.ErrNotFound
+}
+func (m *mockStore) ListSCIMTokens(ctx context.Context) ([]*model.SCIMToken, error) {
+	return nil, nil
+}
+func (m *mockStore) DeleteSCIMToken(ctx context.Context, id string) error {
+	return store.ErrNotFound
+}
+func (m *mockStore) SetSCIMGroupRole(ctx context.Context, groupID, displayName string, projectID, envID *string, role string) (*model.SCIMGroupRole, error) {
+	return nil, store.ErrNotFound
+}
+func (m *mockStore) ListSCIMGroupRoles(ctx context.Context) ([]*model.SCIMGroupRole, error) {
+	return nil, nil
+}
+func (m *mockStore) ListSCIMGroupRolesByGroup(ctx context.Context, groupID string) ([]*model.SCIMGroupRole, error) {
+	return nil, nil
+}
+func (m *mockStore) GetSCIMGroupRole(ctx context.Context, id string) (*model.SCIMGroupRole, error) {
+	return nil, store.ErrNotFound
+}
+func (m *mockStore) DeleteSCIMGroupRole(ctx context.Context, id string) error {
+	return store.ErrNotFound
+}

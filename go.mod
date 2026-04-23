@@ -7,10 +7,12 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.41.6
 	github.com/aws/aws-sdk-go-v2/config v1.32.16
 	github.com/aws/aws-sdk-go-v2/service/kms v1.50.5
+	github.com/coreos/go-oidc/v3 v3.18.0
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.9.1
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/crypto v0.50.0
+	golang.org/x/oauth2 v0.36.0
 	golang.org/x/term v0.42.0
 	modernc.org/sqlite v1.48.2
 )
@@ -29,6 +31,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sts v1.42.0 // indirect
 	github.com/aws/smithy-go v1.25.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect

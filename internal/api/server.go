@@ -8,20 +8,30 @@ import (
 	"time"
 
 	"github.com/abagile/tokyo3-vault/internal/crypto"
+	oidcpkg "github.com/abagile/tokyo3-vault/internal/oidc"
 	"github.com/abagile/tokyo3-vault/internal/store"
 )
 
 // Server holds shared dependencies for all HTTP handlers.
 type Server struct {
-	store     store.Store
-	kp        crypto.KeyProvider      // server KEK — used only to wrap/unwrap PEKs
-	projectKP *crypto.ProjectKeyCache // project-scoped key cache; wraps/unwraps per-secret DEKs
-	log       *slog.Logger
+	store       store.Store
+	kp          crypto.KeyProvider      // server KEK — used only to wrap/unwrap PEKs
+	projectKP   *crypto.ProjectKeyCache // project-scoped key cache; wraps/unwraps per-secret DEKs
+	log         *slog.Logger
+	oidc        *oidcpkg.Provider // nil when OIDC is not configured
+	oidcEnforce bool              // true = local login/signup disabled
 }
 
 // New returns a configured Server.
-func New(st store.Store, kp crypto.KeyProvider, projectKP *crypto.ProjectKeyCache, log *slog.Logger) *Server {
-	return &Server{store: st, kp: kp, projectKP: projectKP, log: log}
+func New(st store.Store, kp crypto.KeyProvider, projectKP *crypto.ProjectKeyCache, log *slog.Logger, oidcProvider *oidcpkg.Provider, oidcEnforce bool) *Server {
+	return &Server{
+		store:       st,
+		kp:          kp,
+		projectKP:   projectKP,
+		log:         log,
+		oidc:        oidcProvider,
+		oidcEnforce: oidcEnforce,
+	}
 }
 
 // Routes registers all API routes on mux and returns it.
@@ -32,10 +42,42 @@ func (s *Server) Routes() http.Handler {
 	// Audit
 	mux.HandleFunc("GET /api/v1/audit", s.auth(s.handleListAuditLogs))
 
-	// Auth
+	// Auth — local
 	mux.HandleFunc("POST /api/v1/auth/signup", s.handleSignup)
 	mux.HandleFunc("POST /api/v1/auth/login", s.handleLogin)
 	mux.HandleFunc("DELETE /api/v1/auth/logout", s.auth(s.handleLogout))
+
+	// Auth — OIDC/SSO
+	mux.HandleFunc("GET /api/v1/auth/oidc/config", s.handleOIDCConfig)
+	mux.HandleFunc("GET /api/v1/auth/oidc/login", s.handleOIDCLogin)
+	mux.HandleFunc("GET /api/v1/auth/oidc/callback", s.handleOIDCCallback)
+
+	// SCIM 2.0 provisioning (IdP push)
+	mux.HandleFunc("GET /scim/v2/ServiceProviderConfig", s.handleSCIMServiceProviderConfig)
+	mux.HandleFunc("GET /scim/v2/ResourceTypes", s.handleSCIMResourceTypes)
+	mux.HandleFunc("GET /scim/v2/Schemas", s.handleSCIMSchemas)
+	mux.HandleFunc("GET /scim/v2/Users", s.scimAuth(s.handleSCIMListUsers))
+	mux.HandleFunc("POST /scim/v2/Users", s.scimAuth(s.handleSCIMCreateUser))
+	mux.HandleFunc("GET /scim/v2/Users/{id}", s.scimAuth(s.handleSCIMGetUser))
+	mux.HandleFunc("PUT /scim/v2/Users/{id}", s.scimAuth(s.handleSCIMReplaceUser))
+	mux.HandleFunc("PATCH /scim/v2/Users/{id}", s.scimAuth(s.handleSCIMPatchUser))
+	mux.HandleFunc("DELETE /scim/v2/Users/{id}", s.scimAuth(s.handleSCIMDeleteUser))
+	mux.HandleFunc("GET /scim/v2/Groups", s.scimAuth(s.handleSCIMListGroups))
+	mux.HandleFunc("POST /scim/v2/Groups", s.scimAuth(s.handleSCIMCreateGroup))
+	mux.HandleFunc("GET /scim/v2/Groups/{id}", s.scimAuth(s.handleSCIMGetGroup))
+	mux.HandleFunc("PUT /scim/v2/Groups/{id}", s.scimAuth(s.handleSCIMReplaceGroup))
+	mux.HandleFunc("PATCH /scim/v2/Groups/{id}", s.scimAuth(s.handleSCIMPatchGroup))
+	mux.HandleFunc("DELETE /scim/v2/Groups/{id}", s.scimAuth(s.handleSCIMDeleteGroup))
+
+	// SCIM token management (server admin only)
+	mux.HandleFunc("POST /api/v1/scim/tokens", s.auth(s.handleCreateSCIMToken))
+	mux.HandleFunc("GET /api/v1/scim/tokens", s.auth(s.handleListSCIMTokens))
+	mux.HandleFunc("DELETE /api/v1/scim/tokens/{id}", s.auth(s.handleDeleteSCIMToken))
+
+	// SCIM group→role mapping management (server admin only)
+	mux.HandleFunc("POST /api/v1/scim/group-roles", s.auth(s.handleCreateSCIMGroupRole))
+	mux.HandleFunc("GET /api/v1/scim/group-roles", s.auth(s.handleListSCIMGroupRoles))
+	mux.HandleFunc("DELETE /api/v1/scim/group-roles/{id}", s.auth(s.handleDeleteSCIMGroupRole))
 
 	// Tokens (machine tokens)
 	mux.HandleFunc("GET /api/v1/tokens", s.auth(s.handleListTokens))

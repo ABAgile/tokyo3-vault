@@ -101,16 +101,43 @@ func (s *DB) Close() error { return s.db.Close() }
 
 // ── Users ────────────────────────────────────────────────────────────────────
 
+const userCols = `id, email, password_hash, role, oidc_issuer, oidc_subject, active, scim_external_id, created_at`
+
+func scanUser(row interface{ Scan(...any) error }) (*model.User, error) {
+	var (
+		u       model.User
+		hash    sql.NullString
+		issuer  sql.NullString
+		subject sql.NullString
+		extID   sql.NullString
+	)
+	if err := row.Scan(&u.ID, &u.Email, &hash, &u.Role, &issuer, &subject, &u.Active, &extID, &u.CreatedAt); err != nil {
+		return nil, err
+	}
+	u.PasswordHash = hash.String
+	if issuer.Valid {
+		u.OIDCIssuer = &issuer.String
+	}
+	if subject.Valid {
+		u.OIDCSubject = &subject.String
+	}
+	if extID.Valid {
+		u.SCIMExternalID = &extID.String
+	}
+	return &u, nil
+}
+
 func (s *DB) CreateUser(ctx context.Context, email, passwordHash, role string) (*model.User, error) {
 	u := &model.User{
 		ID:           uuid.NewString(),
 		Email:        email,
 		PasswordHash: passwordHash,
 		Role:         role,
+		Active:       true,
 		CreatedAt:    time.Now().UTC(),
 	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO users (id, email, password_hash, role, created_at) VALUES (?, ?, ?, ?, ?)`,
+		`INSERT INTO users (id, email, password_hash, role, active, created_at) VALUES (?, ?, ?, ?, 1, ?)`,
 		u.ID, u.Email, u.PasswordHash, u.Role, u.CreatedAt,
 	)
 	if err != nil {
@@ -122,11 +149,33 @@ func (s *DB) CreateUser(ctx context.Context, email, passwordHash, role string) (
 	return u, nil
 }
 
+func (s *DB) CreateOIDCUser(ctx context.Context, email, oidcIssuer, oidcSubject, role string) (*model.User, error) {
+	u := &model.User{
+		ID:          uuid.NewString(),
+		Email:       email,
+		Role:        role,
+		Active:      true,
+		OIDCIssuer:  &oidcIssuer,
+		OIDCSubject: &oidcSubject,
+		CreatedAt:   time.Now().UTC(),
+	}
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO users (id, email, password_hash, role, oidc_issuer, oidc_subject, active, created_at)
+		 VALUES (?, ?, NULL, ?, ?, ?, 1, ?)`,
+		u.ID, u.Email, u.Role, oidcIssuer, oidcSubject, u.CreatedAt,
+	)
+	if err != nil {
+		if isUnique(err) {
+			return nil, store.ErrConflict
+		}
+		return nil, err
+	}
+	return u, nil
+}
+
 func (s *DB) GetUserByEmail(ctx context.Context, email string) (*model.User, error) {
-	u := &model.User{}
-	err := s.db.QueryRowContext(ctx,
-		`SELECT id, email, password_hash, role, created_at FROM users WHERE email = ?`, email,
-	).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &u.CreatedAt)
+	row := s.db.QueryRowContext(ctx, `SELECT `+userCols+` FROM users WHERE email = ?`, email)
+	u, err := scanUser(row)
 	if err == sql.ErrNoRows {
 		return nil, store.ErrNotFound
 	}
@@ -134,10 +183,18 @@ func (s *DB) GetUserByEmail(ctx context.Context, email string) (*model.User, err
 }
 
 func (s *DB) GetUserByID(ctx context.Context, id string) (*model.User, error) {
-	u := &model.User{}
-	err := s.db.QueryRowContext(ctx,
-		`SELECT id, email, password_hash, role, created_at FROM users WHERE id = ?`, id,
-	).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &u.CreatedAt)
+	row := s.db.QueryRowContext(ctx, `SELECT `+userCols+` FROM users WHERE id = ?`, id)
+	u, err := scanUser(row)
+	if err == sql.ErrNoRows {
+		return nil, store.ErrNotFound
+	}
+	return u, err
+}
+
+func (s *DB) GetUserByOIDCSubject(ctx context.Context, issuer, subject string) (*model.User, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT `+userCols+` FROM users WHERE oidc_issuer = ? AND oidc_subject = ?`, issuer, subject)
+	u, err := scanUser(row)
 	if err == sql.ErrNoRows {
 		return nil, store.ErrNotFound
 	}
@@ -145,17 +202,15 @@ func (s *DB) GetUserByID(ctx context.Context, id string) (*model.User, error) {
 }
 
 func (s *DB) ListUsers(ctx context.Context) ([]*model.User, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, email, password_hash, role, created_at FROM users ORDER BY created_at`,
-	)
+	rows, err := s.db.QueryContext(ctx, `SELECT `+userCols+` FROM users ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var users []*model.User
 	for rows.Next() {
-		u := &model.User{}
-		if err := rows.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &u.CreatedAt); err != nil {
+		u, err := scanUser(rows)
+		if err != nil {
 			return nil, err
 		}
 		users = append(users, u)
@@ -174,6 +229,168 @@ func (s *DB) UpdateUserPassword(ctx context.Context, userID, passwordHash string
 		`UPDATE users SET password_hash = ? WHERE id = ?`, passwordHash, userID,
 	)
 	return err
+}
+
+func (s *DB) SetUserOIDCIdentity(ctx context.Context, userID, issuer, subject string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE users SET oidc_issuer = ?, oidc_subject = ? WHERE id = ?`, issuer, subject, userID,
+	)
+	if err != nil && isUnique(err) {
+		return store.ErrConflict
+	}
+	return err
+}
+
+func (s *DB) SetUserActive(ctx context.Context, userID string, active bool) error {
+	v := 0
+	if active {
+		v = 1
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE users SET active = ? WHERE id = ?`, v, userID)
+	return err
+}
+
+func (s *DB) DeleteAllTokensForUser(ctx context.Context, userID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM tokens WHERE user_id = ?`, userID)
+	return err
+}
+
+// ── SCIM tokens ───────────────────────────────────────────────────────────────
+
+func (s *DB) CreateSCIMToken(ctx context.Context, t *model.SCIMToken) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO scim_tokens (id, token_hash, description, created_at) VALUES (?, ?, ?, ?)`,
+		t.ID, t.TokenHash, t.Description, t.CreatedAt,
+	)
+	if err != nil && isUnique(err) {
+		return store.ErrConflict
+	}
+	return err
+}
+
+func (s *DB) GetSCIMTokenByHash(ctx context.Context, hash string) (*model.SCIMToken, error) {
+	t := &model.SCIMToken{}
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, token_hash, description, created_at FROM scim_tokens WHERE token_hash = ?`, hash,
+	).Scan(&t.ID, &t.TokenHash, &t.Description, &t.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, store.ErrNotFound
+	}
+	return t, err
+}
+
+func (s *DB) ListSCIMTokens(ctx context.Context) ([]*model.SCIMToken, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, token_hash, description, created_at FROM scim_tokens ORDER BY created_at`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var tokens []*model.SCIMToken
+	for rows.Next() {
+		t := &model.SCIMToken{}
+		if err := rows.Scan(&t.ID, &t.TokenHash, &t.Description, &t.CreatedAt); err != nil {
+			return nil, err
+		}
+		tokens = append(tokens, t)
+	}
+	return tokens, rows.Err()
+}
+
+func (s *DB) DeleteSCIMToken(ctx context.Context, id string) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM scim_tokens WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+// ── SCIM group roles ──────────────────────────────────────────────────────────
+
+func (s *DB) SetSCIMGroupRole(ctx context.Context, groupID, displayName string, projectID, envID *string, role string) (*model.SCIMGroupRole, error) {
+	r := &model.SCIMGroupRole{
+		ID:          uuid.NewString(),
+		GroupID:     groupID,
+		DisplayName: displayName,
+		ProjectID:   projectID,
+		EnvID:       envID,
+		Role:        role,
+		CreatedAt:   time.Now().UTC(),
+	}
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO scim_group_roles (id, group_id, display_name, project_id, env_id, role, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT (group_id, project_id, env_id) DO UPDATE
+		     SET display_name = excluded.display_name, role = excluded.role`,
+		r.ID, r.GroupID, r.DisplayName, r.ProjectID, r.EnvID, r.Role, r.CreatedAt,
+	)
+	return r, err
+}
+
+func (s *DB) ListSCIMGroupRoles(ctx context.Context) ([]*model.SCIMGroupRole, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, group_id, display_name, project_id, env_id, role, created_at FROM scim_group_roles ORDER BY created_at`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var roles []*model.SCIMGroupRole
+	for rows.Next() {
+		r := &model.SCIMGroupRole{}
+		if err := rows.Scan(&r.ID, &r.GroupID, &r.DisplayName, &r.ProjectID, &r.EnvID, &r.Role, &r.CreatedAt); err != nil {
+			return nil, err
+		}
+		roles = append(roles, r)
+	}
+	return roles, rows.Err()
+}
+
+func (s *DB) ListSCIMGroupRolesByGroup(ctx context.Context, groupID string) ([]*model.SCIMGroupRole, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, group_id, display_name, project_id, env_id, role, created_at FROM scim_group_roles WHERE group_id = ? ORDER BY created_at`, groupID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var roles []*model.SCIMGroupRole
+	for rows.Next() {
+		r := &model.SCIMGroupRole{}
+		if err := rows.Scan(&r.ID, &r.GroupID, &r.DisplayName, &r.ProjectID, &r.EnvID, &r.Role, &r.CreatedAt); err != nil {
+			return nil, err
+		}
+		roles = append(roles, r)
+	}
+	return roles, rows.Err()
+}
+
+func (s *DB) GetSCIMGroupRole(ctx context.Context, id string) (*model.SCIMGroupRole, error) {
+	r := &model.SCIMGroupRole{}
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, group_id, display_name, project_id, env_id, role, created_at FROM scim_group_roles WHERE id = ?`, id,
+	).Scan(&r.ID, &r.GroupID, &r.DisplayName, &r.ProjectID, &r.EnvID, &r.Role, &r.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, store.ErrNotFound
+	}
+	return r, err
+}
+
+func (s *DB) DeleteSCIMGroupRole(ctx context.Context, id string) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM scim_group_roles WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
 }
 
 // ── Tokens ───────────────────────────────────────────────────────────────────

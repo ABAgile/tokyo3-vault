@@ -1192,3 +1192,4 @@ In-depth documentation for contributors and operators is in the [`docs/`](docs/)
 | [`docs/data-flows.md`](docs/data-flows.md) | Step-by-step traces: secret read/write, dynamic credential issuance, lease revocation, key migration, SPIFFE registration |
 | [`docs/contributing.md`](docs/contributing.md) | Dev setup, project layout, migration authoring, adding backend types, known limitations, deployment notes |
 | [`docs/er_diagram.md`](docs/er_diagram.md) | Entity relationship diagram (Mermaid) |
+| [`docs/oidc-sso-design.md`](docs/oidc-sso-design.md) | OIDC/SSO integration design: protocol choice, data model changes, new routes, CLI flow, migration path, SCIM phase 2 |

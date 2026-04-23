@@ -31,14 +31,17 @@ func CheckPassword(hash, password string) bool {
 	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil
 }
 
-// generateRawToken returns a cryptographically random 32-byte hex string.
-func generateRawToken() (string, error) {
+// GenerateRawToken returns a cryptographically random 32-byte hex string.
+func GenerateRawToken() (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
 	return hex.EncodeToString(b), nil
 }
+
+// generateRawToken is the unexported alias for internal use.
+func generateRawToken() (string, error) { return GenerateRawToken() }
 
 // HashToken returns the SHA-256 hex digest of a raw token string.
 // Only the hash is stored in the database.

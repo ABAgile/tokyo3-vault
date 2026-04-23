@@ -59,6 +59,7 @@ import (
 	"github.com/abagile/tokyo3-vault/internal/api"
 	"github.com/abagile/tokyo3-vault/internal/crypto"
 	"github.com/abagile/tokyo3-vault/internal/dynamic"
+	oidcpkg "github.com/abagile/tokyo3-vault/internal/oidc"
 	"github.com/abagile/tokyo3-vault/internal/store"
 	"github.com/abagile/tokyo3-vault/internal/store/postgres"
 	"github.com/abagile/tokyo3-vault/internal/store/sqlite"
@@ -123,7 +124,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	srv := api.New(st, kp, projectKP, log)
+	oidcProvider, oidcEnforce, err := buildOIDCProvider(ctx, log)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "oidc config: %v\n", err)
+		os.Exit(1)
+	}
+
+	srv := api.New(st, kp, projectKP, log, oidcProvider, oidcEnforce)
 	httpSrv := &http.Server{
 		Addr:      addr,
 		Handler:   srv.Routes(),
@@ -249,6 +256,46 @@ func openKeyProvider(ctx context.Context, log *slog.Logger) (crypto.KeyProvider,
 	}
 	log.Info("using local master key provider")
 	return crypto.NewLocalKeyProvider(kek), nil
+}
+
+// buildOIDCProvider configures the OIDC provider from environment variables.
+// Returns nil provider (with no error) when OIDC is not configured.
+//
+// Required env vars to enable OIDC:
+//
+//	VAULT_OIDC_ISSUER       IdP issuer URL (discovery endpoint base)
+//	VAULT_OIDC_CLIENT_ID    OAuth2 client ID
+//	VAULT_OIDC_CLIENT_SECRET OAuth2 client secret
+//	VAULT_OIDC_REDIRECT_URI Callback URL registered with the IdP
+//
+// Optional:
+//
+//	VAULT_OIDC_ENFORCE      Set to "true" to disable local login/signup entirely
+func buildOIDCProvider(ctx context.Context, log *slog.Logger) (*oidcpkg.Provider, bool, error) {
+	issuer := os.Getenv("VAULT_OIDC_ISSUER")
+	clientID := os.Getenv("VAULT_OIDC_CLIENT_ID")
+	clientSecret := os.Getenv("VAULT_OIDC_CLIENT_SECRET")
+	redirectURI := os.Getenv("VAULT_OIDC_REDIRECT_URI")
+
+	if issuer == "" && clientID == "" {
+		return nil, false, nil // OIDC not configured
+	}
+	if issuer == "" || clientID == "" || clientSecret == "" || redirectURI == "" {
+		return nil, false, fmt.Errorf("VAULT_OIDC_ISSUER, VAULT_OIDC_CLIENT_ID, VAULT_OIDC_CLIENT_SECRET, and VAULT_OIDC_REDIRECT_URI must all be set")
+	}
+	enforce := os.Getenv("VAULT_OIDC_ENFORCE") == "true"
+	log.Info("OIDC configured", "issuer", issuer, "enforce", enforce)
+
+	provider, err := oidcpkg.New(ctx, oidcpkg.Config{
+		Issuer:       issuer,
+		ClientID:     clientID,
+		ClientSecret: clientSecret,
+		RedirectURL:  redirectURI,
+	})
+	if err != nil {
+		return nil, false, fmt.Errorf("init OIDC provider: %w", err)
+	}
+	return provider, enforce, nil
 }
 
 // openStore selects SQLite or Postgres based on environment variables.

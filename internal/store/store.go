@@ -20,11 +20,21 @@ var ErrConflict = errors.New("conflict")
 type Store interface {
 	// Users
 	CreateUser(ctx context.Context, email, passwordHash, role string) (*model.User, error)
+	// CreateOIDCUser creates a user via OIDC JIT provisioning (no local password).
+	// Returns ErrConflict if either the email or the oidcIssuer+oidcSubject pair already exists.
+	CreateOIDCUser(ctx context.Context, email, oidcIssuer, oidcSubject, role string) (*model.User, error)
 	GetUserByEmail(ctx context.Context, email string) (*model.User, error)
 	GetUserByID(ctx context.Context, id string) (*model.User, error)
+	// GetUserByOIDCSubject looks up a user by their OIDC issuer+subject pair.
+	GetUserByOIDCSubject(ctx context.Context, issuer, subject string) (*model.User, error)
 	ListUsers(ctx context.Context) ([]*model.User, error)
 	HasAdminUser(ctx context.Context) (bool, error)
 	UpdateUserPassword(ctx context.Context, userID, passwordHash string) error
+	// SetUserOIDCIdentity links an OIDC issuer+subject to an existing user.
+	// Returns ErrConflict if the identity is already linked to a different user.
+	SetUserOIDCIdentity(ctx context.Context, userID, issuer, subject string) error
+	// SetUserActive sets the active flag. Callers should delete all tokens when deactivating.
+	SetUserActive(ctx context.Context, userID string, active bool) error
 
 	// Tokens (user session tokens and machine tokens)
 	CreateToken(ctx context.Context, t *model.Token) error
@@ -104,6 +114,22 @@ type Store interface {
 	ListDynamicLeases(ctx context.Context, projectID, envID string) ([]*model.DynamicLease, error)
 	RevokeDynamicLease(ctx context.Context, id string) error
 	ListExpiredDynamicLeases(ctx context.Context) ([]*model.DynamicLease, error)
+
+	// SCIM tokens — bearer tokens used by the IdP to authenticate SCIM requests.
+	CreateSCIMToken(ctx context.Context, t *model.SCIMToken) error
+	GetSCIMTokenByHash(ctx context.Context, hash string) (*model.SCIMToken, error)
+	ListSCIMTokens(ctx context.Context) ([]*model.SCIMToken, error)
+	DeleteSCIMToken(ctx context.Context, id string) error
+
+	// SCIM group→role mappings — drive automatic project membership on group sync.
+	SetSCIMGroupRole(ctx context.Context, groupID, displayName string, projectID, envID *string, role string) (*model.SCIMGroupRole, error)
+	ListSCIMGroupRoles(ctx context.Context) ([]*model.SCIMGroupRole, error)
+	ListSCIMGroupRolesByGroup(ctx context.Context, groupID string) ([]*model.SCIMGroupRole, error)
+	GetSCIMGroupRole(ctx context.Context, id string) (*model.SCIMGroupRole, error)
+	DeleteSCIMGroupRole(ctx context.Context, id string) error
+
+	// DeleteAllTokensForUser removes every token owned by the given user (used during SCIM deactivation).
+	DeleteAllTokensForUser(ctx context.Context, userID string) error
 
 	// SPIFFE/mTLS certificate principals
 	CreateCertPrincipal(ctx context.Context, p *model.CertPrincipal) error

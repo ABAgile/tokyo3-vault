@@ -129,3 +129,8 @@ Key relationships:
 | `VAULT_DB_SSL_KEY` | no | — | Client key for vault→Postgres TLS |
 | `VAULT_DB_SSL_ROOTCERT` | no | — | CA cert to verify Postgres server |
 | `VAULT_PROJECT_KEY_CACHE_TTL` | no | `5m` | How long plaintext PEKs stay in RAM |
+| `VAULT_OIDC_ISSUER` | no | — | IdP issuer URL; enables OIDC when set (all four OIDC vars required together) |
+| `VAULT_OIDC_CLIENT_ID` | no | — | OAuth2 client ID |
+| `VAULT_OIDC_CLIENT_SECRET` | no | — | OAuth2 client secret |
+| `VAULT_OIDC_REDIRECT_URI` | no | — | Callback URL registered with the IdP |
+| `VAULT_OIDC_ENFORCE` | no | `false` | `"true"` disables local `/auth/login` and `/auth/signup` |

@@ -31,6 +31,10 @@ type tokenResponse struct {
 // The first user created this way is always assigned the admin role.
 // After that, new users must be created by an existing admin via POST /api/v1/users.
 func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
+	if s.oidcEnforce {
+		writeError(w, http.StatusForbidden, "local account creation is disabled — accounts are managed through the IdP")
+		return
+	}
 	hasAdmin, err := s.store.HasAdminUser(r.Context())
 	if err != nil {
 		s.log.Error("check admin", "err", err)
@@ -85,6 +89,10 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	if s.oidcEnforce {
+		writeError(w, http.StatusForbidden, "local authentication is disabled — use SSO")
+		return
+	}
 	var req loginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -101,6 +109,10 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.log.Error("get user", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if !user.Active {
+		writeError(w, http.StatusForbidden, "account is deprovisioned")
 		return
 	}
 
