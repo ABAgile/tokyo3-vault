@@ -16,6 +16,7 @@ main()
  ├─ NewRevoker(...)          — background goroutine: sweep expired leases immediately,
  │                            then every 60 s
  ├─ buildServerTLS()         — load cert files (hot-reload) or generate self-signed
+ ├─ buildOIDCProvider()      — OIDC provider from VAULT_OIDC_* env vars; nil when unset
  └─ http.Server.ListenAndServeTLS()
 ```
 

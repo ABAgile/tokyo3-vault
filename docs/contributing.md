@@ -36,6 +36,7 @@ cmd/
   vaultd/       Server entry point (startup, env parsing, TLS config)
 internal/
   api/          HTTP handlers and middleware
+  audit/        Audit pipeline — Sink interface, JetStreamSink, audit DB, Entry type
   auth/         Password hashing + token generation/validation
   build/        Version metadata
   crypto/       AES-256-GCM helpers, KeyProvider interface, ProjectKeyCache
@@ -98,7 +99,13 @@ Implement `internal/store/store.go`'s `Store` interface (about 40 methods). See 
 1. Add handler(s) to the appropriate file in `internal/api/` (or create a new file).
 2. Register the route in `internal/api/server.go`'s `Routes()` method — all protected routes must be wrapped with `s.auth(...)`.
 3. Add audit log constant(s) to `internal/api/audit.go`.
-4. Call `s.logAudit(r, Action..., projectID, resource)` at the end of every successful state-changing handler.
+4. Call `s.logAudit` and **check the error** (fail-closed — if the audit publish fails the request must not complete):
+   ```go
+   if err := s.logAudit(r, ActionXxx, projectID, resource); err != nil {
+       writeError(w, http.StatusInternalServerError, "audit unavailable")
+       return
+   }
+   ```
 5. Add tests (table-driven where possible; see `auth_test.go` or `secrets_test.go` for patterns).
 
 ## Testing
@@ -117,9 +124,9 @@ Backend types are registered in a compile-time map. There is no plugin system. A
 
 Secrets are written manually (or via CI). There is no built-in cron-style rotation or expiry for static secrets. Automatic rotation must be handled externally (write a new value via the API, then restart dependent processes).
 
-### No audit log retention policy
+### Audit DB projection grows indefinitely
 
-Audit logs grow indefinitely. There is no built-in archival or pruning. Implement retention externally: periodically copy old rows to object storage and delete from the table, or use Postgres table partitioning.
+The NATS JetStream `AUDIT` stream has built-in 400-day retention (`StreamMaxAge`), satisfying PCI-DSS 10.5. However, the queryable audit DB populated by `vaultd audit-consumer` has no pruning. Implement retention externally: periodically delete rows older than your retention window, copy them to object storage first, or use Postgres table partitioning.
 
 ### No project PEK rotation
 

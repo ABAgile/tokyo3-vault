@@ -143,7 +143,7 @@ GET /api/v1/audit (reader credential)
 
 **Tamper evidence**: the NATS stream is configured with `DenyDelete` and `DenyPurge`, so no individual message or the entire stream can be deleted via the NATS API. `FileStorage` ensures records survive restarts.
 
-**Credential separation** (four distinct identities):
+**Credential separation** (five distinct identities):
 
 | Identity | Rights | Used by |
 |----------|--------|---------|
@@ -174,12 +174,13 @@ GET /api/v1/audit (reader credential)
 | Field | Notes |
 |-------|-------|
 | `id` | UUID — used as the idempotency key for upsert on redelivery |
+| `action` | Action string, e.g. `secret.get` — see Covered events table above |
 | `actor_id` | Token ID of the caller; empty for unauthenticated operations |
 | `project_id` | Empty string when not project-scoped |
 | `resource` | Identifies the affected resource (secret key name, user email, SPIFFE ID, etc.) |
 | `metadata` | Free-form string; secret values are masked to first 3 characters + `...` |
 | `ip` | From `X-Forwarded-For` header (first value) or `RemoteAddr` |
-| `occurred_at` | Server-side UTC timestamp of the event |
+| `occurred_at` | Server-side UTC timestamp; stored as `created_at` in the audit DB and returned as `created_at` by the API |
 
 Failed login attempts record the submitted email address in `resource` to support forensic analysis without exposing whether the account exists (the 401 response is identical regardless).
 

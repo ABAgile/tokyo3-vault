@@ -20,7 +20,7 @@ internal/store/postgres/   Postgres backend — split by domain (see below)
 internal/store/sqlite/     SQLite backend  — split by domain (see below)
 internal/testutil/mockstore/  shared Stub for test mocks
 internal/tlsutil/    TLS helpers (hot-reload, self-signed, cert pools)
-docs/                architecture.md, er_diagram.md, oidc-sso-design.md, security.md
+docs/                architecture.md, er-diagram.md, oidc-sso-design.md, security.md
 ```
 
 ## Store backend file layout (postgres + sqlite mirror each other)

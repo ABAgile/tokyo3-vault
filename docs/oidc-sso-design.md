@@ -140,11 +140,12 @@ DeleteSCIMToken(ctx, id string) error
 // SCIM group→role mappings
 SetSCIMGroupRole(ctx, groupID, displayName string, projectID, envID *string, role string) (*model.SCIMGroupRole, error)
 ListSCIMGroupRoles(ctx) ([]*model.SCIMGroupRole, error)
+ListSCIMGroupRolesByGroup(ctx, groupID string) ([]*model.SCIMGroupRole, error)
 GetSCIMGroupRole(ctx, id string) (*model.SCIMGroupRole, error)
 DeleteSCIMGroupRole(ctx, id string) error
 ```
 
-Both `internal/store/postgres/postgres.go` and `internal/store/sqlite/sqlite.go` implement all methods. User scans use `sql.NullString` for all nullable columns.
+OIDC/user methods are implemented in `postgres_users.go` / `sqlite_users.go`; SCIM methods in `postgres_scim.go` / `sqlite_scim.go`. User scans use `sql.NullString` for all nullable columns.
 
 ---
 

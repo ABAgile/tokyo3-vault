@@ -166,7 +166,7 @@ type DynamicBackend struct {
 }
 
 // DynamicRole defines templates for creating and revoking credentials.
-// Placeholders: {{name}}, {{password}}, {{expiry}}.
+// Placeholders: {{username}}, {{password}}, {{expiry}}.
 type DynamicRole struct {
 	ID             string
 	BackendID      string

@@ -2,6 +2,8 @@
 
 > Source: [`internal/model/model.go`](../internal/model/model.go)
 
+> **Note on `AUDIT_LOG`**: this entity lives in a physically separate audit database (`AUDIT_DATABASE_URL` / `AUDIT_DB_PATH`), not in the main vault DB. Its `actor_id` and `project_id` columns are plain TEXT — there are no enforced foreign keys. Relationship arrows to PROJECT and TOKEN are logical documentation only.
+
 ```mermaid
 erDiagram
     USER {
@@ -76,8 +78,8 @@ erDiagram
     AUDIT_LOG {
         string id         PK
         string action     "e.g. secret.set"
-        string actor_id   FK "→ TOKEN; nil = unauthenticated"
-        string project_id FK "nullable"
+        string actor_id   "TOKEN id; no FK — separate audit DB"
+        string project_id "PROJECT id; no FK — separate audit DB"
         string resource   "nullable"
         string metadata   "free-form JSON; nullable"
         string ip         "nullable"
@@ -129,7 +131,7 @@ erDiagram
     PROJECT          ||--o{ SECRET          : "stores"
     PROJECT          ||--o{ DYNAMIC_BACKEND : "configures"
     PROJECT          ||--o{ DYNAMIC_LEASE   : "tracks"
-    PROJECT          ||--o{ AUDIT_LOG       : "logged under"
+    PROJECT          ||--o{ AUDIT_LOG       : "logged under (logical ref only)"
     PROJECT          }o--o{ TOKEN           : "scopes (optional)"
     PROJECT          }o--o{ CERT_PRINCIPAL  : "scopes (optional)"
 
@@ -145,7 +147,7 @@ erDiagram
 
     TOKEN            ||--o{ SECRET_VERSION  : "creates"
     TOKEN            ||--o{ DYNAMIC_LEASE   : "creates"
-    TOKEN            ||--o{ AUDIT_LOG       : "actor in"
+    TOKEN            ||--o{ AUDIT_LOG       : "actor in (logical ref only)"
 
     DYNAMIC_BACKEND  ||--|{ DYNAMIC_ROLE    : "defines"
     DYNAMIC_BACKEND  ||--o{ DYNAMIC_LEASE   : "issued via"

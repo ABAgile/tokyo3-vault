@@ -68,11 +68,13 @@ Three subcommands:
 2. Parse key provider from env (`VAULT_MASTER_KEY` or `VAULT_KMS_KEY_ID`)
 3. Open and auto-migrate the store (`VAULT_DATABASE_URL` → Postgres; `VAULT_DB_PATH` → SQLite)
 4. Create `ProjectKeyCache` with configurable TTL (default 5 minutes)
-5. Open `audit.JetStreamSink` (publisher credential, PUBLISH-only on `audit.events`); falls back to `NoopSink` when `NATS_URL` is unset
-6. Open `audit.DB` (reader credential, SELECT-only on `audit_logs`); falls back to `NoopQueryStore` when unconfigured
-7. Start background `Revoker` goroutine (sweeps expired dynamic leases every 60 s; also sweeps on startup)
-8. Build TLS config — hot-reloading cert files if provided, else self-signed
-9. Start `http.Server` on `VAULT_ADDR` (default `:8443`)
+5. Dispatch `migrate-keys` → `runMigrateKeys(); exit` if that subcommand was requested
+6. Open `audit.JetStreamSink` (publisher credential, PUBLISH-only on `audit.events`); falls back to `NoopSink` when `NATS_URL` is unset
+7. Open `audit.DB` (reader credential, SELECT-only on `audit_logs`); falls back to `NoopQueryStore` when unconfigured
+8. Start background `Revoker` goroutine (sweeps expired dynamic leases every 60 s; also sweeps on startup)
+9. Build TLS config — hot-reloading cert files if provided, else self-signed
+10. Build OIDC provider from `VAULT_OIDC_*` env vars; `nil` provider when unconfigured (local auth only)
+11. Start `http.Server` on `VAULT_ADDR` (default `:8443`)
 
 Graceful shutdown is triggered by SIGINT or SIGTERM.
 
@@ -145,7 +147,7 @@ Cobra-based. Reads `~/.vault/config.json` for server URL and session token. Proj
 
 ## Data Model
 
-See [`er_diagram.md`](er_diagram.md) for the full entity relationship diagram.
+See [`er-diagram.md`](er-diagram.md) for the full entity relationship diagram.
 
 Key relationships:
 

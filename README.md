@@ -280,12 +280,43 @@ Set all three `VAULT_DB_SSL_*` vars together to authenticate vault's admin datab
 | `VAULT_ADDR` | `:8443` | TCP listen address |
 | `VAULT_PROJECT_KEY_CACHE_TTL` | `5m` | How long a project's plaintext project envelope key (PEK) is cached in memory. Longer = fewer KMS calls; shorter = faster effect after PEK rotation. Accepts Go duration strings (`5m`, `1h`). |
 
+**Audit — NATS JetStream sink (`vaultd serve`):**
+
+If `NATS_URL` is unset, audit events are discarded (development only). In production all three NATS variables must be set together for mTLS.
+
+| Variable | Default | Description |
+|---|---|---|
+| `NATS_URL` | — | NATS server URL; enables JetStream sink when set |
+| `NATS_AUDIT_CERT` | — | mTLS client certificate PEM path (publisher credential) |
+| `NATS_AUDIT_KEY` | — | mTLS client key PEM path |
+| `NATS_AUDIT_CA` | — | CA certificate PEM path for NATS server verification |
+| `AUDIT_DATABASE_URL` | — | Postgres DSN for audit query DB (SELECT-only; serves `GET /api/v1/audit`) |
+| `AUDIT_DB_PATH` | — | SQLite path for audit query DB (alternative to Postgres) |
+| `AUDIT_DB_SSL_CERT` | — | Client certificate PEM path for audit DB mTLS |
+| `AUDIT_DB_SSL_KEY` | — | Client key PEM path for audit DB mTLS |
+| `AUDIT_DB_SSL_ROOTCERT` | — | CA certificate PEM path for audit DB server verification |
+
+**Audit consumer — `vaultd audit-consumer` (completely separate credentials):**
+
+| Variable | Default | Description |
+|---|---|---|
+| `NATS_URL` | — | NATS server URL (required) |
+| `NATS_CONSUMER_CERT` | — | mTLS client certificate PEM path (consumer credential) |
+| `NATS_CONSUMER_KEY` | — | mTLS client key PEM path |
+| `NATS_CONSUMER_CA` | — | CA certificate PEM path for NATS server verification |
+| `AUDIT_WRITE_DATABASE_URL` | — | Postgres DSN for audit write DB (INSERT-only) |
+| `AUDIT_WRITE_DB_PATH` | `audit.db` | SQLite path for audit write DB |
+| `AUDIT_WRITE_DB_SSL_CERT` | — | Client certificate PEM path for audit write DB mTLS |
+| `AUDIT_WRITE_DB_SSL_KEY` | — | Client key PEM path for audit write DB mTLS |
+| `AUDIT_WRITE_DB_SSL_ROOTCERT` | — | CA certificate PEM path for audit write DB server verification |
+
 ### vaultd subcommands
 
 | Subcommand | Description |
 |---|---|
 | `vaultd` (no arg) | Start the API server (default) |
 | `vaultd migrate-keys` | Migrate existing projects to per-project envelope keys (PEKs). For each project without a PEK, generates a 32-byte PEK, wraps it with the server KEK/KMS, and re-wraps all secret DEKs so they are encrypted under the project PEK instead of the server KEK directly. Idempotent — already-migrated projects are skipped. New projects created after this version are migrated automatically at creation time. |
+| `vaultd audit-consumer` | Reads audit events from the NATS JetStream `AUDIT` stream and upserts them into the dedicated audit database, building the queryable projection used by `GET /api/v1/audit`. Uses `NATS_URL`/`NATS_CONSUMER_*` and `AUDIT_WRITE_DATABASE_URL`/`AUDIT_WRITE_DB_PATH` credentials — completely separate from the main `vault_app` credentials. Run as a separate process alongside `vaultd serve`. |
 
 `vaultd migrate-keys` requires the same env vars as the server (`VAULT_MASTER_KEY`/`VAULT_KMS_KEY_ID` and `VAULT_DATABASE_URL`/`VAULT_DB_PATH`). Run it once after upgrading to activate the three-level encryption hierarchy.
 
@@ -1191,5 +1222,5 @@ In-depth documentation for contributors and operators is in the [`docs/`](docs/)
 | [`docs/security.md`](docs/security.md) | Authentication flows, authorization model, encryption key hierarchy, audit logging, transport security, known limitations |
 | [`docs/data-flows.md`](docs/data-flows.md) | Step-by-step traces: secret read/write, dynamic credential issuance, lease revocation, key migration, SPIFFE registration |
 | [`docs/contributing.md`](docs/contributing.md) | Dev setup, project layout, migration authoring, adding backend types, known limitations, deployment notes |
-| [`docs/er_diagram.md`](docs/er_diagram.md) | Entity relationship diagram (Mermaid) |
+| [`docs/er-diagram.md`](docs/er-diagram.md) | Entity relationship diagram (Mermaid) |
 | [`docs/oidc-sso-design.md`](docs/oidc-sso-design.md) | OIDC/SSO integration design: protocol choice, data model changes, new routes, CLI flow, migration path, SCIM phase 2 |
