@@ -422,8 +422,76 @@ DELETE /api/v1/scim/group-roles/{id}   — remove mapping
 
 ---
 
-## Phase 3: mTLS for Human Users (Future)
+## Phase 3: mTLS for Non-SPIFFE Certificates
 
-The existing `authFromSPIFFECert` in `internal/api/certs.go` already constructs user-level virtual tokens when `p.UserID` is set. Phase 3 would extend `cert_principals` matching to accept email SAN (`rfc822Name`) in addition to URI SAN (SPIFFE IDs), enabling engineers to authenticate with their personal x.509 certificates (e.g. from a corporate PKI or Teleport's tbot) without going through an OIDC browser flow.
+Phase 3 extends `cert_principals` to support email SAN (`rfc822Name`) in addition to SPIFFE URI SANs, enabling engineers to authenticate with personal x.509 certificates (corporate PKI, Teleport tbot) without a browser OIDC flow.
 
-No new protocol machinery is needed — only extended SAN matching in `authFromSPIFFECert` and a new principal type in the `cert_principals` table.
+### Schema (migration `014_cert_email_san`)
+
+```sql
+-- postgres
+ALTER TABLE cert_principals ALTER COLUMN spiffe_id DROP NOT NULL;
+ALTER TABLE cert_principals ADD COLUMN email_san TEXT;
+CREATE UNIQUE INDEX cert_principals_email_san ON cert_principals(email_san) WHERE email_san IS NOT NULL;
+ALTER TABLE cert_principals ADD CONSTRAINT cert_principals_has_identifier
+    CHECK (spiffe_id IS NOT NULL OR email_san IS NOT NULL);
+```
+
+SQLite uses full table recreation (same logical schema).
+
+### Registration API
+
+```
+POST /api/v1/cert-principals
+{
+  "description": "alice workstation",
+  "email_san": "alice@corp.example.com",   // one of spiffe_id or email_san required
+  "project": "myapp",                       // optional scope
+  "read_only": false,
+  "expires_in": "8760h"
+}
+```
+
+Exactly one identifier (`spiffe_id` or `email_san`) must be provided. `email_san` is validated with `net/mail.ParseAddress`.
+
+### Auth flow (`internal/api/certs.go — authFromClientCert`)
+
+```
+client cert present?
+  ├── has URI SAN with spiffe:// scheme?
+  │     → GetCertPrincipalBySPIFFEID; if found → authorize
+  └── has email SANs?
+        → GetCertPrincipalByEmailSAN (first match); if found → authorize
+  └── no match → errCertUnregistered → fall through to bearer token
+```
+
+After looking up a principal, `checkPrincipalUserActive` verifies the owning user's `active` flag (fail-closed: DB errors also reject). This ensures SCIM-deprovisioned users cannot authenticate via their registered certificates.
+
+### CLI
+
+```
+# SPIFFE workload identity (existing)
+vault principals register "myapp-server" \
+  --spiffe-id spiffe://cluster.local/ns/myapp/sa/server \
+  --project myapp --env production
+
+# Email SAN for human users (new)
+vault principals register "alice workstation" \
+  --email-san alice@corp.example.com \
+  --project myapp
+
+vault principals list    # TYPE column shows "spiffe" or "email"
+vault principals revoke <id>
+```
+
+### Store interface additions
+
+```go
+GetCertPrincipalByEmailSAN(ctx context.Context, emailSAN string) (*model.CertPrincipal, error)
+```
+
+### Security notes
+
+- The `email_san` value on the registered principal must exactly match the cert's `rfc822Name` SAN (case-sensitive byte comparison at the DB layer).
+- Certificate trust is still enforced by `VAULT_TLS_CLIENT_CA` — any cert that reaches the SAN-matching step has already been verified against the trusted CA.
+- Active-user check applies to both SPIFFE and email SAN principals.

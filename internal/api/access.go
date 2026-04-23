@@ -24,7 +24,8 @@ type accessTokenEntry struct {
 
 type accessPrincipalEntry struct {
 	ID          string  `json:"id"`
-	SPIFFEID    string  `json:"spiffe_id"`
+	SPIFFEID    *string `json:"spiffe_id,omitempty"`
+	EmailSAN    *string `json:"email_san,omitempty"`
 	Description string  `json:"description"`
 	OwnerID     *string `json:"owner_id"`
 	OwnerEmail  string  `json:"owner_email"`
@@ -124,6 +125,7 @@ func (s *Server) handleListAccess(w http.ResponseWriter, r *http.Request) {
 		entry := accessPrincipalEntry{
 			ID:          p.ID,
 			SPIFFEID:    p.SPIFFEID,
+			EmailSAN:    p.EmailSAN,
 			Description: p.Description,
 			OwnerID:     p.UserID,
 			OwnerEmail:  lookupEmail(p.UserID),

@@ -304,6 +304,9 @@ func (m *mockStore) CreateCertPrincipal(ctx context.Context, p *model.CertPrinci
 func (m *mockStore) GetCertPrincipalBySPIFFEID(ctx context.Context, spiffeID string) (*model.CertPrincipal, error) {
 	return nil, store.ErrNotFound
 }
+func (m *mockStore) GetCertPrincipalByEmailSAN(ctx context.Context, emailSAN string) (*model.CertPrincipal, error) {
+	return nil, store.ErrNotFound
+}
 func (m *mockStore) ListCertPrincipals(ctx context.Context, userID string) ([]*model.CertPrincipal, error) {
 	return nil, nil
 }

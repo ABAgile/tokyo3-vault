@@ -134,6 +134,8 @@ type Store interface {
 	// SPIFFE/mTLS certificate principals
 	CreateCertPrincipal(ctx context.Context, p *model.CertPrincipal) error
 	GetCertPrincipalBySPIFFEID(ctx context.Context, spiffeID string) (*model.CertPrincipal, error)
+	// GetCertPrincipalByEmailSAN looks up a principal registered with an email SAN.
+	GetCertPrincipalByEmailSAN(ctx context.Context, emailSAN string) (*model.CertPrincipal, error)
 	ListCertPrincipals(ctx context.Context, userID string) ([]*model.CertPrincipal, error)
 	// ListCertPrincipalsWithAccess returns all non-expired principals that can reach
 	// the given project+env: explicitly scoped to it, and unscoped principals owned

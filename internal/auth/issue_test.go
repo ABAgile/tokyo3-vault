@@ -155,6 +155,9 @@ func (m *mockStore) CreateCertPrincipal(_ context.Context, _ *model.CertPrincipa
 func (m *mockStore) GetCertPrincipalBySPIFFEID(_ context.Context, _ string) (*model.CertPrincipal, error) {
 	return nil, store.ErrNotFound
 }
+func (m *mockStore) GetCertPrincipalByEmailSAN(_ context.Context, _ string) (*model.CertPrincipal, error) {
+	return nil, store.ErrNotFound
+}
 func (m *mockStore) ListCertPrincipals(_ context.Context, _ string) ([]*model.CertPrincipal, error) {
 	return nil, nil
 }

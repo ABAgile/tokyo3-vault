@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/mail"
 	"net/url"
 	"time"
 
@@ -16,7 +17,8 @@ import (
 
 type registerPrincipalRequest struct {
 	Description string `json:"description"` // required
-	SPIFFEID    string `json:"spiffe_id"`   // required URI, e.g. spiffe://cluster/ns/app/sa/svc
+	SPIFFEID    string `json:"spiffe_id"`   // URI SAN — required unless email_san is set
+	EmailSAN    string `json:"email_san"`   // rfc822Name SAN — required unless spiffe_id is set
 	Project     string `json:"project"`     // slug, optional
 	Env         string `json:"env"`         // slug, optional
 	ReadOnly    bool   `json:"read_only"`
@@ -26,7 +28,8 @@ type registerPrincipalRequest struct {
 type certPrincipalResponse struct {
 	ID          string  `json:"id"`
 	Description string  `json:"description"`
-	SPIFFEID    string  `json:"spiffe_id"`
+	SPIFFEID    *string `json:"spiffe_id,omitempty"`
+	EmailSAN    *string `json:"email_san,omitempty"`
 	ProjectID   *string `json:"project_id,omitempty"`
 	EnvID       *string `json:"env_id,omitempty"`
 	ReadOnly    bool    `json:"read_only"`
@@ -34,41 +37,78 @@ type certPrincipalResponse struct {
 	CreatedAt   string  `json:"created_at"`
 }
 
-// ── SPIFFE auth helper (used by middleware) ───────────────────────────────────
+// ── cert auth helper (used by middleware) ─────────────────────────────────────
 
-var errSPIFFEUnregistered = errors.New("SPIFFE ID not registered")
+var errCertUnregistered = errors.New("certificate not registered as a principal")
 
-// authFromSPIFFECert extracts the SPIFFE URI SAN from the TLS peer certificate,
-// looks it up in the store, and constructs an ephemeral *model.Token.
-// Returns errSPIFFEUnregistered if the cert has no SPIFFE ID or the ID is unknown,
-// so the caller can fall through to bearer token auth.
-func (s *Server) authFromSPIFFECert(r *http.Request) (*model.Token, error) {
+// authFromClientCert authenticates an mTLS client certificate against registered
+// cert_principals. SPIFFE URI SANs are checked first; email SANs are the fallback.
+// Returns errCertUnregistered when no SAN on the cert matches any principal, so the
+// caller can fall through to bearer token auth.
+func (s *Server) authFromClientCert(r *http.Request) (*model.Token, error) {
 	leaf := r.TLS.PeerCertificates[0]
 
-	var spiffeID string
+	// Try SPIFFE URI SAN first.
 	for _, u := range leaf.URIs {
-		if u.Scheme == "spiffe" {
-			spiffeID = u.String()
-			break
+		if u.Scheme != "spiffe" {
+			continue
 		}
-	}
-	if spiffeID == "" {
-		return nil, errSPIFFEUnregistered
+		p, err := s.store.GetCertPrincipalBySPIFFEID(r.Context(), u.String())
+		if errors.Is(err, store.ErrNotFound) {
+			break // SPIFFE ID present but not registered; fall through to email SAN
+		}
+		if err != nil {
+			return nil, fmt.Errorf("cert principal lookup: %w", err)
+		}
+		if p.ExpiresAt != nil && time.Now().UTC().After(*p.ExpiresAt) {
+			return nil, fmt.Errorf("cert principal expired")
+		}
+		if err := s.checkPrincipalUserActive(r, p); err != nil {
+			return nil, err
+		}
+		return certPrincipalToToken(p), nil
 	}
 
-	p, err := s.store.GetCertPrincipalBySPIFFEID(r.Context(), spiffeID)
-	if errors.Is(err, store.ErrNotFound) {
-		return nil, errSPIFFEUnregistered
+	// Try email SANs.
+	for _, email := range leaf.EmailAddresses {
+		p, err := s.store.GetCertPrincipalByEmailSAN(r.Context(), email)
+		if errors.Is(err, store.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("cert principal lookup: %w", err)
+		}
+		if p.ExpiresAt != nil && time.Now().UTC().After(*p.ExpiresAt) {
+			return nil, fmt.Errorf("cert principal expired")
+		}
+		if err := s.checkPrincipalUserActive(r, p); err != nil {
+			return nil, err
+		}
+		return certPrincipalToToken(p), nil
 	}
+
+	return nil, errCertUnregistered
+}
+
+// checkPrincipalUserActive returns an error if the principal's owning user is deprovisioned.
+func (s *Server) checkPrincipalUserActive(r *http.Request, p *model.CertPrincipal) error {
+	if p.UserID == nil {
+		return nil
+	}
+	user, err := s.store.GetUserByID(r.Context(), *p.UserID)
 	if err != nil {
-		return nil, fmt.Errorf("cert principal lookup: %w", err)
+		return fmt.Errorf("user lookup: %w", err)
 	}
-	if p.ExpiresAt != nil && time.Now().UTC().After(*p.ExpiresAt) {
-		return nil, fmt.Errorf("cert principal expired")
+	if !user.Active {
+		return fmt.Errorf("user account is deprovisioned")
 	}
+	return nil
+}
 
-	// Construct a virtual *model.Token so all existing authorization helpers work
-	// unchanged. TokenHash is intentionally empty — this token is never stored.
+// certPrincipalToToken constructs an ephemeral *model.Token from a cert principal
+// so all existing authorization helpers work unchanged. TokenHash is empty —
+// this token is never stored.
+func certPrincipalToToken(p *model.CertPrincipal) *model.Token {
 	return &model.Token{
 		ID:        p.ID,
 		UserID:    p.UserID,
@@ -78,7 +118,7 @@ func (s *Server) authFromSPIFFECert(r *http.Request) (*model.Token, error) {
 		ReadOnly:  p.ReadOnly,
 		ExpiresAt: p.ExpiresAt,
 		CreatedAt: p.CreatedAt,
-	}, nil
+	}
 }
 
 // ── handlers ──────────────────────────────────────────────────────────────────
@@ -102,26 +142,43 @@ func (s *Server) handleRegisterCertPrincipal(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "description is required")
 		return
 	}
-	if req.SPIFFEID == "" {
-		writeError(w, http.StatusBadRequest, "spiffe_id is required")
-		return
-	}
-	u, err := url.Parse(req.SPIFFEID)
-	if err != nil || u.Scheme != "spiffe" || u.Host == "" {
-		writeError(w, http.StatusBadRequest, "spiffe_id must be a valid URI with spiffe:// scheme")
-		return
-	}
 
-	projectID, envID, httpErr := s.resolveTokenScope(w, r, req.Project, req.Env)
-	if httpErr {
+	// Exactly one identifier must be supplied.
+	hasSpiffe := req.SPIFFEID != ""
+	hasEmail := req.EmailSAN != ""
+	if !hasSpiffe && !hasEmail {
+		writeError(w, http.StatusBadRequest, "one of spiffe_id or email_san is required")
+		return
+	}
+	if hasSpiffe && hasEmail {
+		writeError(w, http.StatusBadRequest, "only one of spiffe_id or email_san may be set")
 		return
 	}
 
 	p := &model.CertPrincipal{
 		UserID:      tok.UserID,
 		Description: req.Description,
-		SPIFFEID:    req.SPIFFEID,
 		ReadOnly:    req.ReadOnly,
+	}
+
+	if hasSpiffe {
+		u, err := url.Parse(req.SPIFFEID)
+		if err != nil || u.Scheme != "spiffe" || u.Host == "" {
+			writeError(w, http.StatusBadRequest, "spiffe_id must be a valid URI with spiffe:// scheme")
+			return
+		}
+		p.SPIFFEID = &req.SPIFFEID
+	} else {
+		if _, err := mail.ParseAddress(req.EmailSAN); err != nil {
+			writeError(w, http.StatusBadRequest, "email_san must be a valid email address")
+			return
+		}
+		p.EmailSAN = &req.EmailSAN
+	}
+
+	projectID, envID, httpErr := s.resolveTokenScope(w, r, req.Project, req.Env)
+	if httpErr {
+		return
 	}
 	if projectID != "" {
 		p.ProjectID = &projectID
@@ -139,9 +196,9 @@ func (s *Server) handleRegisterCertPrincipal(w http.ResponseWriter, r *http.Requ
 		p.ExpiresAt = &t
 	}
 
-	err = s.store.CreateCertPrincipal(r.Context(), p)
+	err := s.store.CreateCertPrincipal(r.Context(), p)
 	if errors.Is(err, store.ErrConflict) {
-		writeError(w, http.StatusConflict, "SPIFFE ID already registered")
+		writeError(w, http.StatusConflict, "identifier already registered")
 		return
 	}
 	if err != nil {
@@ -149,7 +206,11 @@ func (s *Server) handleRegisterCertPrincipal(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	s.logAudit(r, ActionCertPrincipalRegister, "", req.SPIFFEID)
+	identifier := req.SPIFFEID
+	if identifier == "" {
+		identifier = req.EmailSAN
+	}
+	s.logAudit(r, ActionCertPrincipalRegister, "", identifier)
 	writeJSON(w, http.StatusCreated, principalToResp(p))
 }
 
@@ -198,6 +259,7 @@ func principalToResp(p *model.CertPrincipal) certPrincipalResponse {
 		ID:          p.ID,
 		Description: p.Description,
 		SPIFFEID:    p.SPIFFEID,
+		EmailSAN:    p.EmailSAN,
 		ProjectID:   p.ProjectID,
 		EnvID:       p.EnvID,
 		ReadOnly:    p.ReadOnly,

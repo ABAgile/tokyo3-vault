@@ -29,17 +29,17 @@ const tokenKey contextKey = "token"
 // checked first when the connection has peer certificates; bearer token is the fallback.
 func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Try SPIFFE/mTLS client cert first.
+		// Try mTLS client cert first (SPIFFE URI SAN, then email SAN).
 		if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
-			tok, err := s.authFromSPIFFECert(r)
+			tok, err := s.authFromClientCert(r)
 			if err == nil {
 				ctx := context.WithValue(r.Context(), tokenKey, tok)
 				next(w, r.WithContext(ctx))
 				return
 			}
-			// errSPIFFEUnregistered: cert present but no matching principal → fall through to bearer.
-			// Any other error (e.g. expired): explicit denial.
-			if err != errSPIFFEUnregistered {
+			// errCertUnregistered: cert present but no matching principal → fall through to bearer.
+			// Any other error (e.g. expired, deprovisioned): explicit denial.
+			if err != errCertUnregistered {
 				writeError(w, http.StatusUnauthorized, err.Error())
 				return
 			}

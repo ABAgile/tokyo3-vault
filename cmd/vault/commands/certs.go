@@ -13,7 +13,8 @@ import (
 type certPrincipalResp struct {
 	ID          string  `json:"id"`
 	Description string  `json:"description"`
-	SPIFFEID    string  `json:"spiffe_id"`
+	SPIFFEID    *string `json:"spiffe_id,omitempty"`
+	EmailSAN    *string `json:"email_san,omitempty"`
 	ProjectID   *string `json:"project_id,omitempty"`
 	EnvID       *string `json:"env_id,omitempty"`
 	ReadOnly    bool    `json:"read_only"`
@@ -26,17 +27,26 @@ type certPrincipalResp struct {
 func NewPrincipalsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "principals",
-		Short: "Manage SPIFFE/mTLS certificate principals",
-		Long: `Register SPIFFE IDs that can authenticate to vault via mTLS client certificates.
+		Short: "Manage mTLS certificate principals",
+		Long: `Register certificate identities that can authenticate to vault via mTLS.
+
+Two identifier types are supported:
+
+  --spiffe-id  URI SAN with spiffe:// scheme (SPIFFE workload identity, e.g. from Teleport tbot)
+  --email-san  Email SAN (rfc822Name) for human users with corporate PKI certificates
 
 When the vault server is configured with VAULT_TLS_CLIENT_CA, any client presenting
-a certificate signed by that CA whose SPIFFE URI SAN matches a registered principal
-is authorized — no bearer token required.
+a certificate signed by that CA whose SAN matches a registered principal is authorized
+without a bearer token. SPIFFE URI SANs are checked before email SANs.
 
-Example (Teleport / tbot):
+Examples:
   vault principals register "myapp-server" \
     --spiffe-id spiffe://cluster.local/ns/myapp/sa/server \
-    --project myapp --env production`,
+    --project myapp --env production
+
+  vault principals register "alice workstation" \
+    --email-san alice@corp.example.com \
+    --project myapp`,
 	}
 	cmd.AddCommand(
 		newPrincipalsRegisterCmd(),
@@ -49,25 +59,33 @@ Example (Teleport / tbot):
 // ── register ──────────────────────────────────────────────────────────────────
 
 func newPrincipalsRegisterCmd() *cobra.Command {
-	var project, env, spiffeID, expiresIn string
+	var project, env, spiffeID, emailSAN, expiresIn string
 	var readOnly bool
 
 	cmd := &cobra.Command{
 		Use:   "register <description>",
-		Short: "Register a SPIFFE ID as a vault principal",
+		Short: "Register a certificate principal (SPIFFE ID or email SAN)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g, err := config.MustToken()
 			if err != nil {
 				return err
 			}
-			if spiffeID == "" {
-				return fmt.Errorf("--spiffe-id is required")
+			if spiffeID == "" && emailSAN == "" {
+				return fmt.Errorf("one of --spiffe-id or --email-san is required")
+			}
+			if spiffeID != "" && emailSAN != "" {
+				return fmt.Errorf("only one of --spiffe-id or --email-san may be set")
 			}
 			body := map[string]any{
 				"description": args[0],
-				"spiffe_id":   spiffeID,
 				"read_only":   readOnly,
+			}
+			if spiffeID != "" {
+				body["spiffe_id"] = spiffeID
+			}
+			if emailSAN != "" {
+				body["email_san"] = emailSAN
 			}
 			if project != "" {
 				body["project"] = project
@@ -84,7 +102,12 @@ func newPrincipalsRegisterCmd() *cobra.Command {
 				return err
 			}
 			fmt.Printf("id:          %s\n", resp.ID)
-			fmt.Printf("spiffe_id:   %s\n", resp.SPIFFEID)
+			if resp.SPIFFEID != nil {
+				fmt.Printf("spiffe_id:   %s\n", *resp.SPIFFEID)
+			}
+			if resp.EmailSAN != nil {
+				fmt.Printf("email_san:   %s\n", *resp.EmailSAN)
+			}
 			fmt.Printf("description: %s\n", resp.Description)
 			if resp.ProjectID != nil {
 				fmt.Printf("project_id:  %s\n", *resp.ProjectID)
@@ -100,7 +123,8 @@ func newPrincipalsRegisterCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&spiffeID, "spiffe-id", "", "SPIFFE URI SAN to match (required), e.g. spiffe://cluster.local/ns/myapp/sa/server")
+	cmd.Flags().StringVar(&spiffeID, "spiffe-id", "", "SPIFFE URI SAN, e.g. spiffe://cluster.local/ns/myapp/sa/server")
+	cmd.Flags().StringVar(&emailSAN, "email-san", "", "Email SAN (rfc822Name), e.g. alice@corp.example.com")
 	cmd.Flags().StringVar(&project, "project", "", "Scope to a project slug")
 	cmd.Flags().StringVar(&env, "env", "", "Scope to an environment slug (requires --project)")
 	cmd.Flags().BoolVar(&readOnly, "read-only", false, "Restrict to read-only operations")
@@ -113,7 +137,7 @@ func newPrincipalsRegisterCmd() *cobra.Command {
 func newPrincipalsListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
-		Short: "List registered SPIFFE principals",
+		Short: "List registered cert principals",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g, err := config.MustToken()
 			if err != nil {
@@ -128,10 +152,15 @@ func newPrincipalsListCmd() *cobra.Command {
 				fmt.Println("No principals registered.")
 				return nil
 			}
-			fmt.Printf("%-36s  %-50s  %-8s  %s\n", "ID", "SPIFFE ID", "READ_ONLY", "CREATED")
+			fmt.Printf("%-36s  %-8s  %-50s  %s\n", "ID", "TYPE", "IDENTIFIER", "CREATED")
 			for _, p := range principals {
-				fmt.Printf("%-36s  %-50s  %-8v  %s\n",
-					p.ID, p.SPIFFEID, p.ReadOnly, fmtTime(p.CreatedAt))
+				typ, id := "spiffe", ""
+				if p.SPIFFEID != nil {
+					id = *p.SPIFFEID
+				} else if p.EmailSAN != nil {
+					typ, id = "email", *p.EmailSAN
+				}
+				fmt.Printf("%-36s  %-8s  %-50s  %s\n", p.ID, typ, id, fmtTime(p.CreatedAt))
 			}
 			return nil
 		},
@@ -143,7 +172,7 @@ func newPrincipalsListCmd() *cobra.Command {
 func newPrincipalsRevokeCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "revoke <id>",
-		Short: "Remove a registered SPIFFE principal",
+		Short: "Remove a registered cert principal",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			g, err := config.MustToken()

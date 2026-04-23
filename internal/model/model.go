@@ -62,14 +62,16 @@ type Token struct {
 	CreatedAt time.Time
 }
 
-// CertPrincipal maps a SPIFFE ID to vault authorization scope.
-// Any cert signed by the server's trusted client CA (VAULT_TLS_CLIENT_CA) whose
-// URI SAN matches SPIFFEID is authorized as this principal without per-cert enrollment.
+// CertPrincipal maps a certificate identity to vault authorization scope.
+// Exactly one of SPIFFEID or EmailSAN must be non-nil.
+//   - SPIFFEID: URI SAN with spiffe:// scheme (workload / SPIFFE identity)
+//   - EmailSAN: rfc822Name SAN (human user with corporate PKI cert or tbot cert)
 type CertPrincipal struct {
 	ID          string
 	UserID      *string // owner — who registered this mapping
 	Description string
-	SPIFFEID    string  // URI SAN, e.g. spiffe://cluster.local/ns/myapp/sa/server
+	SPIFFEID    *string // URI SAN, e.g. spiffe://cluster.local/ns/myapp/sa/server
+	EmailSAN    *string // email SAN, e.g. alice@corp.example.com
 	ProjectID   *string // nil = unscoped (any project)
 	EnvID       *string // nil = any env
 	ReadOnly    bool
