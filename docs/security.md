@@ -1,0 +1,165 @@
+# Security Model
+
+> Source: `internal/auth/`, `internal/api/middleware.go`, `internal/crypto/`, `internal/api/audit.go`
+
+## Authentication
+
+Two credential types are accepted on every protected route. The middleware checks mTLS first, then falls back to bearer token.
+
+### Bearer tokens
+
+- **Generation**: `crypto/rand` → 32 random bytes → hex-encoded 64-char string sent to the client once
+- **Storage**: only the SHA-256 hash is stored; the server never sees the raw token again after issuance
+- **Validation**: `Authorization: Bearer <raw>` → SHA-256 → lookup in `tokens` table → expiry check
+
+Two token flavors:
+
+| Flavor | `user_id` | `project_id` | Typical use |
+|--------|-----------|--------------|-------------|
+| Session | set | nil | Human users after login |
+| Machine | nil or set | nil (unscoped) or set | CI/CD, workloads |
+
+Machine tokens can optionally carry an `env_id` to restrict access further to a single environment.
+
+### SPIFFE / mTLS
+
+When a client presents a TLS certificate, the `auth` middleware:
+
+1. Extracts the `spiffe://` URI SAN from the leaf certificate
+2. Looks up the SPIFFE ID in `cert_principals`
+3. Checks the principal's `expires_at` (independent of the certificate's own validity window)
+4. If found and unexpired, constructs an ephemeral `*model.Token` (never persisted) — ID set to the principal's ID, scopes from the principal row
+
+If the SPIFFE ID is not registered the middleware falls through to bearer token auth. Any other error (expired principal, store failure) returns 401 immediately.
+
+Certificate verification itself is handled by Go's TLS stack. `VAULT_TLS_CLIENT_CA` must be set for the server to request and verify client certificates.
+
+### Password security
+
+- bcrypt cost factor 12 (`auth.HashPassword`)
+- `auth.CheckPassword` uses `bcrypt.CompareHashAndPassword` (constant-time)
+- Plaintext passwords are never logged or stored anywhere other than the bcrypt hash in the DB
+- Minimum length: 8 characters (enforced in API handlers)
+
+### First-user bootstrap
+
+The `/signup` endpoint is only accessible when `HasAdminUser()` returns false. The first account always receives the `admin` role. Subsequent accounts require an existing admin to create them via `POST /users`.
+
+## Authorization
+
+### Role hierarchy
+
+```
+viewer (1) < editor (2) < owner (3)
+```
+
+Roles are per-project, per-user. A `project_members` row with `env_id IS NULL` grants access to the entire project; a row with `env_id` set restricts the user to that environment only. Both types of rows can coexist for the same user.
+
+### Authorization checks (middleware.go)
+
+| Check | Used on | Effect |
+|-------|---------|--------|
+| `requireServerAdmin` | `/users` admin routes | Token's user must have `role = admin` in `users` table |
+| `requireOwner` | Member management | Project-level role = owner; machine tokens always rejected |
+| `requireWrite` | Secret/env create+delete | Editor+ role; read-only tokens rejected |
+| `requireWritable` | Global writes (no projectID) | Read-only token check only |
+| `requireUnscoped` | Project/token creation | Scoped machine tokens cannot create projects or tokens |
+| `authorize` | All project access | Scope check for machine tokens; membership lookup for users |
+
+Server admins bypass all project membership checks (implicitly owner everywhere).
+
+### Machine token scoping
+
+A machine token with `project_id` set can only access that project. If `env_id` is also set, access is further restricted to that environment. An unscoped machine token (`project_id = nil`) must have a matching `project_members` entry, just like a user session token.
+
+The `read_only` flag on a token is enforced per-operation: any handler that mutates state calls `requireWrite` or `requireWritable` first.
+
+## Encryption
+
+### Key hierarchy
+
+```
+AWS KMS (or local AES-256 KEK)
+    └── Project Envelope Key (PEK)  — per project, stored wrapped in projects.encrypted_pek
+            └── Data Encryption Key (DEK)  — per secret version / per dynamic backend config
+                    └── Ciphertext  — stored in secret_versions.encrypted_value / dynamic_backends.encrypted_config
+```
+
+All symmetric encryption uses **AES-256-GCM** with a random 12-byte nonce prepended to the ciphertext.
+
+### Key provider
+
+Exactly one must be configured:
+
+- **`LocalKeyProvider`** (`VAULT_MASTER_KEY`): 32-byte AES-256 key in process memory. Wrap/unwrap is a local `seal`/`open` call. For development only — the master key is directly visible in the environment.
+- **`KMSKeyProvider`** (`VAULT_KMS_KEY_ID`): delegates `WrapDEK`/`UnwrapDEK` to AWS KMS `Encrypt`/`Decrypt`. No key material lives on the vault host. Credentials are loaded from the AWS default chain (environment variables, IAM role, config file).
+
+### Project Envelope Key (PEK) and caching
+
+Each project has its own PEK, wrapped by the server KEK and stored in `projects.encrypted_pek`. On every secret access, `ProjectKeyCache.ForProject`:
+
+1. Checks the in-memory cache (read lock; fast path)
+2. On miss: unwraps the PEK via the server key provider (may call KMS), caches the plaintext for the configured TTL (default 5 minutes)
+
+This bounds KMS API calls to roughly one per project per TTL window under steady traffic.
+
+`ProjectKeyCache.Invalidate(projectID)` clears the cached entry. Call this after rotating a project's PEK so the next request fetches the new key.
+
+### Key migration
+
+Projects created before PEK support have `encrypted_pek = NULL`. The `ForProject` method detects this and returns the server-level provider directly, so existing DEKs continue to work without any data migration.
+
+`vaultd migrate-keys` iterates all un-migrated projects:
+
+1. Generate a fresh 32-byte PEK
+2. Wrap it with the server KEK → store in `projects.encrypted_pek`
+3. Re-wrap all secret-version and dynamic-backend DEKs for that project in a single DB transaction (`RewrapProjectDEKs`)
+
+The migration is idempotent (skips projects that already have a PEK) and safe to re-run.
+
+> After migrating keys, the KMS cost is proportional to the number of projects × (1 / cache TTL), not the number of secrets.
+
+## Audit Logging
+
+Every state-changing operation, every read of a secret value, and authentication failures are written to `audit_logs`. Entries are append-only.
+
+### Covered events
+
+| Category | Actions |
+|----------|---------|
+| Auth | `auth.signup`, `auth.login`, `auth.logout`, `auth.login_failed`, `auth.change_password` |
+| Projects | `project.create`, `project.delete` |
+| Environments | `env.create`, `env.delete` |
+| Secrets | `secret.get`, `secret.set`, `secret.delete`, `secret.rollback`, `secret.import`, `secret.dotenv_upload`, `secret.dotenv_download` |
+| Tokens | `token.create`, `token.delete` |
+| Members | `member.add`, `member.update`, `member.remove` |
+| Dynamic | `dynamic.backend.set`, `dynamic.backend.delete`, `dynamic.role.set`, `dynamic.role.delete`, `dynamic.lease.issue`, `dynamic.lease.revoke` |
+| Certificates | `cert.principal.register`, `cert.principal.delete` |
+| Users | `user.create` |
+
+### Record structure
+
+| Field | Notes |
+|-------|-------|
+| `actor_id` | Token ID of the caller; nil for unauthenticated operations |
+| `project_id` | Nullable; set for project-scoped operations |
+| `resource` | Identifies the affected resource (secret key name, user email, SPIFFE ID, etc.) |
+| `metadata` | Free-form JSON; secret values are masked to first 3 characters + `...` |
+| `ip` | From `X-Forwarded-For` header (first value) or `RemoteAddr` |
+
+Failed login attempts record the submitted email address in `resource` to support forensic analysis without exposing whether the account exists (the 401 response is identical regardless).
+
+## Transport Security
+
+- The server always uses HTTPS (`ListenAndServeTLS`).
+- If no cert files are configured, an ephemeral self-signed ECDSA P-256 certificate is generated — development only; a warning is logged.
+- When `VAULT_TLS_CERT` / `VAULT_TLS_KEY` are set, `CertLoader.GetCertificate` is used: the certificate is re-read from disk on each TLS handshake when the mtime changes. This supports cert rotation via `tbot` or any certificate manager without a server restart.
+- `VAULT_TLS_CLIENT_CA` enables `tls.VerifyClientCertIfGiven`: client certificates are optional but verified against the CA when present, enabling SPIFFE authentication for workloads that can present a cert.
+
+## Known Security Limitations
+
+- **Dynamic credential templates are user-provided SQL.** There is no parameterization framework; placeholders (`{{username}}`, `{{password}}`, `{{expiry}}`) are replaced by string substitution. This is safe for trusted admins configuring backends but would be a SQL injection vector if templates were user-controlled input from untrusted parties.
+- **Token expiry is checked at auth time, not stored as a DB-level constraint.** A very small window exists between a token expiring and the server detecting it on the next request. This is typical for bearer token systems and is generally acceptable.
+- **The `X-Forwarded-For` header used for IP logging is not validated.** Behind a trusted reverse proxy this is fine; direct internet exposure means a client can spoof its IP in audit logs.
+- **Session tokens are not automatically rotated.** After a password change, existing session tokens remain valid until they expire or are manually deleted.
+- **No rate limiting** is applied to authentication endpoints. Deploy behind a reverse proxy with rate limiting for production.

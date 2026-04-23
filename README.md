@@ -30,6 +30,7 @@ A minimal self-hosted secret manager with versioning, audit logging, and `.env` 
 - [Dynamic Secrets](#dynamic-secrets)
 - [Permissions and Roles](#permissions-and-roles)
 - [Machine Tokens](#machine-tokens)
+- [Technical Documentation](#technical-documentation)
 
 ---
 
@@ -1177,3 +1178,17 @@ exec vault run -- myapp
 ```
 
 The IAM role attached to the EC2 instance needs `ssm:GetParameter` and `kms:Decrypt` on the relevant SSM parameter and KMS key. No static credentials are stored anywhere on the instance.
+
+---
+
+## Technical Documentation
+
+In-depth documentation for contributors and operators is in the [`docs/`](docs/) directory.
+
+| Document | Contents |
+|----------|----------|
+| [`docs/architecture.md`](docs/architecture.md) | Component overview, startup sequence, data model summary, configuration reference |
+| [`docs/security.md`](docs/security.md) | Authentication flows, authorization model, encryption key hierarchy, audit logging, transport security, known limitations |
+| [`docs/data-flows.md`](docs/data-flows.md) | Step-by-step traces: secret read/write, dynamic credential issuance, lease revocation, key migration, SPIFFE registration |
+| [`docs/contributing.md`](docs/contributing.md) | Dev setup, project layout, migration authoring, adding backend types, known limitations, deployment notes |
+| [`docs/er_diagram.md`](docs/er_diagram.md) | Entity relationship diagram (Mermaid) |
