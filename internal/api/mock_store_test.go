@@ -2,15 +2,18 @@ package api
 
 import (
 	"context"
-	"time"
 
 	"github.com/abagile/tokyo3-vault/internal/model"
 	"github.com/abagile/tokyo3-vault/internal/store"
+	"github.com/abagile/tokyo3-vault/internal/testutil/mockstore"
 )
 
-// mockStore implements store.Store via overridable function fields.
-// Any method not overridden returns store.ErrNotFound by default.
+// mockStore implements store.Store. Embed mockstore.Stub for all no-op defaults;
+// override specific methods via function fields for test-controlled responses.
+// Only the overridable fields used by api tests are listed — add more as needed.
 type mockStore struct {
+	mockstore.Stub
+
 	createUser                   func(ctx context.Context, email, hash, role string) (*model.User, error)
 	getUserByEmail               func(ctx context.Context, email string) (*model.User, error)
 	getUserByID                  func(ctx context.Context, id string) (*model.User, error)
@@ -101,9 +104,6 @@ func (m *mockStore) ListTokens(ctx context.Context, userID string) ([]*model.Tok
 	}
 	return nil, nil
 }
-func (m *mockStore) ListTokensWithAccess(ctx context.Context, projectID, envID string) ([]*model.Token, error) {
-	return nil, nil
-}
 func (m *mockStore) DeleteToken(ctx context.Context, id, userID string) error {
 	if m.deleteToken != nil {
 		return m.deleteToken(ctx, id, userID)
@@ -120,9 +120,6 @@ func (m *mockStore) GetProject(ctx context.Context, slug string) (*model.Project
 	if m.getProject != nil {
 		return m.getProject(ctx, slug)
 	}
-	return nil, store.ErrNotFound
-}
-func (m *mockStore) GetProjectByID(ctx context.Context, id string) (*model.Project, error) {
 	return nil, store.ErrNotFound
 }
 func (m *mockStore) ListProjects(ctx context.Context) ([]*model.Project, error) {
@@ -259,108 +256,5 @@ func (m *mockStore) ListAuditLogs(ctx context.Context, filter store.AuditFilter)
 	return nil, nil
 }
 
-func (m *mockStore) SetDynamicBackend(ctx context.Context, projectID, envID, slug, backendType string, encConfig, encConfigDEK []byte, defaultTTL, maxTTL int) (*model.DynamicBackend, error) {
-	return nil, store.ErrNotFound
-}
-func (m *mockStore) GetDynamicBackend(ctx context.Context, projectID, envID, slug string) (*model.DynamicBackend, error) {
-	return nil, store.ErrNotFound
-}
-func (m *mockStore) GetDynamicBackendByID(ctx context.Context, id string) (*model.DynamicBackend, error) {
-	return nil, store.ErrNotFound
-}
-func (m *mockStore) DeleteDynamicBackend(ctx context.Context, projectID, envID, slug string) error {
-	return store.ErrNotFound
-}
-func (m *mockStore) SetDynamicRole(ctx context.Context, backendID, name, creationTmpl, revocationTmpl string, ttl *int) (*model.DynamicRole, error) {
-	return nil, store.ErrNotFound
-}
-func (m *mockStore) GetDynamicRole(ctx context.Context, backendID, name string) (*model.DynamicRole, error) {
-	return nil, store.ErrNotFound
-}
-func (m *mockStore) ListDynamicRoles(ctx context.Context, backendID string) ([]*model.DynamicRole, error) {
-	return []*model.DynamicRole{}, nil
-}
-func (m *mockStore) DeleteDynamicRole(ctx context.Context, backendID, name string) error {
-	return store.ErrNotFound
-}
-func (m *mockStore) CreateDynamicLease(ctx context.Context, projectID, envID, backendID, roleID, roleName, username, revocationTmpl string, expiresAt time.Time, createdBy *string) (*model.DynamicLease, error) {
-	return nil, store.ErrNotFound
-}
-func (m *mockStore) GetDynamicLease(ctx context.Context, id string) (*model.DynamicLease, error) {
-	return nil, store.ErrNotFound
-}
-func (m *mockStore) ListDynamicLeases(ctx context.Context, projectID, envID string) ([]*model.DynamicLease, error) {
-	return []*model.DynamicLease{}, nil
-}
-func (m *mockStore) RevokeDynamicLease(ctx context.Context, id string) error {
-	return store.ErrNotFound
-}
-func (m *mockStore) ListExpiredDynamicLeases(ctx context.Context) ([]*model.DynamicLease, error) {
-	return []*model.DynamicLease{}, nil
-}
-func (m *mockStore) CreateCertPrincipal(ctx context.Context, p *model.CertPrincipal) error {
-	return store.ErrNotFound
-}
-func (m *mockStore) GetCertPrincipalBySPIFFEID(ctx context.Context, spiffeID string) (*model.CertPrincipal, error) {
-	return nil, store.ErrNotFound
-}
-func (m *mockStore) GetCertPrincipalByEmailSAN(ctx context.Context, emailSAN string) (*model.CertPrincipal, error) {
-	return nil, store.ErrNotFound
-}
-func (m *mockStore) ListCertPrincipals(ctx context.Context, userID string) ([]*model.CertPrincipal, error) {
-	return nil, nil
-}
-func (m *mockStore) ListCertPrincipalsWithAccess(ctx context.Context, projectID, envID string) ([]*model.CertPrincipal, error) {
-	return nil, nil
-}
-func (m *mockStore) DeleteCertPrincipal(ctx context.Context, id, userID string) error {
-	return store.ErrNotFound
-}
-func (m *mockStore) SetProjectKey(ctx context.Context, projectID string, encPEK []byte) error {
-	return nil
-}
-func (m *mockStore) RewrapProjectDEKs(ctx context.Context, projectID string, rewrap func([]byte) ([]byte, error)) error {
-	return nil
-}
-func (m *mockStore) CreateOIDCUser(ctx context.Context, email, oidcIssuer, oidcSubject, role string) (*model.User, error) {
-	return nil, store.ErrNotFound
-}
-func (m *mockStore) GetUserByOIDCSubject(ctx context.Context, issuer, subject string) (*model.User, error) {
-	return nil, store.ErrNotFound
-}
-func (m *mockStore) SetUserOIDCIdentity(ctx context.Context, userID, issuer, subject string) error {
-	return nil
-}
-func (m *mockStore) SetUserActive(ctx context.Context, userID string, active bool) error {
-	return nil
-}
-func (m *mockStore) DeleteAllTokensForUser(ctx context.Context, userID string) error {
-	return nil
-}
-func (m *mockStore) CreateSCIMToken(ctx context.Context, t *model.SCIMToken) error {
-	return nil
-}
-func (m *mockStore) GetSCIMTokenByHash(ctx context.Context, hash string) (*model.SCIMToken, error) {
-	return nil, store.ErrNotFound
-}
-func (m *mockStore) ListSCIMTokens(ctx context.Context) ([]*model.SCIMToken, error) {
-	return nil, nil
-}
-func (m *mockStore) DeleteSCIMToken(ctx context.Context, id string) error {
-	return store.ErrNotFound
-}
-func (m *mockStore) SetSCIMGroupRole(ctx context.Context, groupID, displayName string, projectID, envID *string, role string) (*model.SCIMGroupRole, error) {
-	return nil, store.ErrNotFound
-}
-func (m *mockStore) ListSCIMGroupRoles(ctx context.Context) ([]*model.SCIMGroupRole, error) {
-	return nil, nil
-}
-func (m *mockStore) ListSCIMGroupRolesByGroup(ctx context.Context, groupID string) ([]*model.SCIMGroupRole, error) {
-	return nil, nil
-}
-func (m *mockStore) GetSCIMGroupRole(ctx context.Context, id string) (*model.SCIMGroupRole, error) {
-	return nil, store.ErrNotFound
-}
-func (m *mockStore) DeleteSCIMGroupRole(ctx context.Context, id string) error {
-	return store.ErrNotFound
-}
+// All other store.Store methods (dynamic, SCIM, OIDC, certs, project keys)
+// are satisfied by the embedded mockstore.Stub with safe no-op defaults.

@@ -7,12 +7,16 @@ import (
 
 	"github.com/abagile/tokyo3-vault/internal/model"
 	"github.com/abagile/tokyo3-vault/internal/store"
+	"github.com/abagile/tokyo3-vault/internal/testutil/mockstore"
 )
 
 // ── minimal mock store ────────────────────────────────────────────────────────
 
+// mockStore embeds mockstore.Stub for all no-op defaults and adds an in-memory
+// token map so IssueUserToken / IssueMachineToken / Validate work end-to-end.
 type mockStore struct {
-	tokens    map[string]*model.Token // hash → token
+	mockstore.Stub
+	tokens    map[string]*model.Token
 	createErr error
 }
 
@@ -32,171 +36,6 @@ func (m *mockStore) GetTokenByHash(_ context.Context, hash string) (*model.Token
 	}
 	return nil, store.ErrNotFound
 }
-
-// The store.Store interface has many more methods; satisfy them with no-ops.
-func (m *mockStore) CreateUser(_ context.Context, _, _, _ string) (*model.User, error) {
-	return nil, store.ErrNotFound
-}
-func (m *mockStore) GetUserByEmail(_ context.Context, _ string) (*model.User, error) {
-	return nil, store.ErrNotFound
-}
-func (m *mockStore) GetUserByID(_ context.Context, _ string) (*model.User, error) {
-	return nil, store.ErrNotFound
-}
-func (m *mockStore) ListUsers(_ context.Context) ([]*model.User, error)      { return nil, nil }
-func (m *mockStore) HasAdminUser(_ context.Context) (bool, error)            { return false, nil }
-func (m *mockStore) UpdateUserPassword(_ context.Context, _, _ string) error { return nil }
-func (m *mockStore) ListTokens(_ context.Context, _ string) ([]*model.Token, error) {
-	return nil, nil
-}
-func (m *mockStore) ListTokensWithAccess(_ context.Context, _, _ string) ([]*model.Token, error) {
-	return nil, nil
-}
-func (m *mockStore) DeleteToken(_ context.Context, _, _ string) error { return nil }
-func (m *mockStore) CreateProject(_ context.Context, _, _ string) (*model.Project, error) {
-	return nil, store.ErrNotFound
-}
-func (m *mockStore) GetProject(_ context.Context, _ string) (*model.Project, error) {
-	return nil, store.ErrNotFound
-}
-func (m *mockStore) GetProjectByID(_ context.Context, _ string) (*model.Project, error) {
-	return nil, store.ErrNotFound
-}
-func (m *mockStore) ListProjects(_ context.Context) ([]*model.Project, error) { return nil, nil }
-func (m *mockStore) ListProjectsByMember(_ context.Context, _ string) ([]*model.Project, error) {
-	return nil, nil
-}
-func (m *mockStore) DeleteProject(_ context.Context, _ string) error { return nil }
-func (m *mockStore) AddProjectMember(_ context.Context, _, _, _ string, _ *string) error {
-	return nil
-}
-func (m *mockStore) GetProjectMember(_ context.Context, _, _ string) (*model.ProjectMember, error) {
-	return nil, store.ErrNotFound
-}
-func (m *mockStore) GetProjectMemberForEnv(_ context.Context, _, _, _ string) (*model.ProjectMember, error) {
-	return nil, store.ErrNotFound
-}
-func (m *mockStore) ListProjectMembers(_ context.Context, _ string) ([]*model.ProjectMember, error) {
-	return nil, nil
-}
-func (m *mockStore) ListProjectMembersWithAccess(_ context.Context, _, _ string) ([]*model.ProjectMember, error) {
-	return nil, nil
-}
-func (m *mockStore) UpdateProjectMember(_ context.Context, _, _, _ string, _ *string) error {
-	return nil
-}
-func (m *mockStore) RemoveProjectMember(_ context.Context, _, _ string, _ *string) error {
-	return nil
-}
-func (m *mockStore) CreateEnvironment(_ context.Context, _, _, _ string) (*model.Environment, error) {
-	return nil, store.ErrNotFound
-}
-func (m *mockStore) GetEnvironment(_ context.Context, _, _ string) (*model.Environment, error) {
-	return nil, store.ErrNotFound
-}
-func (m *mockStore) ListEnvironments(_ context.Context, _ string) ([]*model.Environment, error) {
-	return nil, nil
-}
-func (m *mockStore) DeleteEnvironment(_ context.Context, _, _ string) error { return nil }
-func (m *mockStore) SetSecret(_ context.Context, _, _, _ string, _ *string, _, _ []byte, _ *string) (*model.SecretVersion, error) {
-	return nil, store.ErrNotFound
-}
-func (m *mockStore) GetSecret(_ context.Context, _, _, _ string) (*model.Secret, *model.SecretVersion, error) {
-	return nil, nil, store.ErrNotFound
-}
-func (m *mockStore) ListSecrets(_ context.Context, _, _ string) ([]*model.Secret, []*model.SecretVersion, error) {
-	return nil, nil, nil
-}
-func (m *mockStore) DeleteSecret(_ context.Context, _, _, _ string) error { return nil }
-func (m *mockStore) ListSecretVersions(_ context.Context, _ string) ([]*model.SecretVersion, error) {
-	return nil, nil
-}
-func (m *mockStore) RollbackSecret(_ context.Context, _, _ string) error       { return nil }
-func (m *mockStore) CreateAuditLog(_ context.Context, _ *model.AuditLog) error { return nil }
-func (m *mockStore) ListAuditLogs(_ context.Context, _ store.AuditFilter) ([]*model.AuditLog, error) {
-	return nil, nil
-}
-func (m *mockStore) SetDynamicBackend(_ context.Context, _, _, _, _ string, _, _ []byte, _, _ int) (*model.DynamicBackend, error) {
-	return nil, store.ErrNotFound
-}
-func (m *mockStore) GetDynamicBackend(_ context.Context, _, _, _ string) (*model.DynamicBackend, error) {
-	return nil, store.ErrNotFound
-}
-func (m *mockStore) GetDynamicBackendByID(_ context.Context, _ string) (*model.DynamicBackend, error) {
-	return nil, store.ErrNotFound
-}
-func (m *mockStore) DeleteDynamicBackend(_ context.Context, _, _, _ string) error { return nil }
-func (m *mockStore) SetDynamicRole(_ context.Context, _, _, _, _ string, _ *int) (*model.DynamicRole, error) {
-	return nil, store.ErrNotFound
-}
-func (m *mockStore) GetDynamicRole(_ context.Context, _, _ string) (*model.DynamicRole, error) {
-	return nil, store.ErrNotFound
-}
-func (m *mockStore) ListDynamicRoles(_ context.Context, _ string) ([]*model.DynamicRole, error) {
-	return nil, nil
-}
-func (m *mockStore) DeleteDynamicRole(_ context.Context, _, _ string) error { return nil }
-func (m *mockStore) CreateDynamicLease(_ context.Context, _, _, _, _, _, _, _ string, _ time.Time, _ *string) (*model.DynamicLease, error) {
-	return nil, store.ErrNotFound
-}
-func (m *mockStore) GetDynamicLease(_ context.Context, _ string) (*model.DynamicLease, error) {
-	return nil, store.ErrNotFound
-}
-func (m *mockStore) ListDynamicLeases(_ context.Context, _, _ string) ([]*model.DynamicLease, error) {
-	return nil, nil
-}
-func (m *mockStore) RevokeDynamicLease(_ context.Context, _ string) error { return nil }
-func (m *mockStore) ListExpiredDynamicLeases(_ context.Context) ([]*model.DynamicLease, error) {
-	return nil, nil
-}
-func (m *mockStore) CreateCertPrincipal(_ context.Context, _ *model.CertPrincipal) error {
-	return store.ErrNotFound
-}
-func (m *mockStore) GetCertPrincipalBySPIFFEID(_ context.Context, _ string) (*model.CertPrincipal, error) {
-	return nil, store.ErrNotFound
-}
-func (m *mockStore) GetCertPrincipalByEmailSAN(_ context.Context, _ string) (*model.CertPrincipal, error) {
-	return nil, store.ErrNotFound
-}
-func (m *mockStore) ListCertPrincipals(_ context.Context, _ string) ([]*model.CertPrincipal, error) {
-	return nil, nil
-}
-func (m *mockStore) ListCertPrincipalsWithAccess(_ context.Context, _, _ string) ([]*model.CertPrincipal, error) {
-	return nil, nil
-}
-func (m *mockStore) DeleteCertPrincipal(_ context.Context, _, _ string) error  { return nil }
-func (m *mockStore) SetProjectKey(_ context.Context, _ string, _ []byte) error { return nil }
-func (m *mockStore) RewrapProjectDEKs(_ context.Context, _ string, _ func([]byte) ([]byte, error)) error {
-	return nil
-}
-func (m *mockStore) CreateOIDCUser(_ context.Context, _, _, _, _ string) (*model.User, error) {
-	return nil, store.ErrNotFound
-}
-func (m *mockStore) GetUserByOIDCSubject(_ context.Context, _, _ string) (*model.User, error) {
-	return nil, store.ErrNotFound
-}
-func (m *mockStore) SetUserOIDCIdentity(_ context.Context, _, _, _ string) error { return nil }
-func (m *mockStore) SetUserActive(_ context.Context, _ string, _ bool) error     { return nil }
-func (m *mockStore) DeleteAllTokensForUser(_ context.Context, _ string) error    { return nil }
-func (m *mockStore) CreateSCIMToken(_ context.Context, _ *model.SCIMToken) error { return nil }
-func (m *mockStore) GetSCIMTokenByHash(_ context.Context, _ string) (*model.SCIMToken, error) {
-	return nil, store.ErrNotFound
-}
-func (m *mockStore) ListSCIMTokens(_ context.Context) ([]*model.SCIMToken, error) { return nil, nil }
-func (m *mockStore) DeleteSCIMToken(_ context.Context, _ string) error            { return nil }
-func (m *mockStore) SetSCIMGroupRole(_ context.Context, _, _ string, _, _ *string, _ string) (*model.SCIMGroupRole, error) {
-	return nil, store.ErrNotFound
-}
-func (m *mockStore) ListSCIMGroupRoles(_ context.Context) ([]*model.SCIMGroupRole, error) {
-	return nil, nil
-}
-func (m *mockStore) ListSCIMGroupRolesByGroup(_ context.Context, _ string) ([]*model.SCIMGroupRole, error) {
-	return nil, nil
-}
-func (m *mockStore) GetSCIMGroupRole(_ context.Context, _ string) (*model.SCIMGroupRole, error) {
-	return nil, store.ErrNotFound
-}
-func (m *mockStore) DeleteSCIMGroupRole(_ context.Context, _ string) error { return nil }
 
 // ── IssueUserToken ────────────────────────────────────────────────────────────
 
