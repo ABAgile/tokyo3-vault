@@ -210,7 +210,10 @@ func (s *Server) handleRegisterCertPrincipal(w http.ResponseWriter, r *http.Requ
 	if identifier == "" {
 		identifier = req.EmailSAN
 	}
-	s.logAudit(r, ActionCertPrincipalRegister, "", identifier)
+	if err := s.logAudit(r, ActionCertPrincipalRegister, "", identifier); err != nil {
+		writeError(w, http.StatusInternalServerError, "audit unavailable")
+		return
+	}
 	writeJSON(w, http.StatusCreated, principalToResp(p))
 }
 
@@ -250,7 +253,10 @@ func (s *Server) handleDeleteCertPrincipal(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	s.logAudit(r, ActionCertPrincipalDelete, "", id)
+	if err := s.logAudit(r, ActionCertPrincipalDelete, "", id); err != nil {
+		writeError(w, http.StatusInternalServerError, "audit unavailable")
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

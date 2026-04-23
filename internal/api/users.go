@@ -90,7 +90,10 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	s.logAudit(r, ActionUserCreate, "", user.Email)
+	if err := s.logAudit(r, ActionUserCreate, "", user.Email); err != nil {
+		writeError(w, http.StatusInternalServerError, "audit unavailable")
+		return
+	}
 	writeJSON(w, http.StatusCreated, userToResponse(user))
 }
 
@@ -133,7 +136,10 @@ func (s *Server) handleResetUserPassword(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	s.logAudit(r, ActionAuthChangePassword, "", targetUserID)
+	if err := s.logAudit(r, ActionAuthChangePassword, "", targetUserID); err != nil {
+		writeError(w, http.StatusInternalServerError, "audit unavailable")
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

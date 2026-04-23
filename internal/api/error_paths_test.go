@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/abagile/tokyo3-vault/internal/audit"
 	"github.com/abagile/tokyo3-vault/internal/model"
 	"github.com/abagile/tokyo3-vault/internal/store"
 )
@@ -102,8 +103,7 @@ func TestHandleDeleteProject_DeleteError(t *testing.T) {
 		getProjectMember: func(_ context.Context, _, _ string) (*model.ProjectMember, error) {
 			return &model.ProjectMember{Role: model.RoleOwner}, nil
 		},
-		deleteProject:  func(_ context.Context, _ string) error { return errDB },
-		createAuditLog: func(_ context.Context, _ *model.AuditLog) error { return nil },
+		deleteProject: func(_ context.Context, _ string) error { return errDB },
 	}
 	srv := newTestServer(t, st)
 	w := call(t, srv.handleDeleteProject, http.MethodDelete, "/", "", ownerTok(), "project", testProjSlug)
@@ -115,7 +115,6 @@ func TestHandleDeleteProject_DeleteError(t *testing.T) {
 func TestHandleListProjects_StoreError(t *testing.T) {
 	st := &mockStore{
 		listProjectsByMember: func(_ context.Context, _ string) ([]*model.Project, error) { return nil, errDB },
-		createAuditLog:       func(_ context.Context, _ *model.AuditLog) error { return nil },
 	}
 	srv := newTestServer(t, st)
 	w := call(t, srv.handleListProjects, http.MethodGet, "/", "", ownerTok())
@@ -185,7 +184,6 @@ func TestHandleCreateToken_ScopedProjectOnlyNoEnv(t *testing.T) {
 			capturedEnvID = t.EnvID
 			return nil
 		},
-		createAuditLog: func(_ context.Context, _ *model.AuditLog) error { return nil },
 	}
 	srv := newTestServer(t, st)
 	body := `{"name":"ci","project":"` + testProjSlug + `"}`
@@ -256,11 +254,13 @@ func TestHandleListAuditLogs_StoreError(t *testing.T) {
 		getUserByID: func(_ context.Context, id string) (*model.User, error) {
 			return &model.User{ID: id, Role: model.UserRoleAdmin}, nil
 		},
-		listAuditLogs: func(_ context.Context, _ store.AuditFilter) ([]*model.AuditLog, error) {
+	}
+	as := &mockAuditStore{
+		listAuditLogs: func(_ context.Context, _ audit.Filter) ([]*model.AuditLog, error) {
 			return nil, errDB
 		},
 	}
-	srv := newTestServer(t, st)
+	srv := newTestServerWithAudit(t, st, as)
 	w := call(t, srv.handleListAuditLogs, http.MethodGet, "/", "", ownerTok())
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("status = %d, want 500", w.Code)
@@ -279,11 +279,8 @@ func TestHandleListAuditLogs_ProjectScopedOwner(t *testing.T) {
 		getProjectMember: func(_ context.Context, _, _ string) (*model.ProjectMember, error) {
 			return &model.ProjectMember{Role: model.RoleOwner}, nil
 		},
-		listAuditLogs: func(_ context.Context, _ store.AuditFilter) ([]*model.AuditLog, error) {
-			return []*model.AuditLog{}, nil
-		},
 	}
-	srv := newTestServer(t, st)
+	srv := newTestServerWithAudit(t, st, &mockAuditStore{})
 	w := call(t, srv.handleListAuditLogs, http.MethodGet, "/?project="+testProjSlug, "", ownerTok())
 	if w.Code != http.StatusOK {
 		t.Errorf("status = %d, want 200; body: %s", w.Code, w.Body)

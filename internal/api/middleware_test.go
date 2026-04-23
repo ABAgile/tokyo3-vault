@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/abagile/tokyo3-vault/internal/audit"
 	"github.com/abagile/tokyo3-vault/internal/auth"
 	"github.com/abagile/tokyo3-vault/internal/crypto"
 	"github.com/abagile/tokyo3-vault/internal/model"
@@ -15,6 +16,8 @@ import (
 )
 
 // newTestServer returns a Server backed by the given mock store and a fixed test KEK.
+// It uses NoopSink and NoopQueryStore for audit. Use newTestServerWithAudit when
+// a test needs to inspect or control audit store behaviour.
 func newTestServer(t *testing.T, st *mockStore) *Server {
 	t.Helper()
 	kek := make([]byte, 32)
@@ -23,7 +26,22 @@ func newTestServer(t *testing.T, st *mockStore) *Server {
 	}
 	kp := crypto.NewLocalKeyProvider(kek)
 	projectKP := crypto.NewProjectKeyCache(kp, time.Minute)
-	return &Server{store: st, kp: kp, projectKP: projectKP, log: slog.Default()}
+	return &Server{
+		store:      st,
+		kp:         kp,
+		projectKP:  projectKP,
+		log:        slog.Default(),
+		audit:      audit.NoopSink{},
+		auditStore: audit.NoopQueryStore{},
+	}
+}
+
+// newTestServerWithAudit is like newTestServer but injects a custom audit.QueryStore.
+func newTestServerWithAudit(t *testing.T, st *mockStore, as audit.QueryStore) *Server {
+	t.Helper()
+	srv := newTestServer(t, st)
+	srv.auditStore = as
+	return srv
 }
 
 // withToken injects tok into r's context, simulating the auth middleware.

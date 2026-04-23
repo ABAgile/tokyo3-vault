@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/abagile/tokyo3-vault/internal/audit"
 	"github.com/abagile/tokyo3-vault/internal/auth"
 	"github.com/abagile/tokyo3-vault/internal/model"
 	"github.com/abagile/tokyo3-vault/internal/store"
@@ -25,8 +26,7 @@ func TestHandleSignup_FirstUser(t *testing.T) {
 			}
 			return user, nil
 		},
-		createToken:    func(_ context.Context, _ *model.Token) error { return nil },
-		createAuditLog: func(_ context.Context, _ *model.AuditLog) error { return nil },
+		createToken: func(_ context.Context, _ *model.Token) error { return nil },
 	}
 
 	srv := newTestServer(t, st)
@@ -101,7 +101,6 @@ func TestHandleLogin_ValidCredentials(t *testing.T) {
 	st := &mockStore{
 		getUserByEmail: func(_ context.Context, _ string) (*model.User, error) { return user, nil },
 		createToken:    func(_ context.Context, _ *model.Token) error { return nil },
-		createAuditLog: func(_ context.Context, _ *model.AuditLog) error { return nil },
 	}
 
 	srv := newTestServer(t, st)
@@ -155,8 +154,7 @@ func TestHandleLogin_InvalidCredentials(t *testing.T) {
 func TestHandleLogout_OK(t *testing.T) {
 	deleted := false
 	st := &mockStore{
-		deleteToken:    func(_ context.Context, _, _ string) error { deleted = true; return nil },
-		createAuditLog: func(_ context.Context, _ *model.AuditLog) error { return nil },
+		deleteToken: func(_ context.Context, _, _ string) error { deleted = true; return nil },
 	}
 
 	srv := newTestServer(t, st)
@@ -192,7 +190,6 @@ func TestHandleChangePassword_OK(t *testing.T) {
 			updated = true
 			return nil
 		},
-		createAuditLog: func(_ context.Context, _ *model.AuditLog) error { return nil },
 	}
 
 	srv := newTestServer(t, st)
@@ -379,12 +376,14 @@ func TestHandleListAuditLogs_ServerAdmin(t *testing.T) {
 		getUserByID: func(_ context.Context, id string) (*model.User, error) {
 			return &model.User{ID: id, Role: model.UserRoleAdmin}, nil
 		},
-		listAuditLogs: func(_ context.Context, _ store.AuditFilter) ([]*model.AuditLog, error) {
+	}
+	as := &mockAuditStore{
+		listAuditLogs: func(_ context.Context, _ audit.Filter) ([]*model.AuditLog, error) {
 			return logs, nil
 		},
 	}
 
-	srv := newTestServer(t, st)
+	srv := newTestServerWithAudit(t, st, as)
 	w := call(t, srv.handleListAuditLogs, http.MethodGet, "/", "", ownerTok())
 
 	if w.Code != http.StatusOK {
@@ -425,11 +424,8 @@ func TestHandleListAuditLogs_LimitValidation(t *testing.T) {
 		getUserByID: func(_ context.Context, id string) (*model.User, error) {
 			return &model.User{ID: id, Role: model.UserRoleAdmin}, nil
 		},
-		listAuditLogs: func(_ context.Context, _ store.AuditFilter) ([]*model.AuditLog, error) {
-			return nil, nil
-		},
 	}
-	srv := newTestServer(t, st)
+	srv := newTestServerWithAudit(t, st, &mockAuditStore{})
 
 	tests := []struct {
 		limit string

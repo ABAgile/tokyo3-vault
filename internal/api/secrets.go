@@ -155,7 +155,10 @@ func (s *Server) handleGetSecret(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	s.logAuditMeta(r, ActionSecretGet, project.ID, sec.Key, secretAuditMeta(maskValue(string(plaintext))))
+	if err := s.logAuditMeta(r, ActionSecretGet, project.ID, sec.Key, secretAuditMeta(maskValue(string(plaintext)))); err != nil {
+		writeError(w, http.StatusInternalServerError, "audit unavailable")
+		return
+	}
 	writeJSON(w, http.StatusOK, secretResponse{
 		Key:       sec.Key,
 		Value:     string(plaintext),
@@ -230,7 +233,10 @@ func (s *Server) writeSetSecret(w http.ResponseWriter, r *http.Request, project 
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	s.logAudit(r, ActionSecretSet, project.ID, key)
+	if err := s.logAudit(r, ActionSecretSet, project.ID, key); err != nil {
+		writeError(w, http.StatusInternalServerError, "audit unavailable")
+		return
+	}
 	writeJSON(w, http.StatusOK, versionResponse{
 		ID:        sv.ID,
 		Version:   sv.Version,
@@ -258,7 +264,10 @@ func (s *Server) handleDeleteSecret(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	s.logAudit(r, ActionSecretDelete, project.ID, key)
+	if err := s.logAudit(r, ActionSecretDelete, project.ID, key); err != nil {
+		writeError(w, http.StatusInternalServerError, "audit unavailable")
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -346,7 +355,10 @@ func (s *Server) handleRollbackSecret(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	s.logAudit(r, ActionSecretRollback, project.ID, key)
+	if err := s.logAudit(r, ActionSecretRollback, project.ID, key); err != nil {
+		writeError(w, http.StatusInternalServerError, "audit unavailable")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"key":        key,
 		"version_id": body.VersionID,
@@ -504,7 +516,9 @@ func (s *Server) copySecret(r *http.Request, sec *model.Secret, sv *model.Secret
 		s.log.Error("set dst secret", "key", sec.Key, "err", err)
 		return false, fmt.Errorf("internal error")
 	}
-	s.logAuditMeta(r, ActionSecretImport, dstProjectID, sec.Key, secretAuditMeta(maskValue(string(plaintext))))
+	if err := s.logAuditMeta(r, ActionSecretImport, dstProjectID, sec.Key, secretAuditMeta(maskValue(string(plaintext)))); err != nil {
+		return false, err
+	}
 	return true, nil
 }
 
@@ -576,7 +590,10 @@ func (s *Server) handleUploadDotenv(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
-		s.logAuditMeta(r, ActionSecretDotenvUpload, project.ID, entry.Key, secretAuditMeta(maskValue(entry.Value)))
+		if err := s.logAuditMeta(r, ActionSecretDotenvUpload, project.ID, entry.Key, secretAuditMeta(maskValue(entry.Value))); err != nil {
+			writeError(w, http.StatusInternalServerError, "audit unavailable")
+			return
+		}
 		uploaded++
 	}
 
@@ -617,7 +634,10 @@ func (s *Server) handleDownloadDotenv(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
-		s.logAuditMeta(r, ActionSecretDotenvDownload, project.ID, sec.Key, secretAuditMeta(maskValue(string(plaintext))))
+		if err := s.logAuditMeta(r, ActionSecretDotenvDownload, project.ID, sec.Key, secretAuditMeta(maskValue(string(plaintext)))); err != nil {
+			writeError(w, http.StatusInternalServerError, "audit unavailable")
+			return
+		}
 		entries = append(entries, dotenv.Entry{
 			Comment: sec.Comment,
 			Key:     sec.Key,

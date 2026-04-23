@@ -83,7 +83,6 @@ func baseStore() *mockStore {
 			}
 			return nil, store.ErrNotFound
 		},
-		createAuditLog: func(_ context.Context, _ *model.AuditLog) error { return nil },
 	}
 }
 
@@ -536,7 +535,6 @@ func TestHandleDownloadDotenv_SkipsVersionless(t *testing.T) {
 
 func TestResolveProjectEnv_ProjectNotFound(t *testing.T) {
 	st := &mockStore{
-		createAuditLog: func(_ context.Context, _ *model.AuditLog) error { return nil },
 		// getProject left nil → ErrNotFound
 	}
 	srv := newTestServer(t, st)
@@ -548,7 +546,6 @@ func TestResolveProjectEnv_ProjectNotFound(t *testing.T) {
 
 func TestResolveProjectEnv_EnvNotFound(t *testing.T) {
 	st := &mockStore{
-		createAuditLog: func(_ context.Context, _ *model.AuditLog) error { return nil },
 		getProject: func(_ context.Context, slug string) (*model.Project, error) {
 			return &model.Project{ID: testProjID, Slug: slug}, nil
 		},

@@ -483,62 +483,6 @@ func TestSetSecret_CommentPreservedOnUpdate(t *testing.T) {
 	}
 }
 
-// ── Audit ─────────────────────────────────────────────────────────────────────
-
-func TestAuditLogs(t *testing.T) {
-	db := openTestDB(t)
-	ctx := context.Background()
-	p, _ := db.CreateProject(ctx, "Audit App", "audit-app")
-
-	sp := func(s string) *string { return &s }
-	entry := func(action, projID string) *model.AuditLog {
-		var pid *string
-		if projID != "" {
-			pid = sp(projID)
-		}
-		return &model.AuditLog{
-			ID: action + "-id", Action: action,
-			ActorID: sp("user-1"), ProjectID: pid,
-			Resource: sp("secret"), Metadata: sp(`{}`),
-			IP: sp("127.0.0.1"), CreatedAt: time.Now().UTC(),
-		}
-	}
-
-	db.CreateAuditLog(ctx, entry("secret.set", p.ID))
-	db.CreateAuditLog(ctx, entry("secret.delete", p.ID))
-	db.CreateAuditLog(ctx, entry("project.create", ""))
-
-	// Unfiltered.
-	logs, err := db.ListAuditLogs(ctx, store.AuditFilter{})
-	if err != nil || len(logs) != 3 {
-		t.Fatalf("ListAuditLogs unfiltered: len=%d err=%v", len(logs), err)
-	}
-
-	// Filter by project.
-	logs, err = db.ListAuditLogs(ctx, store.AuditFilter{ProjectID: p.ID})
-	if err != nil || len(logs) != 2 {
-		t.Errorf("ListAuditLogs by project: len=%d err=%v", len(logs), err)
-	}
-
-	// Filter by action.
-	logs, err = db.ListAuditLogs(ctx, store.AuditFilter{Action: "secret.set"})
-	if err != nil || len(logs) != 1 {
-		t.Errorf("ListAuditLogs by action: len=%d err=%v", len(logs), err)
-	}
-
-	// Filter by project + action.
-	logs, err = db.ListAuditLogs(ctx, store.AuditFilter{ProjectID: p.ID, Action: "secret.delete"})
-	if err != nil || len(logs) != 1 {
-		t.Errorf("ListAuditLogs combined filter: len=%d err=%v", len(logs), err)
-	}
-
-	// Limit.
-	logs, err = db.ListAuditLogs(ctx, store.AuditFilter{Limit: 2})
-	if err != nil || len(logs) != 2 {
-		t.Errorf("ListAuditLogs limit=2: len=%d err=%v", len(logs), err)
-	}
-}
-
 // ── isUnique ──────────────────────────────────────────────────────────────────
 
 func TestIsUnique(t *testing.T) {

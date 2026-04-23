@@ -6,9 +6,13 @@
 
 ```
 main()
+ ├─ [audit-consumer subcommand] → runAuditConsumer(); exit   — separate credential set
  ├─ openKeyProvider()        — parse VAULT_MASTER_KEY / VAULT_KMS_KEY_ID
  ├─ openStore()              — open Postgres or SQLite; apply pending migrations
  ├─ NewProjectKeyCache(kp)   — in-memory PEK cache, TTL from VAULT_PROJECT_KEY_CACHE_TTL
+ ├─ [migrate-keys subcommand] → runMigrateKeys(); exit
+ ├─ openAuditSink()          — NATS JetStream publisher (PUBLISH-only); NoopSink if NATS_URL unset
+ ├─ openAuditQueryStore()    — audit DB reader (SELECT-only); NoopQueryStore if unconfigured
  ├─ NewRevoker(...)          — background goroutine: sweep expired leases immediately,
  │                            then every 60 s
  ├─ buildServerTLS()         — load cert files (hot-reload) or generate self-signed
@@ -58,7 +62,8 @@ GET /v1/projects/{project}/envs/{env}/secrets/{key}
  │   └─ projectKP.UnwrapDEK(encDEK) → 32-byte DEK
  │      AES-256-GCM open(DEK, encValue) → plaintext
  │
- ├─ store.CreateAuditLog(action=secret.get, resource=key, metadata={masked value})
+ ├─ logAuditMeta(action=secret.get, resource=key, metadata={masked value})
+ │   └─ audit.Sink.Log → NATS JetStream (fail-closed: HTTP 500 if publish fails)
  └─ JSON response: {key, value, version, ...}
 ```
 
@@ -82,7 +87,8 @@ PUT /v1/projects/{project}/envs/{env}/secrets/{key}
  │   ├─ INSERT secret_version (version = MAX+1)
  │   └─ UPDATE secret.current_version_id
  │
- ├─ store.CreateAuditLog(action=secret.set, metadata={masked value})
+ ├─ logAuditMeta(action=secret.set, metadata={masked value})
+ │   └─ audit.Sink.Log → NATS JetStream (fail-closed)
  └─ 204 No Content
 ```
 
@@ -114,7 +120,8 @@ POST /v1/projects/{project}/envs/{env}/dynamic/{backend}/roles/{role}/creds
  │       revocation_tmpl (snapshot),   ← denormalized so deletion of role/backend
  │       expires_at, created_by)        ← doesn't block future revocation
  │
- ├─ store.CreateAuditLog(action=dynamic.lease.issue, metadata={username, ttl, masked password})
+ ├─ logAuditMeta(action=dynamic.lease.issue, metadata={username, ttl, masked password})
+ │   └─ audit.Sink.Log → NATS JetStream (fail-closed)
  └─ JSON response: {username, password, expires_at, lease_id}
      NOTE: password is returned exactly once and never stored in plaintext.
 ```
@@ -154,7 +161,8 @@ POST /v1/principals
  ├─ validate spiffe_id: url.Parse + scheme == "spiffe" && host != ""
  ├─ resolveTokenScope(project, env) — optional scoping, same logic as machine tokens
  ├─ store.CreateCertPrincipal(principal)
- ├─ store.CreateAuditLog(action=cert.principal.register, resource=spiffe_id)
+ ├─ logAudit(action=cert.principal.register, resource=spiffe_id)
+ │   └─ audit.Sink.Log → NATS JetStream (fail-closed)
  └─ 201 Created {id, description, spiffe_id, project_id, env_id, ...}
 ```
 
@@ -190,7 +198,8 @@ POST /v1/projects/{project}/envs/{env}/secrets/dotenv
      ├─ crypto.EncryptSecret(kp, value)
      └─ store.SetSecret(...)
  │
- ├─ store.CreateAuditLog(action=secret.dotenv_upload, metadata={count})
+ ├─ logAuditMeta(action=secret.dotenv_upload, metadata={count})
+ │   └─ audit.Sink.Log → NATS JetStream (fail-closed)
  └─ 204 No Content
 ```
 
@@ -207,7 +216,8 @@ POST /v1/projects/{project}/envs/{env}/secrets/{key}/rollback
  │   └─ not found → 404
  ├─ store.RollbackSecret(secret.ID, version.ID)
  │   └─ UPDATE secret SET current_version_id = version.ID
- ├─ store.CreateAuditLog(action=secret.rollback, metadata={version})
+ ├─ logAudit(action=secret.rollback, metadata={version})
+ │   └─ audit.Sink.Log → NATS JetStream (fail-closed)
  └─ 204 No Content
      NOTE: a rollback does NOT delete newer versions; they remain available for
            another rollback or audit purposes.

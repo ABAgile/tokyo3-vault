@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/abagile/tokyo3-vault/internal/audit"
 	"github.com/abagile/tokyo3-vault/internal/model"
 	"github.com/abagile/tokyo3-vault/internal/store"
 	"github.com/google/uuid"
@@ -68,48 +69,44 @@ const (
 	ActionSCIMTokenDelete = "scim.token.delete"
 )
 
-// logAudit writes an audit entry. projectID and resource are optional.
-func (s *Server) logAudit(r *http.Request, action, projectID, resource string) {
-	s.logAuditMeta(r, action, projectID, resource, "")
+// logAudit publishes an audit entry to the NATS JetStream sink and returns an
+// error if the publish fails. Callers must treat a non-nil error as fatal for
+// the current request: write HTTP 500 and return immediately so that sensitive
+// operations are never served without a durable audit record (fail-closed).
+func (s *Server) logAudit(r *http.Request, action, projectID, resource string) error {
+	return s.logAuditMeta(r, action, projectID, resource, "")
 }
 
-// logAuditMeta is like logAudit but also stores a free-form JSON metadata string.
-// Use it for operations where extra context is valuable (e.g. masked secret values).
-func (s *Server) logAuditMeta(r *http.Request, action, projectID, resource, metadata string) {
+// logAuditMeta is like logAudit but also carries a free-form JSON metadata
+// string (e.g. masked secret value). Returns an error on publish failure.
+func (s *Server) logAuditMeta(r *http.Request, action, projectID, resource, metadata string) error {
 	tok := tokenFromCtx(r)
 
-	entry := &model.AuditLog{
-		ID:        uuid.NewString(),
-		Action:    action,
-		CreatedAt: time.Now().UTC(),
+	e := audit.Entry{
+		ID:         uuid.NewString(),
+		Action:     action,
+		OccurredAt: time.Now().UTC(),
 	}
 	if tok != nil {
-		entry.ActorID = &tok.ID
+		e.ActorID = tok.ID
 	}
-	if projectID != "" {
-		entry.ProjectID = &projectID
-	}
-	if resource != "" {
-		entry.Resource = &resource
-	}
-	if metadata != "" {
-		entry.Metadata = &metadata
-	}
-	ip := clientIP(r)
-	if ip != "" {
-		entry.IP = &ip
-	}
+	e.ProjectID = projectID
+	e.Resource = resource
+	e.Metadata = metadata
+	e.IP = clientIP(r)
 
-	if err := s.store.CreateAuditLog(r.Context(), entry); err != nil {
-		s.log.Error("write audit log", "action", action, "err", err)
+	if err := s.audit.Log(r.Context(), e); err != nil {
+		s.log.Error("audit write failed — request blocked (fail-closed)",
+			"action", action, "err", err)
+		return err
 	}
+	return nil
 }
 
 func clientIP(r *http.Request) string {
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 		return strings.TrimSpace(strings.SplitN(xff, ",", 2)[0])
 	}
-	// RemoteAddr is "host:port" — strip the port.
 	addr := r.RemoteAddr
 	if i := strings.LastIndex(addr, ":"); i != -1 {
 		return addr[:i]
@@ -136,12 +133,17 @@ type auditLogResponse struct {
 // Access:
 //   - With ?project=<slug>: requires project owner role (or server admin).
 //   - Without project filter: requires server admin.
+//
+// Results are served from the dedicated audit database (AUDIT_DATABASE_URL /
+// AUDIT_DB_PATH), which is populated by vaultd audit-consumer. The NATS
+// JetStream stream is the authoritative record; this endpoint serves the
+// queryable projection.
 func (s *Server) handleListAuditLogs(w http.ResponseWriter, r *http.Request) {
 	if !s.requireUnscoped(w, tokenFromCtx(r)) {
 		return
 	}
 
-	filter := store.AuditFilter{}
+	f := audit.Filter{}
 
 	if slug := r.URL.Query().Get("project"); slug != "" {
 		p, err := s.store.GetProject(r.Context(), slug)
@@ -154,20 +156,18 @@ func (s *Server) handleListAuditLogs(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
-		// Project-scoped view: require owner role (server admin bypasses via requireProjectRole).
 		if !s.requireProjectRole(w, r, p.ID, model.RoleOwner) {
 			return
 		}
-		filter.ProjectID = p.ID
+		f.ProjectID = p.ID
 	} else {
-		// Global view: require server admin.
 		if !s.requireServerAdmin(w, r) {
 			return
 		}
 	}
 
 	if action := r.URL.Query().Get("action"); action != "" {
-		filter.Action = action
+		f.Action = action
 	}
 	if lim := r.URL.Query().Get("limit"); lim != "" {
 		n, err := strconv.Atoi(lim)
@@ -175,10 +175,10 @@ func (s *Server) handleListAuditLogs(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "limit must be 1–500")
 			return
 		}
-		filter.Limit = n
+		f.Limit = n
 	}
 
-	logs, err := s.store.ListAuditLogs(r.Context(), filter)
+	logs, err := s.auditStore.ListAuditLogs(r.Context(), f)
 	if err != nil {
 		s.log.Error("list audit logs", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")

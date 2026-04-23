@@ -20,7 +20,6 @@ func TestHandleListTokens_OK(t *testing.T) {
 		listTokens: func(_ context.Context, userID string) ([]*model.Token, error) {
 			return []*model.Token{tok1}, nil
 		},
-		createAuditLog: func(_ context.Context, _ *model.AuditLog) error { return nil },
 	}
 	srv := newTestServer(t, st)
 	w := call(t, srv.handleListTokens, http.MethodGet, "/", "", ownerTok())
@@ -47,8 +46,7 @@ func TestHandleListTokens_MachineTokenRejected(t *testing.T) {
 
 func TestHandleCreateToken_Unscoped(t *testing.T) {
 	st := &mockStore{
-		createToken:    func(_ context.Context, _ *model.Token) error { return nil },
-		createAuditLog: func(_ context.Context, _ *model.AuditLog) error { return nil },
+		createToken: func(_ context.Context, _ *model.Token) error { return nil },
 	}
 	srv := newTestServer(t, st)
 	w := call(t, srv.handleCreateToken, http.MethodPost, "/", `{"name":"ci-deploy"}`, ownerTok())
@@ -78,7 +76,6 @@ func TestHandleCreateToken_ScopedToProject(t *testing.T) {
 			}
 			return nil
 		},
-		createAuditLog: func(_ context.Context, _ *model.AuditLog) error { return nil },
 	}
 	srv := newTestServer(t, st)
 	body := `{"name":"deploy","project":"` + testProjSlug + `"}`
@@ -107,7 +104,6 @@ func TestHandleCreateToken_ScopedToProjectAndEnv(t *testing.T) {
 			}
 			return nil
 		},
-		createAuditLog: func(_ context.Context, _ *model.AuditLog) error { return nil },
 	}
 	srv := newTestServer(t, st)
 	body := `{"name":"ci","project":"` + testProjSlug + `","env":"` + testEnvSlug + `"}`
@@ -155,7 +151,6 @@ func TestHandleCreateToken_ReadOnly(t *testing.T) {
 			capturedReadOnly = t.ReadOnly
 			return nil
 		},
-		createAuditLog: func(_ context.Context, _ *model.AuditLog) error { return nil },
 	}
 	srv := newTestServer(t, st)
 	w := call(t, srv.handleCreateToken, http.MethodPost, "/", `{"name":"ro","read_only":true}`, ownerTok())
@@ -172,8 +167,7 @@ func TestHandleCreateToken_ReadOnly(t *testing.T) {
 func TestHandleDeleteToken_OK(t *testing.T) {
 	deleted := false
 	st := &mockStore{
-		deleteToken:    func(_ context.Context, _, _ string) error { deleted = true; return nil },
-		createAuditLog: func(_ context.Context, _ *model.AuditLog) error { return nil },
+		deleteToken: func(_ context.Context, _, _ string) error { deleted = true; return nil },
 	}
 	srv := newTestServer(t, st)
 	w := call(t, srv.handleDeleteToken, http.MethodDelete, "/", "", ownerTok(), "id", "tok-to-delete")

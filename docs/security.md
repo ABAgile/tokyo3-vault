@@ -121,13 +121,44 @@ The migration is idempotent (skips projects that already have a PEK) and safe to
 
 ## Audit Logging
 
-Every state-changing operation, every read of a secret value, and authentication failures are written to `audit_logs`. Entries are append-only.
+Every state-changing operation, every read of a secret value, and authentication failures are recorded as immutable audit events.
+
+### Architecture (PCI-DSS aligned)
+
+Audit uses a CQRS pattern with full credential separation:
+
+```
+vaultd serve (publisher credential)
+    │ Sink.Log → NATS JetStream "AUDIT" stream
+    │            (DenyDelete, DenyPurge, FileStorage, 400-day retention)
+    │
+vaultd audit-consumer (subscriber credential)
+    │ Fetch → decode → UpsertAuditLog → Audit DB (writer credential)
+    │
+GET /api/v1/audit (reader credential)
+    └── ListAuditLogs → Audit DB (SELECT-only)
+```
+
+**Fail-closed**: `logAudit` returns an error; every handler that calls it checks the return value. If the publish to JetStream fails, the handler writes HTTP 500 and discards the response — the sensitive operation is never considered complete without a durable audit record.
+
+**Tamper evidence**: the NATS stream is configured with `DenyDelete` and `DenyPurge`, so no individual message or the entire stream can be deleted via the NATS API. `FileStorage` ensures records survive restarts.
+
+**Credential separation** (four distinct identities):
+
+| Identity | Rights | Used by |
+|----------|--------|---------|
+| `vault_app` | full CRUD on main DB | `vaultd serve` |
+| `nats_publisher` | PUBLISH-only on `audit.events` | `vaultd serve` |
+| `vault_audit_reader` | SELECT-only on `audit_logs` | `vaultd serve` (GET /api/v1/audit) |
+| `nats_consumer` | SUBSCRIBE + consumer management | `vaultd audit-consumer` |
+| `vault_audit_writer` | INSERT-only on `audit_logs` | `vaultd audit-consumer` |
 
 ### Covered events
 
 | Category | Actions |
 |----------|---------|
 | Auth | `auth.signup`, `auth.login`, `auth.logout`, `auth.login_failed`, `auth.change_password` |
+| OIDC | `auth.oidc.login`, `auth.oidc.jit_provision`, `auth.oidc.identity_linked` |
 | Projects | `project.create`, `project.delete` |
 | Environments | `env.create`, `env.delete` |
 | Secrets | `secret.get`, `secret.set`, `secret.delete`, `secret.rollback`, `secret.import`, `secret.dotenv_upload`, `secret.dotenv_download` |
@@ -136,18 +167,23 @@ Every state-changing operation, every read of a secret value, and authentication
 | Dynamic | `dynamic.backend.set`, `dynamic.backend.delete`, `dynamic.role.set`, `dynamic.role.delete`, `dynamic.lease.issue`, `dynamic.lease.revoke` |
 | Certificates | `cert.principal.register`, `cert.principal.delete` |
 | Users | `user.create` |
+| SCIM | `scim.user.create`, `scim.user.update`, `scim.user.deactivate`, `scim.group.sync`, `scim.token.create`, `scim.token.delete` |
 
 ### Record structure
 
 | Field | Notes |
 |-------|-------|
-| `actor_id` | Token ID of the caller; nil for unauthenticated operations |
-| `project_id` | Nullable; set for project-scoped operations |
+| `id` | UUID — used as the idempotency key for upsert on redelivery |
+| `actor_id` | Token ID of the caller; empty for unauthenticated operations |
+| `project_id` | Empty string when not project-scoped |
 | `resource` | Identifies the affected resource (secret key name, user email, SPIFFE ID, etc.) |
-| `metadata` | Free-form JSON; secret values are masked to first 3 characters + `...` |
+| `metadata` | Free-form string; secret values are masked to first 3 characters + `...` |
 | `ip` | From `X-Forwarded-For` header (first value) or `RemoteAddr` |
+| `occurred_at` | Server-side UTC timestamp of the event |
 
 Failed login attempts record the submitted email address in `resource` to support forensic analysis without exposing whether the account exists (the 401 response is identical regardless).
+
+The audit consumer uses `INSERT ... ON CONFLICT (id) DO NOTHING` so JetStream at-least-once redelivery is safe.
 
 ## Transport Security
 

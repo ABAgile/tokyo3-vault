@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 
+	"github.com/abagile/tokyo3-vault/internal/audit"
 	"github.com/abagile/tokyo3-vault/internal/model"
 	"github.com/abagile/tokyo3-vault/internal/store"
 	"github.com/abagile/tokyo3-vault/internal/testutil/mockstore"
@@ -46,8 +47,6 @@ type mockStore struct {
 	deleteSecret                 func(ctx context.Context, projectID, envID, key string) error
 	listSecretVersions           func(ctx context.Context, secretID string) ([]*model.SecretVersion, error)
 	rollbackSecret               func(ctx context.Context, secretID, versionID string) error
-	createAuditLog               func(ctx context.Context, entry *model.AuditLog) error
-	listAuditLogs                func(ctx context.Context, filter store.AuditFilter) ([]*model.AuditLog, error)
 }
 
 func (m *mockStore) CreateUser(ctx context.Context, email, hash, role string) (*model.User, error) {
@@ -243,18 +242,21 @@ func (m *mockStore) RollbackSecret(ctx context.Context, secretID, versionID stri
 	}
 	return nil
 }
-func (m *mockStore) CreateAuditLog(ctx context.Context, entry *model.AuditLog) error {
-	if m.createAuditLog != nil {
-		return m.createAuditLog(ctx, entry)
-	}
-	return nil
+
+// All other store.Store methods (dynamic, SCIM, OIDC, certs, project keys)
+// are satisfied by the embedded mockstore.Stub with safe no-op defaults.
+
+// mockAuditStore implements audit.QueryStore for tests that exercise
+// handleListAuditLogs. Use newTestServerWithAudit to inject it.
+type mockAuditStore struct {
+	listAuditLogs func(ctx context.Context, f audit.Filter) ([]*model.AuditLog, error)
 }
-func (m *mockStore) ListAuditLogs(ctx context.Context, filter store.AuditFilter) ([]*model.AuditLog, error) {
+
+func (m *mockAuditStore) ListAuditLogs(ctx context.Context, f audit.Filter) ([]*model.AuditLog, error) {
 	if m.listAuditLogs != nil {
-		return m.listAuditLogs(ctx, filter)
+		return m.listAuditLogs(ctx, f)
 	}
 	return nil, nil
 }
 
-// All other store.Store methods (dynamic, SCIM, OIDC, certs, project keys)
-// are satisfied by the embedded mockstore.Stub with safe no-op defaults.
+func (m *mockAuditStore) Close() error { return nil }

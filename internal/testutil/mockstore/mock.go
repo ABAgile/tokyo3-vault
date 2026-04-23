@@ -122,13 +122,6 @@ func (Stub) ListSecretVersions(_ context.Context, _ string) ([]*model.SecretVers
 }
 func (Stub) RollbackSecret(_ context.Context, _, _ string) error { return nil }
 
-// ── Audit ─────────────────────────────────────────────────────────────────────
-
-func (Stub) CreateAuditLog(_ context.Context, _ *model.AuditLog) error { return nil }
-func (Stub) ListAuditLogs(_ context.Context, _ store.AuditFilter) ([]*model.AuditLog, error) {
-	return nil, nil
-}
-
 // ── Dynamic backends ──────────────────────────────────────────────────────────
 
 func (Stub) SetDynamicBackend(_ context.Context, _, _, _, _ string, _, _ []byte, _, _ int) (*model.DynamicBackend, error) {

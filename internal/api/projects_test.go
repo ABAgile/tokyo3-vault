@@ -22,7 +22,6 @@ func TestHandleListProjects_ReturnsProjects(t *testing.T) {
 		listProjectsByMember: func(_ context.Context, _ string) ([]*model.Project, error) {
 			return []*model.Project{testProject()}, nil
 		},
-		createAuditLog: func(_ context.Context, _ *model.AuditLog) error { return nil },
 	}
 	srv := newTestServer(t, st)
 	w := call(t, srv.handleListProjects, http.MethodGet, "/", "", ownerTok())
@@ -53,7 +52,6 @@ func TestHandleCreateProject_OK(t *testing.T) {
 			return &model.Project{ID: "new-p", Name: name, Slug: slug}, nil
 		},
 		addProjectMember: func(_ context.Context, _, _, _ string, _ *string) error { return nil },
-		createAuditLog:   func(_ context.Context, _ *model.AuditLog) error { return nil },
 	}
 	srv := newTestServer(t, st)
 	w := call(t, srv.handleCreateProject, http.MethodPost, "/", `{"name":"My App","slug":"my-app"}`, ownerTok())
@@ -76,7 +74,6 @@ func TestHandleCreateProject_SlugDerived(t *testing.T) {
 			return &model.Project{ID: "p1", Name: "Hello World", Slug: slug}, nil
 		},
 		addProjectMember: func(_ context.Context, _, _, _ string, _ *string) error { return nil },
-		createAuditLog:   func(_ context.Context, _ *model.AuditLog) error { return nil },
 	}
 	srv := newTestServer(t, st)
 	// No slug provided — should be derived from name.
@@ -169,8 +166,7 @@ func TestHandleDeleteProject_OK(t *testing.T) {
 		getProjectMember: func(_ context.Context, _, _ string) (*model.ProjectMember, error) {
 			return &model.ProjectMember{Role: model.RoleOwner}, nil
 		},
-		deleteProject:  func(_ context.Context, _ string) error { deleted = true; return nil },
-		createAuditLog: func(_ context.Context, _ *model.AuditLog) error { return nil },
+		deleteProject: func(_ context.Context, _ string) error { deleted = true; return nil },
 	}
 	srv := newTestServer(t, st)
 	w := call(t, srv.handleDeleteProject, http.MethodDelete, "/", "", ownerTok(), "project", testProjSlug)

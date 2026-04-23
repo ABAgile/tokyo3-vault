@@ -6,20 +6,21 @@ Self-hosted secrets manager. Stores encrypted secrets, issues short-lived dynami
 ## Layout
 
 ```
-cmd/vaultd/          server binary — startup, TLS, env config
+cmd/vaultd/          server binary — startup, TLS, env config, audit-consumer subcommand
 cmd/vault/           CLI client (Cobra); reads ~/.vault/config.json
 internal/api/        HTTP handlers (one file per resource type)
+internal/audit/      audit pipeline — Sink interface, JetStreamSink, audit DB, Entry type
 internal/auth/       token hashing, issuance, validation
 internal/crypto/     KEK/PEK/DEK key hierarchy, KMS/local providers
 internal/dynamic/    dynamic credential issuance + background revoker
 internal/model/      all shared types (one file)
 internal/oidc/       OIDC provider wrapper (go-oidc/v3 + oauth2)
-internal/store/      store.Store interface + AuditFilter
+internal/store/      store.Store interface
 internal/store/postgres/   Postgres backend — split by domain (see below)
 internal/store/sqlite/     SQLite backend  — split by domain (see below)
 internal/testutil/mockstore/  shared Stub for test mocks
 internal/tlsutil/    TLS helpers (hot-reload, self-signed, cert pools)
-docs/                architecture.md, er_diagram.md, oidc-sso-design.md
+docs/                architecture.md, er_diagram.md, oidc-sso-design.md, security.md
 ```
 
 ## Store backend file layout (postgres + sqlite mirror each other)
@@ -30,7 +31,7 @@ docs/                architecture.md, er_diagram.md, oidc-sso-design.md
 | `*_users.go` | userCols, scanUser, all User methods |
 | `*_tokens.go` | Token CRUD + ListTokensWithAccess |
 | `*_projects.go` | Projects, ProjectMembers, Environments, project keys |
-| `*_secrets.go` | Secrets, SecretVersions, AuditLogs |
+| `*_secrets.go` | Secrets, SecretVersions |
 | `*_dynamic.go` | DynamicBackends, DynamicRoles, DynamicLeases |
 | `*_scim.go` | SCIMTokens, SCIMGroupRoles |
 | `*_certs.go` | CertPrincipals (scanCertPrincipal helper) |
@@ -53,6 +54,7 @@ docs/                architecture.md, er_diagram.md, oidc-sso-design.md
 | Work on OIDC/SCIM | `internal/api/auth_oidc.go` or `internal/api/scim.go` + `docs/oidc-sso-design.md` |
 | Work on mTLS certs | `internal/api/certs.go` + `internal/store/*/postgres_certs.go` |
 | Crypto / key rotation | `internal/crypto/` + `docs/security.md` |
+| Work on audit pipeline | `internal/audit/` + `cmd/vaultd/audit_consumer.go` + `docs/security.md` |
 
 ## Test mocks
 

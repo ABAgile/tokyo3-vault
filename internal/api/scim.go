@@ -237,7 +237,10 @@ func (s *Server) handleSCIMCreateUser(w http.ResponseWriter, r *http.Request) {
 		user.SCIMExternalID = &extID
 	}
 
-	s.logAudit(r, ActionSCIMUserCreate, "", email)
+	if err := s.logAudit(r, ActionSCIMUserCreate, "", email); err != nil {
+		writeSCIMError(w, http.StatusInternalServerError, "audit unavailable")
+		return
+	}
 	writeSCIMJSON(w, http.StatusCreated, scimUserResource(user, requestBaseURL(r)))
 }
 
@@ -365,11 +368,9 @@ func (s *Server) applyActiveChange(r *http.Request, user *model.User, active boo
 		if err := s.store.DeleteAllTokensForUser(r.Context(), user.ID); err != nil {
 			return err
 		}
-		s.logAudit(r, ActionSCIMUserDeactivate, "", user.Email)
-	} else {
-		s.logAudit(r, ActionSCIMUserUpdate, "", user.Email)
+		return s.logAudit(r, ActionSCIMUserDeactivate, "", user.Email)
 	}
-	return nil
+	return s.logAudit(r, ActionSCIMUserUpdate, "", user.Email)
 }
 
 func (s *Server) handleSCIMDeleteUser(w http.ResponseWriter, r *http.Request) {
@@ -472,7 +473,10 @@ func (s *Server) handleSCIMCreateGroup(w http.ResponseWriter, r *http.Request) {
 	for _, m := range req.Members {
 		memberIDs = append(memberIDs, m.Value)
 	}
-	s.logAudit(r, ActionSCIMGroupSync, "", req.DisplayName)
+	if err := s.logAudit(r, ActionSCIMGroupSync, "", req.DisplayName); err != nil {
+		writeSCIMError(w, http.StatusInternalServerError, "audit unavailable")
+		return
+	}
 	writeSCIMJSON(w, http.StatusCreated, scimGroupResource(groupID, req.DisplayName, req.ExternalID, base, memberIDs))
 }
 
@@ -498,7 +502,10 @@ func (s *Server) handleSCIMReplaceGroup(w http.ResponseWriter, r *http.Request) 
 		writeSCIMError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	s.syncGroupMembers(r, id, req.DisplayName, req.Members)
+	if err := s.syncGroupMembers(r, id, req.DisplayName, req.Members); err != nil {
+		writeSCIMError(w, http.StatusInternalServerError, "audit unavailable")
+		return
+	}
 	var memberIDs []string
 	for _, m := range req.Members {
 		memberIDs = append(memberIDs, m.Value)
@@ -537,7 +544,10 @@ func (s *Server) handleSCIMPatchGroup(w http.ResponseWriter, r *http.Request) {
 			// We re-read the full group and let syncGroupMembers handle the diff.
 		}
 	}
-	s.logAudit(r, ActionSCIMGroupSync, "", displayName)
+	if err := s.logAudit(r, ActionSCIMGroupSync, "", displayName); err != nil {
+		writeSCIMError(w, http.StatusInternalServerError, "audit unavailable")
+		return
+	}
 	writeSCIMJSON(w, http.StatusOK, scimGroupResource(id, displayName, "", requestBaseURL(r), nil))
 }
 
@@ -556,11 +566,11 @@ func (s *Server) handleSCIMDeleteGroup(w http.ResponseWriter, r *http.Request) {
 // add the user to the corresponding vault project as the specified role.
 func (s *Server) syncGroupMembers(r *http.Request, groupID, displayName string, members []struct {
 	Value string `json:"value"`
-}) {
+}) error {
 	roles, err := s.store.ListSCIMGroupRolesByGroup(r.Context(), groupID)
 	if err != nil {
 		s.log.Error("scim sync group members — list roles", "err", err)
-		return
+		return err
 	}
 	for _, gr := range roles {
 		if gr.ProjectID == nil {
@@ -572,7 +582,7 @@ func (s *Server) syncGroupMembers(r *http.Request, groupID, displayName string, 
 			}
 		}
 	}
-	s.logAudit(r, ActionSCIMGroupSync, "", displayName)
+	return s.logAudit(r, ActionSCIMGroupSync, "", displayName)
 }
 
 // ── SCIM token management (admin API) ─────────────────────────────────────────
@@ -610,7 +620,10 @@ func (s *Server) handleCreateSCIMToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	s.logAudit(r, ActionSCIMTokenCreate, "", req.Description)
+	if err := s.logAudit(r, ActionSCIMTokenCreate, "", req.Description); err != nil {
+		writeError(w, http.StatusInternalServerError, "audit unavailable")
+		return
+	}
 	writeJSON(w, http.StatusCreated, map[string]string{
 		"id":          t.ID,
 		"token":       raw,
@@ -653,7 +666,10 @@ func (s *Server) handleDeleteSCIMToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	s.logAudit(r, ActionSCIMTokenDelete, "", id)
+	if err := s.logAudit(r, ActionSCIMTokenDelete, "", id); err != nil {
+		writeError(w, http.StatusInternalServerError, "audit unavailable")
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

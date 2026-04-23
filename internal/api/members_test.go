@@ -22,7 +22,6 @@ func ownerStore() *mockStore {
 		getProjectMember: func(_ context.Context, _, _ string) (*model.ProjectMember, error) {
 			return &model.ProjectMember{Role: model.RoleOwner}, nil
 		},
-		createAuditLog: func(_ context.Context, _ *model.AuditLog) error { return nil },
 	}
 }
 

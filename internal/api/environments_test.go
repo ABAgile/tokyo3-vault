@@ -74,7 +74,6 @@ func TestHandleCreateEnv_OK(t *testing.T) {
 				ID: "new-env", ProjectID: testProjID, Name: name, Slug: slug,
 			}, nil
 		},
-		createAuditLog: func(_ context.Context, _ *model.AuditLog) error { return nil },
 	}
 	srv := newTestServer(t, st)
 	w := call(t, srv.handleCreateEnv, http.MethodPost, "/",
@@ -151,7 +150,6 @@ func TestHandleDeleteEnv_OK(t *testing.T) {
 			deleted = true
 			return nil
 		},
-		createAuditLog: func(_ context.Context, _ *model.AuditLog) error { return nil },
 	}
 	srv := newTestServer(t, st)
 	w := call(t, srv.handleDeleteEnv, http.MethodDelete, "/", "", ownerTok(),

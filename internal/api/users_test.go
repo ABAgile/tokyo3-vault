@@ -20,7 +20,6 @@ func adminStore() *mockStore {
 		getUserByID: func(_ context.Context, id string) (*model.User, error) {
 			return &model.User{ID: id, Role: model.UserRoleAdmin}, nil
 		},
-		createAuditLog: func(_ context.Context, _ *model.AuditLog) error { return nil },
 	}
 }
 

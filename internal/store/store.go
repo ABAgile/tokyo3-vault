@@ -92,10 +92,6 @@ type Store interface {
 	// RollbackSecret points current_version_id at a previous version.
 	RollbackSecret(ctx context.Context, secretID, versionID string) error
 
-	// Audit
-	CreateAuditLog(ctx context.Context, entry *model.AuditLog) error
-	ListAuditLogs(ctx context.Context, filter AuditFilter) ([]*model.AuditLog, error)
-
 	// Dynamic backends — configuration per project+env+slug
 	SetDynamicBackend(ctx context.Context, projectID, envID, slug, backendType string, encConfig, encConfigDEK []byte, defaultTTL, maxTTL int) (*model.DynamicBackend, error)
 	GetDynamicBackend(ctx context.Context, projectID, envID, slug string) (*model.DynamicBackend, error)
@@ -150,11 +146,4 @@ type Store interface {
 	// dynamic_backends.encrypted_config_dek for the project in one transaction,
 	// applying rewrap(oldEncDEK) → newEncDEK to each row.
 	RewrapProjectDEKs(ctx context.Context, projectID string, rewrap func([]byte) ([]byte, error)) error
-}
-
-// AuditFilter controls which audit log entries are returned.
-type AuditFilter struct {
-	ProjectID string // empty = all projects
-	Action    string // empty = all actions
-	Limit     int    // 0 = default (50)
 }

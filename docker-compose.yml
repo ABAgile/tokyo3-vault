@@ -1,21 +1,67 @@
-# docker-compose.yml — production-style deployment with Litestream S3 replication.
+# docker-compose.yml — sample deployment: vaultd + Postgres + NATS JetStream + audit-consumer
+#
+# This sample wires all four components together without inter-service mTLS.
+# For production hardening add:
+#   NATS_AUDIT_CERT / NATS_AUDIT_KEY / NATS_AUDIT_CA        (vaultd publisher)
+#   NATS_CONSUMER_CERT / NATS_CONSUMER_KEY / NATS_CONSUMER_CA (audit-consumer)
+#   AUDIT_DB_SSL_* / AUDIT_WRITE_DB_SSL_*                   (audit DB mTLS)
+#
+# This sample also uses a single Postgres role for both the read (vaultd) and
+# write (audit-consumer) sides of the audit DB. In production use separate roles:
+#   vault_audit_reader  — SELECT-only  → AUDIT_DATABASE_URL
+#   vault_audit_writer  — INSERT-only  → AUDIT_WRITE_DATABASE_URL
 #
 # Required env vars (set in shell or .env file):
-#   VAULT_MASTER_KEY        64-char hex key (vault keygen)
-#   LITESTREAM_S3_BUCKET    S3 bucket name
-#   AWS_REGION              e.g. us-east-1
-#
-# Auth for S3 — choose one:
-#   a) IAM role attached to the EC2 instance (preferred, no keys needed)
-#   b) Set AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY in the env
-#
-# To use Postgres instead of SQLite+Litestream, see the postgres profile below.
+#   VAULT_MASTER_KEY          64-char hex key  (vault keygen)
+#   POSTGRES_PASSWORD         main vault DB password
+#   AUDIT_POSTGRES_PASSWORD   audit DB password
 #
 # Usage:
-#   docker compose up -d                    # SQLite + Litestream
-#   docker compose --profile postgres up -d # Postgres
+#   docker compose up -d
 
 services:
+
+  # ── Main vault database ───────────────────────────────────────────────────
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER:     vault
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB:       vault
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vault"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Dedicated audit database (separate from the main vault DB) ────────────
+  audit-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER:     vault_audit
+      POSTGRES_PASSWORD: ${AUDIT_POSTGRES_PASSWORD:?AUDIT_POSTGRES_PASSWORD is required}
+      POSTGRES_DB:       vault_audit
+    volumes:
+      - audit-db-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vault_audit"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── NATS JetStream (authoritative audit event stream) ─────────────────────
+  nats:
+    image: nats:2-alpine
+    command: ["--jetstream", "--store_dir", "/data"]
+    volumes:
+      - nats-data:/data
+    restart: unless-stopped
+
+  # ── API server ────────────────────────────────────────────────────────────
   vaultd:
     build:
       context: .
@@ -24,55 +70,46 @@ services:
         COMMIT:  ${COMMIT:-unknown}
     image: abagile/vault:${VERSION:-latest}
     ports:
-      - "${VAULT_PORT:-8080}:8080"
+      - "${VAULT_PORT:-8443}:8443"
     environment:
-      VAULT_MASTER_KEY:       ${VAULT_MASTER_KEY:?VAULT_MASTER_KEY is required}
-      VAULT_DB_PATH:          /data/vault.db
-      VAULT_ADDR:             :8080
-      LITESTREAM_S3_BUCKET:   ${LITESTREAM_S3_BUCKET:-}
-      AWS_REGION:             ${AWS_REGION:-us-east-1}
-      AWS_ACCESS_KEY_ID:      ${AWS_ACCESS_KEY_ID:-}
-      AWS_SECRET_ACCESS_KEY:  ${AWS_SECRET_ACCESS_KEY:-}
-    volumes:
-      - vault-data:/data
+      VAULT_MASTER_KEY:   ${VAULT_MASTER_KEY:?VAULT_MASTER_KEY is required}
+      VAULT_DATABASE_URL: postgres://vault:${POSTGRES_PASSWORD}@db:5432/vault?sslmode=disable
+      VAULT_ADDR:         :8443
+      # Audit sink: publish events to NATS JetStream (fail-closed).
+      NATS_URL:           nats://nats:4222
+      # Audit read DB: serves GET /api/v1/audit (SELECT-only in production).
+      AUDIT_DATABASE_URL: postgres://vault_audit:${AUDIT_POSTGRES_PASSWORD}@audit-db:5432/vault_audit?sslmode=disable
+    depends_on:
+      db:
+        condition: service_healthy
+      audit-db:
+        condition: service_healthy
+      nats:
+        condition: service_started
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8080/api/v1/projects"]
+      test: ["CMD", "wget", "-qO-", "--no-check-certificate", "https://localhost:8443/api/v1/projects"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 10s
 
-  # Postgres profile — run with: docker compose --profile postgres up -d
-  db:
-    profiles: [postgres]
-    image: postgres:17-alpine
-    environment:
-      POSTGRES_USER:     vault
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required for postgres profile}
-      POSTGRES_DB:       vault
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
-    restart: unless-stopped
-
-  vaultd-postgres:
-    profiles: [postgres]
-    build:
-      context: .
-      args:
-        VERSION: ${VERSION:-dev}
+  # ── Audit consumer: NATS → audit DB projection writer ────────────────────
+  audit-consumer:
     image: abagile/vault:${VERSION:-latest}
-    ports:
-      - "${VAULT_PORT:-8080}:8080"
+    command: ["audit-consumer"]
     environment:
-      VAULT_MASTER_KEY:    ${VAULT_MASTER_KEY:?VAULT_MASTER_KEY is required}
-      VAULT_DATABASE_URL:  postgres://vault:${POSTGRES_PASSWORD}@db:5432/vault
-      VAULT_ADDR:          :8080
-    entrypoint: ["/usr/local/bin/vaultd"]
+      # NATS subscriber (INSERT-only into audit DB in production).
+      NATS_URL:                 nats://nats:4222
+      AUDIT_WRITE_DATABASE_URL: postgres://vault_audit:${AUDIT_POSTGRES_PASSWORD}@audit-db:5432/vault_audit?sslmode=disable
     depends_on:
-      - db
+      audit-db:
+        condition: service_healthy
+      nats:
+        condition: service_started
     restart: unless-stopped
 
 volumes:
-  vault-data:
-  postgres-data:
+  db-data:
+  audit-db-data:
+  nats-data:

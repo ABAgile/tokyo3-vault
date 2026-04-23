@@ -93,7 +93,10 @@ func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	s.logAudit(r, ActionTokenCreate, projectID, req.Name)
+	if err := s.logAudit(r, ActionTokenCreate, projectID, req.Name); err != nil {
+		writeError(w, http.StatusInternalServerError, "audit unavailable")
+		return
+	}
 	writeJSON(w, http.StatusCreated, createTokenResponse{
 		Token: rawToken,
 		Meta:  tokenToItem(newTok),
@@ -120,7 +123,10 @@ func (s *Server) handleDeleteToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	s.logAudit(r, ActionTokenDelete, "", id)
+	if err := s.logAudit(r, ActionTokenDelete, "", id); err != nil {
+		writeError(w, http.StatusInternalServerError, "audit unavailable")
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

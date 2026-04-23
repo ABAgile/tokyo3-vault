@@ -101,7 +101,10 @@ func (s *Server) handleCreateEnv(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	s.logAudit(r, ActionEnvCreate, p.ID, e.Slug)
+	if err := s.logAudit(r, ActionEnvCreate, p.ID, e.Slug); err != nil {
+		writeError(w, http.StatusInternalServerError, "audit unavailable")
+		return
+	}
 	writeJSON(w, http.StatusCreated, envResponse{
 		ID: e.ID, ProjectID: e.ProjectID, Name: e.Name, Slug: e.Slug,
 		CreatedAt: fmtAPITime(e.CreatedAt),
@@ -137,6 +140,9 @@ func (s *Server) handleDeleteEnv(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	s.logAudit(r, ActionEnvDelete, p.ID, envSlug)
+	if err := s.logAudit(r, ActionEnvDelete, p.ID, envSlug); err != nil {
+		writeError(w, http.StatusInternalServerError, "audit unavailable")
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }

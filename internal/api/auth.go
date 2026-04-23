@@ -84,7 +84,10 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	s.logAudit(r, ActionAuthSignup, "", user.Email)
+	if err := s.logAudit(r, ActionAuthSignup, "", user.Email); err != nil {
+		writeError(w, http.StatusInternalServerError, "audit unavailable")
+		return
+	}
 	writeJSON(w, http.StatusCreated, tokenResponse{Token: rawToken, Name: "session"})
 }
 
@@ -102,7 +105,10 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	user, err := s.store.GetUserByEmail(r.Context(), req.Email)
 	if errors.Is(err, store.ErrNotFound) || (err == nil && !auth.CheckPassword(user.PasswordHash, req.Password)) {
-		s.logAudit(r, ActionAuthLoginFailed, "", req.Email)
+		if auditErr := s.logAudit(r, ActionAuthLoginFailed, "", req.Email); auditErr != nil {
+			writeError(w, http.StatusInternalServerError, "audit unavailable")
+			return
+		}
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
@@ -122,7 +128,10 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	s.logAudit(r, ActionAuthLogin, "", user.Email)
+	if err := s.logAudit(r, ActionAuthLogin, "", user.Email); err != nil {
+		writeError(w, http.StatusInternalServerError, "audit unavailable")
+		return
+	}
 	writeJSON(w, http.StatusOK, tokenResponse{Token: rawToken, Name: "session"})
 }
 
@@ -137,7 +146,10 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	s.logAudit(r, ActionAuthLogout, "", "")
+	if err := s.logAudit(r, ActionAuthLogout, "", ""); err != nil {
+		writeError(w, http.StatusInternalServerError, "audit unavailable")
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -185,6 +197,9 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	s.logAudit(r, ActionAuthChangePassword, "", user.Email)
+	if err := s.logAudit(r, ActionAuthChangePassword, "", user.Email); err != nil {
+		writeError(w, http.StatusInternalServerError, "audit unavailable")
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }

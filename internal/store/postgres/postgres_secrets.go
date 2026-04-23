@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/abagile/tokyo3-vault/internal/model"
@@ -208,60 +207,4 @@ func (s *DB) RollbackSecret(ctx context.Context, secretID, versionID string) err
 		return store.ErrNotFound
 	}
 	return nil
-}
-
-func (s *DB) CreateAuditLog(ctx context.Context, entry *model.AuditLog) error {
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO audit_logs (id, action, actor_id, project_id, resource, metadata, ip, created_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		entry.ID, entry.Action, entry.ActorID, entry.ProjectID,
-		entry.Resource, entry.Metadata, entry.IP, entry.CreatedAt,
-	)
-	return err
-}
-
-func (s *DB) ListAuditLogs(ctx context.Context, filter store.AuditFilter) ([]*model.AuditLog, error) {
-	limit := filter.Limit
-	if limit <= 0 {
-		limit = 50
-	}
-
-	// Build query with positional parameters for Postgres.
-	conds := []string{"1=1"}
-	args := []any{}
-	n := 1
-
-	if filter.ProjectID != "" {
-		conds = append(conds, fmt.Sprintf("project_id = $%d", n))
-		args = append(args, filter.ProjectID)
-		n++
-	}
-	if filter.Action != "" {
-		conds = append(conds, fmt.Sprintf("action = $%d", n))
-		args = append(args, filter.Action)
-		n++
-	}
-	args = append(args, limit)
-	query := fmt.Sprintf(
-		`SELECT id, action, actor_id, project_id, resource, metadata, ip, created_at
-		 FROM audit_logs WHERE %s ORDER BY created_at DESC LIMIT $%d`,
-		strings.Join(conds, " AND "), n,
-	)
-
-	rows, err := s.db.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var logs []*model.AuditLog
-	for rows.Next() {
-		e := &model.AuditLog{}
-		if err := rows.Scan(&e.ID, &e.Action, &e.ActorID, &e.ProjectID,
-			&e.Resource, &e.Metadata, &e.IP, &e.CreatedAt); err != nil {
-			return nil, err
-		}
-		logs = append(logs, e)
-	}
-	return logs, rows.Err()
 }

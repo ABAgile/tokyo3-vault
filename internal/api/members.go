@@ -123,7 +123,10 @@ func (s *Server) handleAddMember(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	s.logAudit(r, ActionMemberAdd, p.ID, req.UserID)
+	if err := s.logAudit(r, ActionMemberAdd, p.ID, req.UserID); err != nil {
+		writeError(w, http.StatusInternalServerError, "audit unavailable")
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -163,7 +166,10 @@ func (s *Server) handleUpdateMember(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	s.logAudit(r, ActionMemberUpdate, p.ID, targetUserID)
+	if err := s.logAudit(r, ActionMemberUpdate, p.ID, targetUserID); err != nil {
+		writeError(w, http.StatusInternalServerError, "audit unavailable")
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -195,6 +201,9 @@ func (s *Server) handleRemoveMember(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	s.logAudit(r, ActionMemberRemove, p.ID, targetUserID)
+	if err := s.logAudit(r, ActionMemberRemove, p.ID, targetUserID); err != nil {
+		writeError(w, http.StatusInternalServerError, "audit unavailable")
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }

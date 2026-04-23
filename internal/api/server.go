@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/abagile/tokyo3-vault/internal/audit"
 	"github.com/abagile/tokyo3-vault/internal/crypto"
 	oidcpkg "github.com/abagile/tokyo3-vault/internal/oidc"
 	"github.com/abagile/tokyo3-vault/internal/store"
@@ -20,10 +21,14 @@ type Server struct {
 	log         *slog.Logger
 	oidc        *oidcpkg.Provider // nil when OIDC is not configured
 	oidcEnforce bool              // true = local login/signup disabled
+	audit       audit.Sink        // publishes events to NATS JetStream
+	auditStore  audit.QueryStore  // reads from the dedicated audit database
 }
 
-// New returns a configured Server.
-func New(st store.Store, kp crypto.KeyProvider, projectKP *crypto.ProjectKeyCache, log *slog.Logger, oidcProvider *oidcpkg.Provider, oidcEnforce bool) *Server {
+// New returns a configured Server. sink publishes audit events to NATS JetStream;
+// pass audit.NoopSink{} in tests. qs queries the audit database for
+// GET /api/v1/audit; pass audit.NoopQueryStore{} in tests.
+func New(st store.Store, kp crypto.KeyProvider, projectKP *crypto.ProjectKeyCache, log *slog.Logger, oidcProvider *oidcpkg.Provider, oidcEnforce bool, sink audit.Sink, qs audit.QueryStore) *Server {
 	return &Server{
 		store:       st,
 		kp:          kp,
@@ -31,6 +36,8 @@ func New(st store.Store, kp crypto.KeyProvider, projectKP *crypto.ProjectKeyCach
 		log:         log,
 		oidc:        oidcProvider,
 		oidcEnforce: oidcEnforce,
+		audit:       sink,
+		auditStore:  qs,
 	}
 }
 

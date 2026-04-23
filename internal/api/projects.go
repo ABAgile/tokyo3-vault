@@ -115,7 +115,10 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.logAudit(r, ActionProjectCreate, p.ID, p.Slug)
+	if err := s.logAudit(r, ActionProjectCreate, p.ID, p.Slug); err != nil {
+		writeError(w, http.StatusInternalServerError, "audit unavailable")
+		return
+	}
 	writeJSON(w, http.StatusCreated, projectToResponse(p))
 }
 
@@ -159,7 +162,10 @@ func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	s.logAudit(r, ActionProjectDelete, "", slug)
+	if err := s.logAudit(r, ActionProjectDelete, "", slug); err != nil {
+		writeError(w, http.StatusInternalServerError, "audit unavailable")
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

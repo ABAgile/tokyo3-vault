@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -99,7 +100,10 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.logAudit(r, ActionAuthOIDCLogin, "", user.Email)
+	if err := s.logAudit(r, ActionAuthOIDCLogin, "", user.Email); err != nil {
+		writeError(w, http.StatusInternalServerError, "audit unavailable")
+		return
+	}
 
 	if cliCallback != "" {
 		http.Redirect(w, r, cliCallback+"?token="+rawToken, http.StatusFound)
@@ -133,7 +137,9 @@ func (s *Server) jitProvision(r *http.Request, issuer, subject, email string) (*
 		if linkErr := s.store.SetUserOIDCIdentity(ctx, user.ID, issuer, subject); linkErr != nil && !errors.Is(linkErr, store.ErrConflict) {
 			return nil, linkErr
 		}
-		s.logAudit(r, ActionAuthOIDCIdentityLinked, "", email)
+		if err := s.logAudit(r, ActionAuthOIDCIdentityLinked, "", email); err != nil {
+			return nil, fmt.Errorf("audit: %w", err)
+		}
 		return user, nil
 	}
 	if !errors.Is(err, store.ErrNotFound) {
@@ -145,6 +151,8 @@ func (s *Server) jitProvision(r *http.Request, issuer, subject, email string) (*
 	if err != nil {
 		return nil, err
 	}
-	s.logAudit(r, ActionAuthOIDCJITProvision, "", email)
+	if err := s.logAudit(r, ActionAuthOIDCJITProvision, "", email); err != nil {
+		return nil, fmt.Errorf("audit: %w", err)
+	}
 	return user, nil
 }
