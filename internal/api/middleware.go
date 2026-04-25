@@ -240,3 +240,16 @@ var roleRank = map[string]int{
 func roleAtLeast(have, need string) bool {
 	return roleRank[have] >= roleRank[need]
 }
+
+// clientIP extracts the best-guess client IP: first value of X-Forwarded-For
+// when present (behind a trusted proxy), or the TCP remote address otherwise.
+func clientIP(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		return strings.TrimSpace(strings.SplitN(xff, ",", 2)[0])
+	}
+	addr := r.RemoteAddr
+	if i := strings.LastIndex(addr, ":"); i != -1 {
+		return addr[:i]
+	}
+	return addr
+}

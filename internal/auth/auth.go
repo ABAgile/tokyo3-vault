@@ -40,9 +40,6 @@ func GenerateRawToken() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-// generateRawToken is the unexported alias for internal use.
-func generateRawToken() (string, error) { return GenerateRawToken() }
-
 // HashToken returns the SHA-256 hex digest of a raw token string.
 // Only the hash is stored in the database.
 func HashToken(raw string) string {
@@ -53,7 +50,7 @@ func HashToken(raw string) string {
 // IssueUserToken creates a session token for a human user.
 // Returns the raw token (sent to client once, never stored) and the DB record.
 func IssueUserToken(ctx context.Context, st store.Store, userID, name string) (rawToken string, t *model.Token, err error) {
-	rawToken, err = generateRawToken()
+	rawToken, err = GenerateRawToken()
 	if err != nil {
 		return "", nil, fmt.Errorf("generate token: %w", err)
 	}
@@ -75,7 +72,7 @@ func IssueUserToken(ctx context.Context, st store.Store, userID, name string) (r
 // Set readOnly=true to prevent any write operations.
 // expiresIn of 0 means no expiry.
 func IssueMachineToken(ctx context.Context, st store.Store, userID, name, projectID, envID string, readOnly bool, expiresIn time.Duration) (rawToken string, t *model.Token, err error) {
-	rawToken, err = generateRawToken()
+	rawToken, err = GenerateRawToken()
 	if err != nil {
 		return "", nil, fmt.Errorf("generate token: %w", err)
 	}

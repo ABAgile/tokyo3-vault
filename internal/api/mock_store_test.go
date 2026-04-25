@@ -45,6 +45,7 @@ type mockStore struct {
 	listSecrets                  func(ctx context.Context, projectID, envID string) ([]*model.Secret, []*model.SecretVersion, error)
 	deleteSecret                 func(ctx context.Context, projectID, envID, key string) error
 	listSecretVersions           func(ctx context.Context, secretID string) ([]*model.SecretVersion, error)
+	getSecretVersion             func(ctx context.Context, secretID, versionID string) (*model.SecretVersion, error)
 	rollbackSecret               func(ctx context.Context, secretID, versionID string) error
 }
 
@@ -234,6 +235,12 @@ func (m *mockStore) ListSecretVersions(ctx context.Context, secretID string) ([]
 		return m.listSecretVersions(ctx, secretID)
 	}
 	return nil, nil
+}
+func (m *mockStore) GetSecretVersion(ctx context.Context, secretID, versionID string) (*model.SecretVersion, error) {
+	if m.getSecretVersion != nil {
+		return m.getSecretVersion(ctx, secretID, versionID)
+	}
+	return nil, store.ErrNotFound
 }
 func (m *mockStore) RollbackSecret(ctx context.Context, secretID, versionID string) error {
 	if m.rollbackSecret != nil {

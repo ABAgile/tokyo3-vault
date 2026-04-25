@@ -63,11 +63,11 @@ func TestHandleRollbackSecret_OK(t *testing.T) {
 	st.getSecret = func(_ context.Context, _, _, key string) (*model.Secret, *model.SecretVersion, error) {
 		return &model.Secret{ID: "sec-1", Key: key}, nil, nil
 	}
-	st.listSecretVersions = func(_ context.Context, _ string) ([]*model.SecretVersion, error) {
-		return []*model.SecretVersion{
-			{ID: "v2-uuid", Version: 2, CreatedAt: now},
-			{ID: targetVersionID, Version: 1, CreatedAt: now},
-		}, nil
+	st.getSecretVersion = func(_ context.Context, _, versionID string) (*model.SecretVersion, error) {
+		if versionID == targetVersionID {
+			return &model.SecretVersion{ID: targetVersionID, Version: 1, CreatedAt: now}, nil
+		}
+		return nil, store.ErrNotFound
 	}
 	rolled := false
 	st.rollbackSecret = func(_ context.Context, secID, verID string) error {
@@ -94,14 +94,11 @@ func TestHandleRollbackSecret_OK(t *testing.T) {
 }
 
 func TestHandleRollbackSecret_VersionNotFound(t *testing.T) {
-	now := time.Now().UTC()
 	st := baseStore()
 	st.getSecret = func(_ context.Context, _, _, key string) (*model.Secret, *model.SecretVersion, error) {
 		return &model.Secret{ID: "sec-1", Key: key}, nil, nil
 	}
-	st.listSecretVersions = func(_ context.Context, _ string) ([]*model.SecretVersion, error) {
-		return []*model.SecretVersion{{ID: "v1-uuid", Version: 1, CreatedAt: now}}, nil
-	}
+	// getSecretVersion defaults to ErrNotFound in mockStore, so no override needed.
 
 	srv := newTestServer(t, st)
 	body := `{"version_id":"non-existent-uuid"}`

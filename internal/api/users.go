@@ -66,8 +66,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "email and password are required")
 		return
 	}
-	if len(req.Password) < 8 {
-		writeError(w, http.StatusBadRequest, "password must be at least 8 characters")
+	if !validatePassword(w, req.Password) {
 		return
 	}
 	if req.Role != model.UserRoleAdmin && req.Role != model.UserRoleMember {
@@ -110,8 +109,7 @@ func (s *Server) handleResetUserPassword(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	if len(req.Password) < 8 {
-		writeError(w, http.StatusBadRequest, "password must be at least 8 characters")
+	if !validatePassword(w, req.Password) {
 		return
 	}
 	targetUserID := r.PathValue("user_id")

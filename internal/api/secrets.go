@@ -329,24 +329,14 @@ func (s *Server) handleRollbackSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify the version belongs to this secret.
-	versions, err := s.store.ListSecretVersions(r.Context(), sec.ID)
-	if err != nil {
-		s.log.Error("list versions", "err", err)
-		writeError(w, http.StatusInternalServerError, "internal error")
+	sv, err := s.store.GetSecretVersion(r.Context(), sec.ID, body.VersionID)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "version not found for this secret")
 		return
 	}
-	found := false
-	var targetVersion int
-	for _, v := range versions {
-		if v.ID == body.VersionID {
-			found = true
-			targetVersion = v.Version
-			break
-		}
-	}
-	if !found {
-		writeError(w, http.StatusNotFound, "version not found for this secret")
+	if err != nil {
+		s.log.Error("get secret version", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 
@@ -362,7 +352,7 @@ func (s *Server) handleRollbackSecret(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"key":        key,
 		"version_id": body.VersionID,
-		"version":    targetVersion,
+		"version":    sv.Version,
 	})
 }
 

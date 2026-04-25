@@ -2,7 +2,6 @@ package api
 
 import (
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/abagile/tokyo3-vault/internal/audit"
@@ -100,15 +99,4 @@ func (s *Server) logAuditEnv(r *http.Request, action, projectID, envID, resource
 		return err
 	}
 	return nil
-}
-
-func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		return strings.TrimSpace(strings.SplitN(xff, ",", 2)[0])
-	}
-	addr := r.RemoteAddr
-	if i := strings.LastIndex(addr, ":"); i != -1 {
-		return addr[:i]
-	}
-	return addr
 }

@@ -68,7 +68,7 @@ func (Stub) ListProjects(_ context.Context) ([]*model.Project, error) { return n
 func (Stub) ListProjectsByMember(_ context.Context, _ string) ([]*model.Project, error) {
 	return nil, nil
 }
-func (Stub) DeleteProject(_ context.Context, _ string) error { return nil }
+func (Stub) DeleteProject(_ context.Context, _ string) error                        { return nil }
 func (Stub) SetProjectKey(_ context.Context, _ string, _ []byte, _ time.Time) error { return nil }
 func (Stub) RewrapProjectDEKs(_ context.Context, _ string, _ func([]byte) ([]byte, error)) error {
 	return nil
@@ -125,6 +125,9 @@ func (Stub) ListSecrets(_ context.Context, _, _ string) ([]*model.Secret, []*mod
 func (Stub) DeleteSecret(_ context.Context, _, _, _ string) error { return nil }
 func (Stub) ListSecretVersions(_ context.Context, _ string) ([]*model.SecretVersion, error) {
 	return nil, nil
+}
+func (Stub) GetSecretVersion(_ context.Context, _, _ string) (*model.SecretVersion, error) {
+	return nil, store.ErrNotFound
 }
 func (Stub) RollbackSecret(_ context.Context, _, _ string) error { return nil }
 

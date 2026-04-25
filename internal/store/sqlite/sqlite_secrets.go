@@ -199,6 +199,18 @@ func (s *DB) ListSecretVersions(ctx context.Context, secretID string) ([]*model.
 	return versions, rows.Err()
 }
 
+func (s *DB) GetSecretVersion(ctx context.Context, secretID, versionID string) (*model.SecretVersion, error) {
+	sv := &model.SecretVersion{}
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, secret_id, encrypted_value, encrypted_dek, version, created_at, created_by
+		 FROM secret_versions WHERE id = ? AND secret_id = ?`, versionID, secretID,
+	).Scan(&sv.ID, &sv.SecretID, &sv.EncryptedValue, &sv.EncryptedDEK, &sv.Version, &sv.CreatedAt, &sv.CreatedBy)
+	if err == sql.ErrNoRows {
+		return nil, store.ErrNotFound
+	}
+	return sv, err
+}
+
 func (s *DB) RollbackSecret(ctx context.Context, secretID, versionID string) error {
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE secrets SET current_version_id = ?, updated_at = ? WHERE id = ?`,

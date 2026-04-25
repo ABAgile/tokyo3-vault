@@ -10,6 +10,11 @@ import (
 	"github.com/abagile/tokyo3-vault/internal/store"
 )
 
+const (
+	defaultBackendTTL = 3600
+	maxBackendTTL     = 86400
+)
+
 // ── request / response types ──────────────────────────────────────────────────
 
 type dynamicBackendRequest struct {
@@ -96,10 +101,10 @@ func (s *Server) handleSetDynamicBackend(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if req.DefaultTTL <= 0 {
-		req.DefaultTTL = 3600
+		req.DefaultTTL = defaultBackendTTL
 	}
 	if req.MaxTTL <= 0 {
-		req.MaxTTL = 86400
+		req.MaxTTL = maxBackendTTL
 	}
 	if req.DefaultTTL > req.MaxTTL {
 		writeError(w, http.StatusBadRequest, "default_ttl must not exceed max_ttl")

@@ -56,8 +56,7 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "email and password are required")
 		return
 	}
-	if len(req.Password) < 8 {
-		writeError(w, http.StatusBadRequest, "password must be at least 8 characters")
+	if !validatePassword(w, req.Password) {
 		return
 	}
 	hash, err := auth.HashPassword(req.Password)
@@ -172,8 +171,7 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "current_password and new_password are required")
 		return
 	}
-	if len(req.New) < 8 {
-		writeError(w, http.StatusBadRequest, "new password must be at least 8 characters")
+	if !validatePassword(w, req.New) {
 		return
 	}
 	user, err := s.store.GetUserByID(r.Context(), *tok.UserID)
