@@ -17,9 +17,9 @@
 //	VAULT_ADMIN_DATABASE_URL  Postgres DSN for schema migration (vault owner, DDL privileges).
 //	                          Falls back to VAULT_DATABASE_URL if unset, but that requires
 //	                          the runtime role to have DDL privileges — not for production.
-//	VAULT_ADMIN_DB_SSL_CERT   Client cert PEM path for admin DB mTLS
-//	VAULT_ADMIN_DB_SSL_KEY    Client key PEM path for admin DB mTLS
-//	VAULT_ADMIN_DB_SSL_CA     CA cert PEM path for admin DB server verification
+//	VAULT_ADMIN_DB_CERT   Client cert PEM path for admin DB mTLS
+//	VAULT_ADMIN_DB_KEY    Client key PEM path for admin DB mTLS
+//	VAULT_ADMIN_DB_CA     CA cert PEM path for admin DB server verification
 //
 // TLS (server always uses HTTPS):
 //
@@ -35,9 +35,9 @@
 //
 // Vault's own Postgres TLS (optional):
 //
-//	VAULT_DB_SSL_CERT     Path to client certificate PEM for the vault→postgres connection.
-//	VAULT_DB_SSL_KEY      Path to client key PEM. Must be paired with VAULT_DB_SSL_CERT.
-//	VAULT_DB_SSL_CA Path to CA certificate PEM for verifying the postgres server cert.
+//	VAULT_DB_CERT     Path to client certificate PEM for the vault→postgres connection.
+//	VAULT_DB_KEY      Path to client key PEM. Must be paired with VAULT_DB_CERT.
+//	VAULT_DB_CA Path to CA certificate PEM for verifying the postgres server cert.
 //
 // Optional:
 //
@@ -48,32 +48,18 @@
 //
 // NATS / Audit sink (serve subcommand):
 //
-//	NATS_URL              NATS server URL. When set, audit events are published to
-//	                      JetStream (fail-closed: the request returns HTTP 500 if the
-//	                      publish fails). Omit only in development.
-//	NATS_AUDIT_CERT       mTLS client certificate PEM path (publisher credential).
-//	NATS_AUDIT_KEY        mTLS client key PEM path.
-//	NATS_AUDIT_CA         CA certificate PEM path for NATS server verification.
-//
-// Audit read DB (serve subcommand — queryable projection of the JetStream audit stream):
-//
-//	AUDIT_DATABASE_URL    Postgres DSN for the audit database (vault_audit_reader user,
-//	                      SELECT-only). Used by GET /api/v1/audit.
-//	AUDIT_DB_PATH         SQLite path for the audit database (alternative to Postgres).
-//	                      Omit both to disable audit log queries (dev only).
-//	AUDIT_DB_SSL_CERT     Client cert PEM path for audit DB mTLS.
-//	AUDIT_DB_SSL_KEY      Client key PEM path for audit DB mTLS.
-//	AUDIT_DB_SSL_CA CA cert PEM path for audit DB server verification.
+//	VAULT_NATS_URL    NATS server URL. When set, audit events are published to
+//	                  JetStream (fail-closed: the request returns HTTP 500 if the
+//	                  publish fails). Omit only in development.
+//	VAULT_NATS_CERT   mTLS client certificate PEM path (publisher credential).
+//	VAULT_NATS_KEY    mTLS client key PEM path.
+//	VAULT_NATS_CA     CA certificate PEM path for NATS server verification.
 //
 // Subcommands:
 //
 //	vaultd serve           Start the server (default when no subcommand is given)
 //	vaultd migrate-keys    Migrate all projects to use per-project envelope keys (PEKs).
 //	                       Safe to re-run (idempotent). Requires the same env vars as serve.
-//	vaultd audit-consumer  Read audit events from NATS JetStream and upsert them into the
-//	                       audit database. Uses NATS_URL/NATS_CONSUMER_* and
-//	                       AUDIT_WRITE_DATABASE_URL/AUDIT_WRITE_DB_PATH credentials,
-//	                       which are fully separate from the vault_app credentials.
 package main
 
 import (
@@ -108,15 +94,6 @@ func main() {
 	subcommand := "serve"
 	if len(os.Args) > 1 {
 		subcommand = os.Args[1]
-	}
-
-	// audit-consumer uses entirely separate credentials from the main store.
-	if subcommand == "audit-consumer" {
-		if err := runAuditConsumer(ctx, log); err != nil {
-			fmt.Fprintf(os.Stderr, "audit-consumer: %v\n", err)
-			os.Exit(1)
-		}
-		return
 	}
 
 	kp, err := openKeyProvider(ctx, log)
@@ -159,13 +136,6 @@ func main() {
 	}
 	defer auditSink.Close()
 
-	auditQS, err := openAuditQueryStore(log)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "audit query store: %v\n", err)
-		os.Exit(1)
-	}
-	defer auditQS.Close()
-
 	revoker := dynamic.NewRevoker(st, kp, projectKP, log)
 	go revoker.Run(ctx)
 
@@ -186,7 +156,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	srv := api.New(st, kp, projectKP, log, oidcProvider, oidcEnforce, auditSink, auditQS)
+	srv := api.New(st, kp, projectKP, log, oidcProvider, oidcEnforce, auditSink)
 	httpSrv := &http.Server{
 		Addr:      addr,
 		Handler:   srv.Routes(),
@@ -355,18 +325,18 @@ func buildOIDCProvider(ctx context.Context, log *slog.Logger) (*oidcpkg.Provider
 }
 
 // openAuditSink opens the NATS JetStream publisher used by the serve path.
-// When NATS_URL is unset a NoopSink is returned (dev only).
-// mTLS is enabled when NATS_AUDIT_CERT/KEY/CA are all set.
+// When VAULT_NATS_URL is unset a NoopSink is returned (dev only).
+// mTLS is enabled when VAULT_NATS_CERT/KEY/CA are all set.
 func openAuditSink(log *slog.Logger) (audit.Sink, error) {
-	url := os.Getenv("NATS_URL")
+	url := os.Getenv("VAULT_NATS_URL")
 	if url == "" {
-		log.Warn("NATS_URL not set — audit sink is no-op; not for production")
+		log.Warn("VAULT_NATS_URL not set — audit sink is no-op; not for production")
 		return audit.NoopSink{}, nil
 	}
 	tlsCfg, err := tlsutil.FromFiles(
-		os.Getenv("NATS_AUDIT_CERT"),
-		os.Getenv("NATS_AUDIT_KEY"),
-		os.Getenv("NATS_AUDIT_CA"),
+		os.Getenv("VAULT_NATS_CERT"),
+		os.Getenv("VAULT_NATS_KEY"),
+		os.Getenv("VAULT_NATS_CA"),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("nats audit TLS: %w", err)
@@ -374,42 +344,14 @@ func openAuditSink(log *slog.Logger) (audit.Sink, error) {
 	if tlsCfg != nil {
 		log.Info("audit sink: NATS JetStream with mTLS", "url", url)
 	} else {
-		log.Warn("audit sink: NATS_AUDIT_CERT not set — connecting without mTLS (not for production)")
+		log.Warn("audit sink: VAULT_NATS_CERT not set — connecting without mTLS (not for production)")
 	}
 	return audit.NewJetStreamSink(url, tlsCfg)
 }
 
-// openAuditQueryStore opens the read-only audit database used by GET /api/v1/audit.
-// When neither AUDIT_DATABASE_URL nor AUDIT_DB_PATH is set, a NoopQueryStore is
-// returned (audit log queries return empty results — dev only).
-func openAuditQueryStore(log *slog.Logger) (audit.QueryStore, error) {
-	if dsn := os.Getenv("AUDIT_DATABASE_URL"); dsn != "" {
-		tlsCfg, err := tlsutil.FromFiles(
-			os.Getenv("AUDIT_DB_SSL_CERT"),
-			os.Getenv("AUDIT_DB_SSL_KEY"),
-			os.Getenv("AUDIT_DB_SSL_CA"),
-		)
-		if err != nil {
-			return nil, fmt.Errorf("audit DB TLS: %w", err)
-		}
-		if tlsCfg != nil {
-			log.Info("audit query store: postgres with mTLS client cert")
-		} else {
-			log.Info("audit query store: postgres")
-		}
-		return audit.OpenPostgres(dsn, tlsCfg)
-	}
-	if path := os.Getenv("AUDIT_DB_PATH"); path != "" {
-		log.Info("audit query store: sqlite", "path", path)
-		return audit.OpenSQLite(path)
-	}
-	log.Warn("AUDIT_DATABASE_URL and AUDIT_DB_PATH not set — audit log queries disabled; not for production")
-	return audit.NoopQueryStore{}, nil
-}
-
 // openStore selects SQLite or Postgres based on environment variables.
 // For Postgres, runs schema migrations with the admin DSN first, then opens
-// the runtime connection. VAULT_DB_SSL_CERT/KEY/CA enable client certificate auth.
+// the runtime connection. VAULT_DB_CERT/KEY/CA enable client certificate auth.
 // migrateVaultDB runs schema migrations with the admin DSN before the runtime
 // connection is opened. Falls back to VAULT_DATABASE_URL with a warning when
 // VAULT_ADMIN_DATABASE_URL is not set.
@@ -420,9 +362,9 @@ func migrateVaultDB(log *slog.Logger) error {
 		adminDSN = os.Getenv("VAULT_DATABASE_URL")
 	}
 	tlsCfg, err := tlsutil.FromFiles(
-		os.Getenv("VAULT_ADMIN_DB_SSL_CERT"),
-		os.Getenv("VAULT_ADMIN_DB_SSL_KEY"),
-		os.Getenv("VAULT_ADMIN_DB_SSL_CA"),
+		os.Getenv("VAULT_ADMIN_DB_CERT"),
+		os.Getenv("VAULT_ADMIN_DB_KEY"),
+		os.Getenv("VAULT_ADMIN_DB_CA"),
 	)
 	if err != nil {
 		return fmt.Errorf("vault admin db TLS: %w", err)
@@ -441,9 +383,9 @@ func openStore(log *slog.Logger) (store.Store, error) {
 			return nil, fmt.Errorf("vault db migration: %w", err)
 		}
 		tlsCfg, err := tlsutil.FromFiles(
-			os.Getenv("VAULT_DB_SSL_CERT"),
-			os.Getenv("VAULT_DB_SSL_KEY"),
-			os.Getenv("VAULT_DB_SSL_CA"),
+			os.Getenv("VAULT_DB_CERT"),
+			os.Getenv("VAULT_DB_KEY"),
+			os.Getenv("VAULT_DB_CA"),
 		)
 		if err != nil {
 			return nil, fmt.Errorf("postgres TLS config: %w", err)

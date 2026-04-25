@@ -21,7 +21,7 @@ gofmt -s -w .
 # Start a local server (auto-generates VAULT_MASTER_KEY + SQLite on first run)
 make run-server
 
-# Start with docker compose (Postgres + NATS + audit-consumer)
+# Start with docker compose (Postgres + NATS + vault-audit)
 make docker-up
 
 # mTLS overlay (generates certs first, then brings up with mutual TLS)
@@ -36,10 +36,13 @@ Always run in order: `gofmt -s -w .` → `make test` → `staticcheck ./...` bef
 ```
 cmd/
   vault/        CLI client entry point
-  vaultd/       Server entry point (startup, env parsing, TLS config, audit-consumer)
+  vaultd/       Server entry point (startup, env parsing, TLS config)
+  vault-audit/  Standalone audit pipeline — consume (NATS→DB) and query subcommands
 internal/
   api/          HTTP handlers and middleware
-  audit/        Audit pipeline — Sink, JetStreamSink, DB, Entry, Migrate; migrations/
+  audit/        Audit pipeline — Entry, Sink, JetStreamSink, Store interface
+    postgres/   Audit DB PostgreSQL backend (Open, Migrate, UpsertAuditLog, ListAuditLogs) + migrations/
+    sqlite/     Audit DB SQLite backend (Open, ensureSchema inline)
   auth/         Password hashing + token generation/validation
   build/        Version metadata
   crypto/       AES-256-GCM helpers, KeyProvider interface, ProjectKeyCache
@@ -71,7 +74,7 @@ To add a migration:
 
 ### Audit DB
 
-Audit DB migrations live in `internal/audit/migrations/` (Postgres only — the SQLite dev path handles schema inline via `ensureSchema`). They are embedded into the `audit` package and run by `vaultd audit-consumer` at startup using `AUDIT_ADMIN_DATABASE_URL` (the `vault_audit` owner role).
+Audit DB migrations live in `internal/audit/postgres/migrations/` (Postgres only — the SQLite dev path handles schema inline via `ensureSchema`). They are embedded into the `internal/audit/postgres` package and run by `vault-audit consume` at startup using `VAULT_AUDIT_DATABASE_URL` (the `vault_audit` owner role).
 
 Role setup (users, grants) is handled once at postgres first-start by `postgres/audit-db-init.sh`. Schema (tables, indexes) is owned by the versioned migration files.
 
@@ -145,7 +148,7 @@ Secrets are written manually (or via CI). There is no built-in cron-style rotati
 
 ### Audit DB projection grows indefinitely
 
-The NATS JetStream `AUDIT` stream has built-in 400-day retention (`StreamMaxAge`), satisfying PCI-DSS 10.5. However, the queryable audit DB populated by `vaultd audit-consumer` has no pruning. Implement retention externally: periodically delete rows older than your retention window, copy them to object storage first, or use Postgres table partitioning.
+The NATS JetStream `AUDIT` stream has built-in 400-day retention (`StreamMaxAge`), satisfying PCI-DSS 10.5. However, the queryable audit DB populated by `vault-audit consume` has no pruning. Implement retention externally: periodically delete rows older than your retention window, copy them to object storage first, or use Postgres table partitioning.
 
 ### No project PEK rotation
 
@@ -179,7 +182,7 @@ Authentication endpoints (`/login`, `/signup`) have no rate limiting. Deploy beh
 
 SQLite is appropriate for single-node development or small deployments with external backup. For multi-instance or high-availability deployments, use Postgres. The store interface abstracts all persistence; no application logic changes are needed when switching.
 
-The audit DB is always Postgres in production (set `AUDIT_WRITE_DATABASE_URL`). The SQLite fallback (`AUDIT_WRITE_DB_PATH`) is for local development only — the audit-consumer's `ensureSchema` handles schema creation automatically for SQLite, so no migrations directory is needed.
+The audit DB is always Postgres in production (set `VAULT_AUDIT_DATABASE_URL`). The SQLite fallback (`VAULT_AUDIT_DB_PATH`) is for local development only — `vault-audit consume`'s `ensureSchema` handles schema creation automatically for SQLite, so no migrations directory is needed.
 
 ### TLS certificate rotation
 

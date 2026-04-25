@@ -4,19 +4,18 @@
 //
 //	Handler → Sink.Log → NATS JetStream "AUDIT" stream (authoritative record)
 //
-// Read path (vaultd audit-consumer + vaultd serve):
+// Read/consume path (vault-audit — separate binary):
 //
-//	JetStream → audit-consumer → DB.UpsertAuditLog → audit database
-//	API handler → DB.ListAuditLogs → response
+//	JetStream → vault-audit consume → DB.UpsertAuditLog → audit database
+//	vault-audit query → DB.ListAuditLogs → terminal output
 //
 // The JetStream stream is the tamper-resistant, authoritative record (DenyDelete,
 // DenyPurge, FileStorage). The audit database is a queryable projection rebuilt
-// from the stream by the consumer; it can be dropped and replayed at any time.
+// from the stream by vault-audit; it can be dropped and replayed at any time.
 //
 // Credential separation:
-//   - vaultd serve uses a NATS publisher credential (PUBLISH-only on audit.events)
-//     and an audit DB reader credential (SELECT-only on audit_logs).
-//   - vaultd audit-consumer uses a NATS consumer credential (SUBSCRIBE + consumer
+//   - vaultd serve uses a NATS publisher credential (PUBLISH-only on audit.events).
+//   - vault-audit consume uses a NATS consumer credential (SUBSCRIBE + consumer
 //     management) and an audit DB writer credential (INSERT-only on audit_logs).
 //   - Neither credential can perform the other role's operations.
 package audit

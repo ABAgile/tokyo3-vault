@@ -1,6 +1,6 @@
 # OIDC/SSO & SCIM Integration
 
-This document covers the technical implementation of IdP integration: Phase 1 (OIDC login + JIT provisioning) and Phase 2 (SCIM 2.0 lifecycle provisioning).
+This document covers the technical implementation of IdP integration: OIDC login + JIT provisioning, SCIM 2.0 lifecycle provisioning, and mTLS for non-SPIFFE certificates.
 
 Primary target IdP is **Authentik** (self-hosted, open-source). The implementation follows standard protocols and is compatible with any OIDC/SCIM-compliant IdP: Okta, Azure AD, Keycloak, Dex, Auth0, Google Workspace.
 
@@ -149,7 +149,7 @@ OIDC/user methods are implemented in `postgres_users.go` / `sqlite_users.go`; SC
 
 ---
 
-## Phase 1: OIDC Login + JIT Provisioning
+## OIDC Login + JIT Provisioning
 
 ### OIDC Package (`internal/oidc/`)
 
@@ -265,7 +265,7 @@ OIDC is disabled (no env vars set) → `s.oidc == nil` → all OIDC endpoints re
 
 ---
 
-## Phase 2: SCIM 2.0 Provisioning
+## SCIM 2.0 Provisioning
 
 ### SCIM Handler (`internal/api/scim.go`)
 
@@ -423,9 +423,9 @@ DELETE /api/v1/scim/group-roles/{id}   — remove mapping
 
 ---
 
-## Phase 3: mTLS for Non-SPIFFE Certificates
+## mTLS for Non-SPIFFE Certificates
 
-Phase 3 extends `cert_principals` to support email SAN (`rfc822Name`) in addition to SPIFFE URI SANs, enabling engineers to authenticate with personal x.509 certificates (corporate PKI, Teleport tbot) without a browser OIDC flow.
+This section extends `cert_principals` to support email SAN (`rfc822Name`) in addition to SPIFFE URI SANs, enabling engineers to authenticate with personal x.509 certificates (corporate PKI, Teleport tbot) without a browser OIDC flow.
 
 ### Schema (migration `014_cert_email_san`)
 

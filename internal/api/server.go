@@ -22,13 +22,11 @@ type Server struct {
 	oidc        *oidcpkg.Provider // nil when OIDC is not configured
 	oidcEnforce bool              // true = local login/signup disabled
 	audit       audit.Sink        // publishes events to NATS JetStream
-	auditStore  audit.QueryStore  // reads from the dedicated audit database
 }
 
 // New returns a configured Server. sink publishes audit events to NATS JetStream;
-// pass audit.NoopSink{} in tests. qs queries the audit database for
-// GET /api/v1/audit; pass audit.NoopQueryStore{} in tests.
-func New(st store.Store, kp crypto.KeyProvider, projectKP *crypto.ProjectKeyCache, log *slog.Logger, oidcProvider *oidcpkg.Provider, oidcEnforce bool, sink audit.Sink, qs audit.QueryStore) *Server {
+// pass audit.NoopSink{} in tests.
+func New(st store.Store, kp crypto.KeyProvider, projectKP *crypto.ProjectKeyCache, log *slog.Logger, oidcProvider *oidcpkg.Provider, oidcEnforce bool, sink audit.Sink) *Server {
 	return &Server{
 		store:       st,
 		kp:          kp,
@@ -37,7 +35,6 @@ func New(st store.Store, kp crypto.KeyProvider, projectKP *crypto.ProjectKeyCach
 		oidc:        oidcProvider,
 		oidcEnforce: oidcEnforce,
 		audit:       sink,
-		auditStore:  qs,
 	}
 }
 
@@ -45,9 +42,6 @@ func New(st store.Store, kp crypto.KeyProvider, projectKP *crypto.ProjectKeyCach
 // Using Go 1.22 enhanced routing: "METHOD /path/{param}".
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
-
-	// Audit
-	mux.HandleFunc("GET /api/v1/audit", s.auth(s.handleListAuditLogs))
 
 	// Auth — local
 	mux.HandleFunc("POST /api/v1/auth/signup", s.handleSignup)

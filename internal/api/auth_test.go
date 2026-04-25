@@ -6,9 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
-	"github.com/abagile/tokyo3-vault/internal/audit"
 	"github.com/abagile/tokyo3-vault/internal/auth"
 	"github.com/abagile/tokyo3-vault/internal/model"
 	"github.com/abagile/tokyo3-vault/internal/store"
@@ -361,87 +359,6 @@ func TestRequireServerAdmin(t *testing.T) {
 			got := srv.requireServerAdmin(w, r)
 			if got != tc.wantOK {
 				t.Errorf("requireServerAdmin = %v, want %v", got, tc.wantOK)
-			}
-		})
-	}
-}
-
-// ── handleListAuditLogs ───────────────────────────────────────────────────────
-
-func TestHandleListAuditLogs_ServerAdmin(t *testing.T) {
-	logs := []*model.AuditLog{
-		{ID: "l1", Action: ActionSecretGet, CreatedAt: time.Now()},
-	}
-	st := &mockStore{
-		getUserByID: func(_ context.Context, id string) (*model.User, error) {
-			return &model.User{ID: id, Role: model.UserRoleAdmin}, nil
-		},
-	}
-	as := &mockAuditStore{
-		listAuditLogs: func(_ context.Context, _ audit.Filter) ([]*model.AuditLog, error) {
-			return logs, nil
-		},
-	}
-
-	srv := newTestServerWithAudit(t, st, as)
-	w := call(t, srv.handleListAuditLogs, http.MethodGet, "/", "", ownerTok())
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body)
-	}
-	var resp []auditLogResponse
-	json.NewDecoder(w.Body).Decode(&resp)
-	if len(resp) != 1 || resp[0].Action != ActionSecretGet {
-		t.Errorf("unexpected response: %+v", resp)
-	}
-}
-
-func TestHandleListAuditLogs_NonAdminRejected(t *testing.T) {
-	st := &mockStore{
-		getUserByID: func(_ context.Context, id string) (*model.User, error) {
-			return &model.User{ID: id, Role: model.UserRoleMember}, nil
-		},
-	}
-	srv := newTestServer(t, st)
-	w := call(t, srv.handleListAuditLogs, http.MethodGet, "/", "", ownerTok())
-	if w.Code != http.StatusForbidden {
-		t.Errorf("status = %d, want 403", w.Code)
-	}
-}
-
-func TestHandleListAuditLogs_ScopedMachineTokenRejected(t *testing.T) {
-	srv := newTestServer(t, &mockStore{})
-	projID := testProjID
-	tok := &model.Token{ID: "mt", ProjectID: &projID}
-	w := call(t, srv.handleListAuditLogs, http.MethodGet, "/", "", tok)
-	if w.Code != http.StatusForbidden {
-		t.Errorf("status = %d, want 403", w.Code)
-	}
-}
-
-func TestHandleListAuditLogs_LimitValidation(t *testing.T) {
-	st := &mockStore{
-		getUserByID: func(_ context.Context, id string) (*model.User, error) {
-			return &model.User{ID: id, Role: model.UserRoleAdmin}, nil
-		},
-	}
-	srv := newTestServerWithAudit(t, st, &mockAuditStore{})
-
-	tests := []struct {
-		limit string
-		code  int
-	}{
-		{"abc", http.StatusBadRequest},
-		{"0", http.StatusBadRequest},
-		{"501", http.StatusBadRequest},
-		{"50", http.StatusOK},
-		{"500", http.StatusOK},
-	}
-	for _, tc := range tests {
-		t.Run(tc.limit, func(t *testing.T) {
-			w := call(t, srv.handleListAuditLogs, http.MethodGet, "/?limit="+tc.limit, "", ownerTok())
-			if w.Code != tc.code {
-				t.Errorf("limit=%s: status = %d, want %d", tc.limit, w.Code, tc.code)
 			}
 		})
 	}

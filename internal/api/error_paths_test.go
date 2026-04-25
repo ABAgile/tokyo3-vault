@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/abagile/tokyo3-vault/internal/audit"
 	"github.com/abagile/tokyo3-vault/internal/model"
 	"github.com/abagile/tokyo3-vault/internal/store"
 )
@@ -230,59 +229,5 @@ func TestHandleImportSecrets_SourceEnvNotFound(t *testing.T) {
 	w := call(t, srv.handleImportSecrets, http.MethodPost, "/", body, ownerTok(), secretPV()...)
 	if w.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want 404", w.Code)
-	}
-}
-
-// ── audit logs ────────────────────────────────────────────────────────────────
-
-func TestHandleListAuditLogs_ProjectNotFound(t *testing.T) {
-	st := &mockStore{
-		getUserByID: func(_ context.Context, id string) (*model.User, error) {
-			return &model.User{ID: id, Role: model.UserRoleAdmin}, nil
-		},
-		// getProject left nil → ErrNotFound
-	}
-	srv := newTestServer(t, st)
-	w := call(t, srv.handleListAuditLogs, http.MethodGet, "/?project=missing", "", ownerTok())
-	if w.Code != http.StatusNotFound {
-		t.Errorf("status = %d, want 404", w.Code)
-	}
-}
-
-func TestHandleListAuditLogs_StoreError(t *testing.T) {
-	st := &mockStore{
-		getUserByID: func(_ context.Context, id string) (*model.User, error) {
-			return &model.User{ID: id, Role: model.UserRoleAdmin}, nil
-		},
-	}
-	as := &mockAuditStore{
-		listAuditLogs: func(_ context.Context, _ audit.Filter) ([]*model.AuditLog, error) {
-			return nil, errDB
-		},
-	}
-	srv := newTestServerWithAudit(t, st, as)
-	w := call(t, srv.handleListAuditLogs, http.MethodGet, "/", "", ownerTok())
-	if w.Code != http.StatusInternalServerError {
-		t.Errorf("status = %d, want 500", w.Code)
-	}
-}
-
-func TestHandleListAuditLogs_ProjectScopedOwner(t *testing.T) {
-	// Project-scoped audit list for a project owner (non-admin).
-	st := &mockStore{
-		getProject: func(_ context.Context, _ string) (*model.Project, error) {
-			return testProject(), nil
-		},
-		getUserByID: func(_ context.Context, id string) (*model.User, error) {
-			return &model.User{ID: id, Role: model.UserRoleMember}, nil
-		},
-		getProjectMember: func(_ context.Context, _, _ string) (*model.ProjectMember, error) {
-			return &model.ProjectMember{Role: model.RoleOwner}, nil
-		},
-	}
-	srv := newTestServerWithAudit(t, st, &mockAuditStore{})
-	w := call(t, srv.handleListAuditLogs, http.MethodGet, "/?project="+testProjSlug, "", ownerTok())
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want 200; body: %s", w.Code, w.Body)
 	}
 }

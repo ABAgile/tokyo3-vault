@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 
-	"github.com/abagile/tokyo3-vault/internal/audit"
 	"github.com/abagile/tokyo3-vault/internal/model"
 	"github.com/abagile/tokyo3-vault/internal/store"
 	"github.com/abagile/tokyo3-vault/internal/testutil/mockstore"
@@ -245,18 +244,3 @@ func (m *mockStore) RollbackSecret(ctx context.Context, secretID, versionID stri
 
 // All other store.Store methods (dynamic, SCIM, OIDC, certs, project keys)
 // are satisfied by the embedded mockstore.Stub with safe no-op defaults.
-
-// mockAuditStore implements audit.QueryStore for tests that exercise
-// handleListAuditLogs. Use newTestServerWithAudit to inject it.
-type mockAuditStore struct {
-	listAuditLogs func(ctx context.Context, f audit.Filter) ([]*model.AuditLog, error)
-}
-
-func (m *mockAuditStore) ListAuditLogs(ctx context.Context, f audit.Filter) ([]*model.AuditLog, error) {
-	if m.listAuditLogs != nil {
-		return m.listAuditLogs(ctx, f)
-	}
-	return nil, nil
-}
-
-func (m *mockAuditStore) Close() error { return nil }

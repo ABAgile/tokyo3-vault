@@ -37,7 +37,6 @@ Getting started:
 		commands.NewTokensCmd(),
 		commands.NewKeygenCmd(),
 		commands.NewVersionCmd(),
-		commands.NewAuditCmd(),
 		commands.NewMembersCmd(),
 		commands.NewUsersCmd(),
 		commands.NewChangePasswordCmd(),

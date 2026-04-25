@@ -1,23 +1,16 @@
-# docker-compose.yml — sample deployment: vaultd + Postgres + NATS JetStream + audit-consumer
+# docker-compose.yml — sample deployment: vaultd + Postgres + NATS JetStream + vault-audit
 #
 # This sample wires all four components together without inter-service mTLS.
 # For production hardening add:
-#   NATS_AUDIT_CERT / NATS_AUDIT_KEY / NATS_AUDIT_CA        (vaultd publisher)
-#   NATS_CONSUMER_CERT / NATS_CONSUMER_KEY / NATS_CONSUMER_CA (audit-consumer)
-#   AUDIT_DB_SSL_* / AUDIT_WRITE_DB_SSL_*                   (audit DB mTLS)
-#
-# This sample also uses a single Postgres role for both the read (vaultd) and
-# write (audit-consumer) sides of the audit DB. In production use separate roles:
-#   vault_audit_reader  — SELECT-only  → AUDIT_DATABASE_URL
-#   vault_audit_writer  — INSERT-only  → AUDIT_WRITE_DATABASE_URL
+#   VAULT_NATS_CERT / VAULT_NATS_KEY / VAULT_NATS_CA           (vaultd publisher)
+#   VAULT_AUDIT_NATS_CERT / VAULT_AUDIT_NATS_KEY / VAULT_AUDIT_NATS_CA (vault-audit consumer)
+#   VAULT_AUDIT_DB_CERT / VAULT_AUDIT_DB_KEY / VAULT_AUDIT_DB_CA  (audit DB mTLS)
 #
 # Required env vars (set in shell or .env file):
 #   VAULT_MASTER_KEY          64-char hex key  (vault keygen)
 #   POSTGRES_PASSWORD         main vault DB admin password (vault owner, runs migrations)
 #   VAULT_APP_PASSWORD        main vault DB app password (vault_app, DML-only)
-#   AUDIT_POSTGRES_PASSWORD   audit DB admin password (vault_audit owner, runs migrations)
-#   AUDIT_READER_PASSWORD     audit DB reader password (vault_audit_reader, SELECT-only)
-#   AUDIT_WRITER_PASSWORD     audit DB writer password (vault_audit_writer, INSERT-only)
+#   AUDIT_POSTGRES_PASSWORD   audit DB admin password (vault_audit owner)
 #
 # Usage:
 #   docker compose up -d
@@ -49,11 +42,8 @@ services:
       POSTGRES_USER:     vault_audit
       POSTGRES_PASSWORD: ${AUDIT_POSTGRES_PASSWORD:?AUDIT_POSTGRES_PASSWORD is required}
       POSTGRES_DB:       vault_audit
-      AUDIT_READER_PASSWORD: ${AUDIT_READER_PASSWORD:?AUDIT_READER_PASSWORD is required}
-      AUDIT_WRITER_PASSWORD: ${AUDIT_WRITER_PASSWORD:?AUDIT_WRITER_PASSWORD is required}
     volumes:
       - audit-db-data:/var/lib/postgresql/data
-      - ./postgres/audit-db-init.sh:/docker-entrypoint-initdb.d/audit-db-init.sh:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U vault_audit"]
@@ -83,13 +73,9 @@ services:
       VAULT_DATABASE_URL:       postgres://vault_app:${VAULT_APP_PASSWORD}@db:5432/vault?sslmode=disable
       VAULT_ADDR:               :8443
       # Audit sink: publish events to NATS JetStream (fail-closed).
-      NATS_URL:           nats://nats:4222
-      # Audit read DB: serves GET /api/v1/audit — SELECT-only role.
-      AUDIT_DATABASE_URL: postgres://vault_audit_reader:${AUDIT_READER_PASSWORD}@audit-db:5432/vault_audit?sslmode=disable
+      VAULT_NATS_URL:           nats://nats:4222
     depends_on:
       db:
-        condition: service_healthy
-      audit-db:
         condition: service_healthy
       nats:
         condition: service_started
@@ -101,16 +87,14 @@ services:
       retries: 3
       start_period: 10s
 
-  # ── Audit consumer: NATS → audit DB projection writer ────────────────────
-  audit-consumer:
+  # ── vault-audit: NATS → audit DB projection writer ────────────────────────
+  vault-audit:
     image: abagile/vault:${VERSION:-latest}
-    command: ["audit-consumer"]
+    entrypoint: ["/usr/local/bin/vault-audit", "consume"]
     environment:
-      NATS_URL:                  nats://nats:4222
-      # Admin DSN: schema migrations only (vault_audit owner, DDL privileges).
-      AUDIT_ADMIN_DATABASE_URL:  postgres://vault_audit:${AUDIT_POSTGRES_PASSWORD}@audit-db:5432/vault_audit?sslmode=disable
-      # Write DSN: DML-only after schema is in place.
-      AUDIT_WRITE_DATABASE_URL:  postgres://vault_audit_writer:${AUDIT_WRITER_PASSWORD}@audit-db:5432/vault_audit?sslmode=disable
+      VAULT_AUDIT_NATS_URL:      nats://nats:4222
+      # Single DSN: vault_audit owner has DDL + INSERT + SELECT rights.
+      VAULT_AUDIT_DATABASE_URL:  postgres://vault_audit:${AUDIT_POSTGRES_PASSWORD}@audit-db:5432/vault_audit?sslmode=disable
     depends_on:
       audit-db:
         condition: service_healthy

@@ -6,7 +6,6 @@
 
 ```
 main()
- ├─ [audit-consumer subcommand] → runAuditConsumer(); exit   — see below
  ├─ openKeyProvider()        — parse VAULT_MASTER_KEY / VAULT_KMS_KEY_ID
  ├─ openStore()
  │   ├─ Postgres: migrateVaultDB(VAULT_ADMIN_DATABASE_URL, admin cred) → run migrations
@@ -14,8 +13,7 @@ main()
  │   └─ SQLite:  sqlite.Open(VAULT_DB_PATH) — migrations run inline
  ├─ NewProjectKeyCache(kp)   — in-memory PEK cache, TTL from VAULT_PROJECT_KEY_CACHE_TTL
  ├─ [migrate-keys subcommand] → runMigrateKeys(); exit
- ├─ openAuditSink()          — NATS JetStream publisher (PUBLISH-only); NoopSink if NATS_URL unset
- ├─ openAuditQueryStore()    — audit DB reader (SELECT-only); NoopQueryStore if unconfigured
+ ├─ openAuditSink()          — NATS JetStream publisher (PUBLISH-only); NoopSink if VAULT_NATS_URL unset
  ├─ NewRevoker(...)          — background goroutine: sweep expired leases immediately,
  │                            then every 60 s
  ├─ buildServerTLS()         — load cert files (hot-reload) or generate self-signed
@@ -25,19 +23,14 @@ main()
 
 All routes pass through the `limitBody` middleware (4 MB cap) and then the per-route `auth` middleware.
 
-## Audit consumer startup (`vaultd audit-consumer`)
+## vault-audit consume startup
 
 ```
-runAuditConsumer()
- ├─ migrateAuditDB()
- │   ├─ AUDIT_WRITE_DATABASE_URL unset? → skip (SQLite path: ensureSchema runs in OpenSQLite)
- │   ├─ AUDIT_ADMIN_DATABASE_URL set?   → use it (vault_audit owner, DDL rights)
- │   │   else warn + fall back to AUDIT_WRITE_DATABASE_URL
- │   └─ audit.Migrate(adminDSN, tlsCfg) — apply pending NNN_*.sql from internal/audit/migrations/
- ├─ openAuditWriteDB()
- │   ├─ AUDIT_WRITE_DATABASE_URL set → OpenPostgres (vault_audit_writer, INSERT-only)
- │   └─ else                         → OpenSQLite(AUDIT_WRITE_DB_PATH, default: audit.db)
- ├─ connectConsumerNATS()   — NATS_URL + optional mTLS (NATS_CONSUMER_CERT/KEY/CA)
+runConsume()
+ ├─ openAuditDB()
+ │   ├─ VAULT_AUDIT_DATABASE_URL set → auditpg.Migrate() then auditpg.Open() (vault_audit owner)
+ │   └─ else                         → auditsqlite.Open(VAULT_AUDIT_DB_PATH, default: audit.db)
+ ├─ connectConsumerNATS()   — VAULT_AUDIT_NATS_URL + optional mTLS (VAULT_AUDIT_NATS_CERT/KEY/CA)
  ├─ js.CreateOrUpdateStream() — idempotent: ensures AUDIT stream exists
  └─ loop: cons.Fetch(64) → json.Unmarshal → adb.UpsertAuditLog (ON CONFLICT DO NOTHING)
            Ack on success; Nak on upsert failure; Ack+discard on unmarshal failure

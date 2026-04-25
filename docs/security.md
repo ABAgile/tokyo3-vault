@@ -125,35 +125,32 @@ Every state-changing operation, every read of a secret value, and authentication
 
 ### Architecture (PCI-DSS aligned)
 
-Audit uses a CQRS pattern with full credential separation:
+Audit uses a two-process design with credential separation between the vault server and the audit tool:
 
 ```
 vaultd serve (publisher credential)
     │ Sink.Log → NATS JetStream "AUDIT" stream
     │            (DenyDelete, DenyPurge, FileStorage, 400-day retention)
     │
-vaultd audit-consumer (subscriber credential)
-    │ Fetch → decode → UpsertAuditLog → Audit DB (writer credential)
-    │
-GET /api/v1/audit (reader credential)
-    └── ListAuditLogs → Audit DB (SELECT-only)
+vault-audit consume (subscriber credential)
+    └── Fetch → decode → UpsertAuditLog → Audit DB
 ```
+
+Querying is handled entirely by `vault-audit query`, which reads directly from the audit DB. `vaultd` has no connection to the audit database at runtime.
 
 **Fail-closed**: `logAudit` returns an error; every handler that calls it checks the return value. If the publish to JetStream fails, the handler writes HTTP 500 and discards the response — the sensitive operation is never considered complete without a durable audit record.
 
 **Tamper evidence**: the NATS stream is configured with `DenyDelete` and `DenyPurge`, so no individual message or the entire stream can be deleted via the NATS API. `FileStorage` ensures records survive restarts.
 
-**Credential separation** (six distinct identities):
+**Credential separation** (five distinct identities):
 
 | Identity | Rights | Used by |
 |----------|--------|---------|
 | `vault_app` | DML-only on main DB | `vaultd serve` (runtime) |
 | `vault` (admin) | DDL on main DB | `vaultd serve` (startup migration only) |
 | `nats_publisher` | PUBLISH-only on `audit.events` | `vaultd serve` |
-| `vault_audit_reader` | SELECT-only on `audit_logs` | `vaultd serve` (GET /api/v1/audit) |
-| `nats_consumer` | SUBSCRIBE + consumer management | `vaultd audit-consumer` |
-| `vault_audit_writer` | INSERT-only on `audit_logs` | `vaultd audit-consumer` (runtime) |
-| `vault_audit` (admin) | DDL on audit DB | `vaultd audit-consumer` (startup migration only) |
+| `nats_consumer` | SUBSCRIBE + consumer management | `vault-audit consume` |
+| `vault_audit` | DDL + INSERT + SELECT on audit DB | `vault-audit` (both subcommands) |
 
 ### Covered events
 

@@ -34,47 +34,50 @@ Vault is a self-hosted secrets manager. It stores encrypted secrets, issues shor
    │SQLite) │ │       │ (local/KMS) │
    └────────┘ │       └─────────────┘
               ▼
-   ┌────────────────────────┐        ┌───────────────────────────┐
-   │   NATS JetStream       │        │   Audit DB (read-only)    │
-   │   AUDIT stream         │◄───────│   (PG or SQLite)          │
-   │   (authoritative,      │ upsert │   vault_audit_reader cred │
-   │    DenyDelete+Purge,   │ via    │   serves GET /api/v1/audit│
-   │    FileStorage, 400 d) │ audit- └───────────────────────────┘
-   └────────────────────────┘ consumer
+   ┌────────────────────────┐
+   │   NATS JetStream       │
+   │   AUDIT stream         │
+   │   (authoritative,      │
+   │    DenyDelete+Purge,   │
+   │    FileStorage, 400 d) │
+   └────────────────────────┘
               ▲
               │ subscribe
-   ┌──────────┴──────────────┐
-   │  vaultd audit-consumer  │
-   │  (separate process)     │
-   │  vault_audit_writer cred│
-   └─────────────────────────┘
+   ┌──────────┴──────────────┐        ┌───────────────────────────┐
+   │   vault-audit consume   │ upsert │   Audit DB                │
+   │   (separate process)    │───────►│   (PG or SQLite)          │
+   │   vault_audit cred      │        │   vault_audit cred        │
+   └─────────────────────────┘        └───────────────────────────┘
+                                                  ▲
+                                                  │ query
+                                       ┌──────────┴──────────────┐
+                                       │   vault-audit query     │
+                                       │   vault_audit cred      │
+                                       └─────────────────────────┘
 ```
 
 ## Components
 
 ### `cmd/vaultd` — server binary
 
-Three subcommands:
+Two subcommands:
 
 | Subcommand | Purpose |
 |------------|---------|
 | `vaultd serve` | HTTPS API server (default) |
 | `vaultd migrate-keys` | One-time migration to per-project PEKs |
-| `vaultd audit-consumer` | NATS→audit DB projection writer (separate process) |
 
 **`vaultd serve` startup sequence:**
 
-1. Dispatch `audit-consumer` early (before opening the main store) if that subcommand was requested
-2. Parse key provider from env (`VAULT_MASTER_KEY` or `VAULT_KMS_KEY_ID`)
-3. Open the main store: for Postgres, run schema migrations with `VAULT_ADMIN_DATABASE_URL` (owner/DDL role) then open the runtime connection with `VAULT_DATABASE_URL` (DML-only `vault_app` role); for SQLite, open `VAULT_DB_PATH` directly (migrations run inline)
-4. Create `ProjectKeyCache` with configurable TTL (default 5 minutes)
-5. Dispatch `migrate-keys` → `runMigrateKeys(); exit` if that subcommand was requested
-6. Open `audit.JetStreamSink` (publisher credential, PUBLISH-only on `audit.events`); falls back to `NoopSink` when `NATS_URL` is unset
-7. Open `audit.DB` (reader credential, SELECT-only on `audit_logs`); falls back to `NoopQueryStore` when unconfigured
-8. Start background `Revoker` goroutine (sweeps expired dynamic leases every 60 s; also sweeps on startup)
-9. Build TLS config — hot-reloading cert files if provided, else self-signed
-10. Build OIDC provider from `VAULT_OIDC_*` env vars; `nil` provider when unconfigured (local auth only)
-11. Start `http.Server` on `VAULT_ADDR` (default `:8443`)
+1. Parse key provider from env (`VAULT_MASTER_KEY` or `VAULT_KMS_KEY_ID`)
+2. Open the main store: for Postgres, run schema migrations with `VAULT_ADMIN_DATABASE_URL` (owner/DDL role; skipped when unset) then open the runtime connection with `VAULT_DATABASE_URL` (DML-only `vault_app` role); for SQLite, open `VAULT_DB_PATH` directly (migrations run inline)
+3. Create `ProjectKeyCache` with configurable TTL (default 5 minutes)
+4. Dispatch `migrate-keys` → `runMigrateKeys(); exit` if that subcommand was requested
+5. Open `audit.JetStreamSink` (publisher credential, PUBLISH-only on `audit.events`); falls back to `NoopSink` when `VAULT_NATS_URL` is unset
+6. Start background `Revoker` goroutine (sweeps expired dynamic leases every 60 s; also sweeps on startup)
+7. Build TLS config — hot-reloading cert files if provided, else self-signed
+8. Build OIDC provider from `VAULT_OIDC_*` env vars; `nil` provider when unconfigured (local auth only)
+9. Start `http.Server` on `VAULT_ADDR` (default `:8443`)
 
 Graceful shutdown is triggered by SIGINT or SIGTERM.
 
@@ -97,7 +100,7 @@ Handler files map roughly to resource types:
 | `dynamic.go` | dynamic backends, roles, credential issuance, lease management |
 | `certs.go` | SPIFFE principal registration + SPIFFE auth helper |
 | `access.go` | unified access view (members + tokens + principals per project/env) |
-| `audit.go` | audit log queries + action constants |
+| `audit.go` | action string constants + `logAudit`/`logAuditEnv` helpers |
 | `users.go` | server-admin user management |
 
 ### `internal/crypto` — encryption & key management
@@ -122,14 +125,14 @@ The interface is intentionally constrained so that new store backends can be add
 
 ### `internal/audit` — audit pipeline
 
-The audit subsystem uses CQRS: JetStream is the authoritative write record; the audit database is a queryable projection rebuilt by `vaultd audit-consumer`.
+The audit subsystem uses CQRS: JetStream is the authoritative write record; the audit database is a queryable projection rebuilt by `vault-audit consume`.
 
 | Component | Package | Credential |
 |-----------|---------|------------|
 | `JetStreamSink` | `internal/audit` | `nats_publisher` — PUBLISH-only on `audit.events` |
-| `audit.DB` (write) | `internal/audit` | `vault_audit_writer` — INSERT-only on `audit_logs` |
-| `audit.DB` (read) | `internal/audit` | `vault_audit_reader` — SELECT-only on `audit_logs` |
-| NATS consumer | `cmd/vaultd/audit_consumer.go` | `nats_consumer` — SUBSCRIBE + consumer management |
+| `postgres.DB` | `internal/audit/postgres` | `vault_audit` — DDL + INSERT + SELECT on audit DB |
+| `sqlite.DB` | `internal/audit/sqlite` | file-level access (dev/single-node) |
+| NATS consumer | `cmd/vault-audit` | `nats_consumer` — SUBSCRIBE + consumer management |
 
 The AUDIT JetStream stream is configured with `DenyDelete`, `DenyPurge`, and `FileStorage` to provide tamper evidence. `StreamMaxAge` is 400 days (PCI-DSS requires 12 months).
 
@@ -143,7 +146,7 @@ All audit writes are **fail-closed**: if `Sink.Log` returns an error, the reques
 
 ### `cmd/vault` — CLI client
 
-Cobra-based. Reads `~/.vault/config.json` for server URL and session token. Project/env context stored in `.vault/config` in the working directory.
+Cobra-based. Reads `~/.vault/config` for server URL and session token. Project/env context stored in `.vault.toml` in the working directory.
 
 ## Data Model
 
@@ -166,18 +169,18 @@ Key relationships:
 | `VAULT_MASTER_KEY` | one of two | — | 64-char hex AES-256 KEK (dev only) |
 | `VAULT_KMS_KEY_ID` | one of two | — | AWS KMS key ID, ARN, or alias |
 | `VAULT_ADMIN_DATABASE_URL` | no | falls back to `VAULT_DATABASE_URL` | Postgres DSN for schema migrations (owner/DDL role) |
-| `VAULT_ADMIN_DB_SSL_CERT` | no | — | Client cert for admin DB mTLS |
-| `VAULT_ADMIN_DB_SSL_KEY` | no | — | Client key for admin DB mTLS |
-| `VAULT_ADMIN_DB_SSL_CA` | no | — | CA cert to verify admin Postgres server |
+| `VAULT_ADMIN_DB_CERT` | no | — | Client cert for admin DB mTLS |
+| `VAULT_ADMIN_DB_KEY` | no | — | Client key for admin DB mTLS |
+| `VAULT_ADMIN_DB_CA` | no | — | CA cert to verify admin Postgres server |
 | `VAULT_DATABASE_URL` | one of two | — | Postgres DSN (DML-only `vault_app` role) |
 | `VAULT_DB_PATH` | one of two | `vault.db` | SQLite file path |
 | `VAULT_ADDR` | no | `:8443` | Listen address |
 | `VAULT_TLS_CERT` | no | — | TLS certificate PEM (hot-reloaded) |
 | `VAULT_TLS_KEY` | no | — | TLS private key PEM |
 | `VAULT_TLS_CLIENT_CA` | no | — | CA PEM for mTLS client verification |
-| `VAULT_DB_SSL_CERT` | no | — | Client cert for vault→Postgres TLS |
-| `VAULT_DB_SSL_KEY` | no | — | Client key for vault→Postgres TLS |
-| `VAULT_DB_SSL_CA` | no | — | CA cert to verify Postgres server |
+| `VAULT_DB_CERT` | no | — | Client cert for vault→Postgres TLS |
+| `VAULT_DB_KEY` | no | — | Client key for vault→Postgres TLS |
+| `VAULT_DB_CA` | no | — | CA cert to verify Postgres server |
 | `VAULT_PROJECT_KEY_CACHE_TTL` | no | `5m` | How long plaintext PEKs stay in RAM |
 | `VAULT_OIDC_ISSUER` | no | — | IdP issuer URL; enables OIDC when set (all four OIDC vars required together) |
 | `VAULT_OIDC_CLIENT_ID` | no | — | OAuth2 client ID |
@@ -185,34 +188,25 @@ Key relationships:
 | `VAULT_OIDC_REDIRECT_URI` | no | — | Callback URL registered with the IdP |
 | `VAULT_OIDC_ENFORCE` | no | `false` | `"true"` disables local `/auth/login` and `/auth/signup` |
 
-**Audit sink — `vaultd serve` (publisher credential, separate from main DB)**
+**Audit sink — `vaultd serve` (publisher credential)**
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `NATS_URL` | no | — | NATS server URL; enables JetStream sink when set |
-| `NATS_AUDIT_CERT` | no | — | mTLS client cert PEM for publisher |
-| `NATS_AUDIT_KEY` | no | — | mTLS client key PEM for publisher |
-| `NATS_AUDIT_CA` | no | — | CA PEM for NATS server verification |
-| `AUDIT_DATABASE_URL` | no | — | Postgres DSN for audit query DB (SELECT-only) |
-| `AUDIT_DB_PATH` | no | — | SQLite path for audit query DB |
-| `AUDIT_DB_SSL_CERT` | no | — | Client cert PEM for audit DB mTLS |
-| `AUDIT_DB_SSL_KEY` | no | — | Client key PEM for audit DB mTLS |
-| `AUDIT_DB_SSL_CA` | no | — | CA cert PEM for audit DB server verification |
+| `VAULT_NATS_URL` | no | — | NATS server URL; enables JetStream sink when set |
+| `VAULT_NATS_CERT` | no | — | mTLS client cert PEM for publisher |
+| `VAULT_NATS_KEY` | no | — | mTLS client key PEM for publisher |
+| `VAULT_NATS_CA` | no | — | CA PEM for NATS server verification |
 
-**Audit consumer — `vaultd audit-consumer` (completely separate credentials)**
+**`vault-audit` — standalone audit pipeline tool (separate binary, separate credentials)**
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `NATS_URL` | yes | — | NATS server URL |
-| `NATS_CONSUMER_CERT` | no | — | mTLS client cert PEM for consumer |
-| `NATS_CONSUMER_KEY` | no | — | mTLS client key PEM for consumer |
-| `NATS_CONSUMER_CA` | no | — | CA PEM for NATS server verification |
-| `AUDIT_ADMIN_DATABASE_URL` | no | falls back to `AUDIT_WRITE_DATABASE_URL` | Postgres DSN for schema migrations (`vault_audit` owner/DDL role) |
-| `AUDIT_ADMIN_DB_SSL_CERT` | no | — | Client cert for audit admin DB mTLS |
-| `AUDIT_ADMIN_DB_SSL_KEY` | no | — | Client key for audit admin DB mTLS |
-| `AUDIT_ADMIN_DB_SSL_CA` | no | — | CA cert to verify audit admin Postgres server |
-| `AUDIT_WRITE_DATABASE_URL` | one of two | — | Postgres DSN (INSERT-only `vault_audit_writer` role) |
-| `AUDIT_WRITE_DB_PATH` | one of two | `audit.db` | SQLite path for audit write DB (dev only) |
-| `AUDIT_WRITE_DB_SSL_CERT` | no | — | Client cert PEM for audit write DB mTLS |
-| `AUDIT_WRITE_DB_SSL_KEY` | no | — | Client key PEM for audit write DB mTLS |
-| `AUDIT_WRITE_DB_SSL_CA` | no | — | CA cert PEM for audit write DB server verification |
+| `VAULT_AUDIT_NATS_URL` | yes (consume) | — | NATS server URL |
+| `VAULT_AUDIT_NATS_CERT` | no | — | mTLS client cert PEM for consumer |
+| `VAULT_AUDIT_NATS_KEY` | no | — | mTLS client key PEM for consumer |
+| `VAULT_AUDIT_NATS_CA` | no | — | CA PEM for NATS server verification |
+| `VAULT_AUDIT_DATABASE_URL` | one of two | — | Postgres DSN (DDL + INSERT + SELECT; `vault_audit` owner role) |
+| `VAULT_AUDIT_DB_PATH` | one of two | `audit.db` (consume) | SQLite path |
+| `VAULT_AUDIT_DB_CERT` | no | — | Client cert PEM for audit DB mTLS |
+| `VAULT_AUDIT_DB_KEY` | no | — | Client key PEM for audit DB mTLS |
+| `VAULT_AUDIT_DB_CA` | no | — | CA cert PEM for audit DB server verification |
