@@ -8,6 +8,18 @@ set -euo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 DAYS=825
 
+# Load .env from the repo root if present — mirrors docker compose behaviour so
+# VAULT_APP_USERNAME / VAULT_AUDIT_USERNAME stay in sync with the DSNs.
+REPO_ROOT="$(cd "$DIR/.." && pwd)"
+if [[ -f "$REPO_ROOT/.env" ]]; then
+  set -a
+  # shellcheck source=/dev/null
+  source "$REPO_ROOT/.env"
+  set +a
+fi
+APP_USERNAME="${VAULT_APP_USERNAME:-vault_app}"
+AUDIT_USERNAME="${VAULT_AUDIT_USERNAME:-vault_audit}"
+
 step() { printf '  %-30s' "$1..."; }
 ok()   { echo "ok"; }
 
@@ -60,11 +72,14 @@ issue "nats-server"      "nats"      "DNS:nats,DNS:localhost,IP:127.0.0.1"
 issue "db-server"        "db"        "DNS:db,DNS:localhost,IP:127.0.0.1"
 issue "audit-db-server"  "audit-db"  "DNS:audit-db,DNS:localhost,IP:127.0.0.1"
 
-# ── Client certs ─────────────────────────────────────────────────────────────
-issue "vaultd-client"         "vaultd"         "DNS:vaultd"
-issue "vaultd-admin-client"   "vault"          "DNS:vaultd"
-issue "audit-consumer-client" "audit-consumer" "DNS:audit-consumer"
-issue "audit-admin-client"    "vault_audit"    "DNS:audit-consumer"
+# ── Client certs — NATS (CN = service name; transport identity only) ─────────
+issue "vaultd-nats-client"      "vaultd"      "DNS:vaultd"
+issue "vault-audit-nats-client" "vault-audit" "DNS:vault-audit"
+
+# ── Client certs — PostgreSQL (CN must match the DB role for cert auth) ───────
+issue "db-admin-client" "vault_admin"    "DNS:vaultd"
+issue "db-app-client"   "$APP_USERNAME"  "DNS:vaultd"
+issue "db-audit-client" "$AUDIT_USERNAME" "DNS:vault-audit"
 
 echo ""
 echo "certs written to certs/"

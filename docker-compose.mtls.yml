@@ -3,25 +3,49 @@
 # Enables TLS on all inter-service connections:
 #   vaultd HTTPS API        VAULT_TLS_CERT / VAULT_TLS_KEY
 #   NATS server TLS + mTLS  --tls / --tlsverify + client certs on both sides
-#   vaultd → postgres       client cert (requires postgres ssl=on; see note)
+#   vaultd → postgres       client cert + cert auth (no password in DSN)
 #   vault-audit → NATS      client cert
-#   vault-audit → audit-db  client cert
+#   vault-audit → audit-db  client cert + cert auth (no password in DSN)
 #
 # Prerequisites:
 #   1. bash certs/gen.sh          # generate certs/ (once)
 #   2. make docker-up-mtls        # or:
 #      docker compose -f docker-compose.yml -f docker-compose.mtls.yml up -d
 #
-# Note on postgres server TLS:
-#   Enabling ssl=on in the official postgres image requires the private key to
-#   be owned by the postgres OS user (uid 70 on alpine) with mode 600, which
-#   conflicts with bind-mounted host files.  The client-cert env vars
-#   (VAULT_DB_CERT/KEY/CA, VAULT_AUDIT_DB_CERT/KEY/CA) are wired up here for completeness
-#   but take effect only after you configure the postgres services with ssl=on.
-#   One option: replace the postgres image with a custom image that bakes in
-#   the cert setup, or use Docker secrets.
+# PostgreSQL cert auth:
+#   pg_hba_cert.conf replaces the default pg_hba.conf. All TCP connections must
+#   use TLS with a client cert whose CN matches the connecting role name:
+#     db-admin-client.crt  CN=vault_admin  → VAULT_ADMIN_DATABASE_URL
+#     db-app-client.crt    CN=vault_app    → VAULT_DATABASE_URL
+#     db-audit-client.crt  CN=vault_audit  → VAULT_AUDIT_DATABASE_URL
+#   If VAULT_APP_USERNAME or VAULT_AUDIT_USERNAME are changed from their
+#   defaults, regenerate the corresponding DB client certs with a matching CN.
 
 services:
+
+  # ── Main vault database: enable server TLS + cert auth ────────────────────
+  db:
+    entrypoint: ["/postgres/pg-entrypoint-mtls.sh"]
+    environment:
+      POSTGRES_SSL_CERT: /certs/db-server.crt
+      POSTGRES_SSL_KEY:  /certs/db-server.key
+      POSTGRES_SSL_CA:   /certs/ca.crt
+    volumes:
+      - ./certs:/certs:ro
+      - ./postgres/pg_hba_cert.conf:/etc/postgresql/pg_hba.conf:ro
+      - ./postgres/pg-entrypoint-mtls.sh:/postgres/pg-entrypoint-mtls.sh:ro
+
+  # ── Audit database: enable server TLS + cert auth ─────────────────────────
+  audit-db:
+    entrypoint: ["/postgres/pg-entrypoint-mtls.sh"]
+    environment:
+      POSTGRES_SSL_CERT: /certs/audit-db-server.crt
+      POSTGRES_SSL_KEY:  /certs/audit-db-server.key
+      POSTGRES_SSL_CA:   /certs/ca.crt
+    volumes:
+      - ./certs:/certs:ro
+      - ./postgres/pg_hba_cert.conf:/etc/postgresql/pg_hba.conf:ro
+      - ./postgres/pg-entrypoint-mtls.sh:/postgres/pg-entrypoint-mtls.sh:ro
 
   # ── NATS: enable server TLS + require client certs ────────────────────────
   nats:
@@ -33,34 +57,41 @@ services:
       - "--tlskey=/certs/nats-server.key"
       - "--tlscacert=/certs/ca.crt"
       - "--tlsverify"
+      - "-m"
+      - "8222"
     volumes:
       - ./certs:/certs:ro
 
-  # ── vaultd: HTTPS + mTLS client certs for NATS and Postgres ───────────────
+  # ── vaultd: HTTPS + mTLS certs for NATS and Postgres ─────────────────────
   vaultd:
     environment:
       VAULT_TLS_CERT:           /certs/vaultd-server.crt
       VAULT_TLS_KEY:            /certs/vaultd-server.key
-      VAULT_NATS_CERT:          /certs/vaultd-client.crt
-      VAULT_NATS_KEY:           /certs/vaultd-client.key
+      VAULT_NATS_CERT:          /certs/vaultd-nats-client.crt
+      VAULT_NATS_KEY:           /certs/vaultd-nats-client.key
       VAULT_NATS_CA:            /certs/ca.crt
-      VAULT_ADMIN_DB_CERT:  /certs/vaultd-admin-client.crt
-      VAULT_ADMIN_DB_KEY:   /certs/vaultd-admin-client.key
-      VAULT_ADMIN_DB_CA:    /certs/ca.crt
-      VAULT_DB_CERT:        /certs/vaultd-client.crt
-      VAULT_DB_KEY:         /certs/vaultd-client.key
-      VAULT_DB_CA:          /certs/ca.crt
+      VAULT_ADMIN_DB_CERT:      /certs/db-admin-client.crt
+      VAULT_ADMIN_DB_KEY:       /certs/db-admin-client.key
+      VAULT_ADMIN_DB_CA:        /certs/ca.crt
+      VAULT_DB_CERT:            /certs/db-app-client.crt
+      VAULT_DB_KEY:             /certs/db-app-client.key
+      VAULT_DB_CA:              /certs/ca.crt
+      # Cert auth: no password; cert CN authenticates the role.
+      VAULT_ADMIN_DATABASE_URL: postgres://vault_admin@db:5432/vault?sslmode=verify-full
+      VAULT_DATABASE_URL:       postgres://${VAULT_APP_USERNAME:-vault_app}@db:5432/vault?sslmode=verify-full
     volumes:
       - ./certs:/certs:ro
 
-  # ── vault-audit: mTLS client certs for NATS and audit DB ──────────────────
+  # ── vault-audit: mTLS certs for NATS and audit DB ─────────────────────────
   vault-audit:
     environment:
-      VAULT_AUDIT_NATS_CERT:    /certs/vault-audit-client.crt
-      VAULT_AUDIT_NATS_KEY:     /certs/vault-audit-client.key
+      VAULT_AUDIT_NATS_CERT:    /certs/vault-audit-nats-client.crt
+      VAULT_AUDIT_NATS_KEY:     /certs/vault-audit-nats-client.key
       VAULT_AUDIT_NATS_CA:      /certs/ca.crt
-      VAULT_AUDIT_DB_CERT:  /certs/vault-audit-client.crt
-      VAULT_AUDIT_DB_KEY:   /certs/vault-audit-client.key
-      VAULT_AUDIT_DB_CA:    /certs/ca.crt
+      VAULT_AUDIT_DB_CERT:      /certs/db-audit-client.crt
+      VAULT_AUDIT_DB_KEY:       /certs/db-audit-client.key
+      VAULT_AUDIT_DB_CA:        /certs/ca.crt
+      # Cert auth: no password; cert CN authenticates the role.
+      VAULT_AUDIT_DATABASE_URL: postgres://${VAULT_AUDIT_USERNAME:-vault_audit}@audit-db:5432/vault_audit?sslmode=verify-full
     volumes:
       - ./certs:/certs:ro
