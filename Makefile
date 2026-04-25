@@ -5,8 +5,10 @@
 ##   make run-server      Start the server with dev defaults
 ##   make keygen          Generate a VAULT_MASTER_KEY
 ##   make docker-build    Build Docker image
-##   make docker-up       Start with docker compose (SQLite + Litestream)
+##   make docker-up       Start with docker compose (Postgres + NATS)
+##   make docker-up-mtls  Start with docker compose + mTLS overlay
 ##   make docker-down     Stop docker compose
+##   make gen-certs       Generate mTLS certs in certs/
 ##   make clean           Remove ./bin/
 ##   make test            Run tests
 ##   make help            Show this help
@@ -55,18 +57,18 @@ build-cli: $(BIN_DIR)
 $(BIN_DIR):
 	mkdir -p $(BIN_DIR)
 
-# Cross-compilation helpers — call as: make build-linux build-darwin build-windows
-## build-linux: Cross-compile both binaries for Linux amd64
+# Cross-compilation helpers — call as: make build-linux build-darwin
+## build-linux: Cross-compile both binaries for Linux arm64 (Graviton, default)
 build-linux: $(BIN_DIR)
-	GOOS=linux GOARCH=amd64 $(GO) build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/vaultd-linux-amd64 $(CMD_VAULTD)
-	GOOS=linux GOARCH=amd64 $(GO) build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/vault-linux-amd64  $(CMD_VAULT)
-	@echo "  built Linux amd64 binaries"
-
-## build-linux-arm64: Cross-compile both binaries for Linux arm64 (Graviton)
-build-linux-arm64: $(BIN_DIR)
 	GOOS=linux GOARCH=arm64 $(GO) build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/vaultd-linux-arm64 $(CMD_VAULTD)
 	GOOS=linux GOARCH=arm64 $(GO) build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/vault-linux-arm64  $(CMD_VAULT)
 	@echo "  built Linux arm64 binaries"
+
+## build-linux-amd64: Cross-compile both binaries for Linux amd64
+build-linux-amd64: $(BIN_DIR)
+	GOOS=linux GOARCH=amd64 $(GO) build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/vaultd-linux-amd64 $(CMD_VAULTD)
+	GOOS=linux GOARCH=amd64 $(GO) build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/vault-linux-amd64  $(CMD_VAULT)
+	@echo "  built Linux amd64 binaries"
 
 ## build-darwin: Cross-compile both binaries for macOS arm64 (M-series)
 build-darwin: $(BIN_DIR)
@@ -81,8 +83,8 @@ run-server: build-server
 	@if [ ! -f .dev.env ]; then \
 	    KEY=$$($(VAULT_BIN) keygen 2>/dev/null || $(BIN_DIR)/vault keygen); \
 	    echo "VAULT_MASTER_KEY=$$KEY" > .dev.env; \
-	    echo "VAULT_DB_PATH=vault-dev.db" >> .dev.env; \
-	    echo "VAULT_ADDR=:8080" >> .dev.env; \
+	    echo "VAULT_DB_PATH=vault.db" >> .dev.env; \
+	    echo "VAULT_ADDR=:8443" >> .dev.env; \
 	    echo "  generated .dev.env (add to .gitignore!)"; \
 	fi
 	@export $$(cat .dev.env | xargs) && $(VAULTD_BIN)
@@ -90,6 +92,10 @@ run-server: build-server
 ## keygen: Print a fresh random master key
 keygen: build-cli
 	@$(VAULT_BIN) keygen
+
+## gen-certs: Generate mTLS certificates for the docker compose overlay
+gen-certs:
+	@bash certs/gen.sh
 
 # ── Quality ───────────────────────────────────────────────────────────────────
 
@@ -116,27 +122,22 @@ vet:
 IMAGE_NAME  ?= abagile/vault
 IMAGE_TAG   ?= $(VERSION)
 
-## docker-build: Build the Docker image (linux/amd64)
+## docker-build: Build the Docker image (linux/arm64, default)
 docker-build:
 	docker build \
-	  --build-arg VERSION=$(VERSION) \
-	  --build-arg COMMIT=$(GIT_COMMIT) \
-	  --build-arg BUILD_TIME=$(BUILD_TIME) \
-	  --build-arg TARGETARCH=amd64 \
+	  --platform linux/arm64 \
+	  --build-arg TARGETARCH=arm64 \
 	  -t $(IMAGE_NAME):$(IMAGE_TAG) \
 	  -t $(IMAGE_NAME):latest \
 	  .
 	@echo "  built $(IMAGE_NAME):$(IMAGE_TAG)"
 
-## docker-build-arm64: Build the Docker image for linux/arm64 (Graviton)
-docker-build-arm64:
+## docker-build-amd64: Build the Docker image for linux/amd64
+docker-build-amd64:
 	docker build \
-	  --platform linux/arm64 \
-	  --build-arg VERSION=$(VERSION) \
-	  --build-arg COMMIT=$(GIT_COMMIT) \
-	  --build-arg BUILD_TIME=$(BUILD_TIME) \
-	  --build-arg TARGETARCH=arm64 \
-	  -t $(IMAGE_NAME):$(IMAGE_TAG)-arm64 \
+	  --platform linux/amd64 \
+	  --build-arg TARGETARCH=amd64 \
+	  -t $(IMAGE_NAME):$(IMAGE_TAG)-amd64 \
 	  .
 
 ## docker-push: Push image to registry (set IMAGE_NAME to your ECR repo)
@@ -144,13 +145,13 @@ docker-push: docker-build
 	docker push $(IMAGE_NAME):$(IMAGE_TAG)
 	docker push $(IMAGE_NAME):latest
 
-## docker-up: Start vaultd with docker compose (SQLite + Litestream)
+## docker-up: Start vaultd with docker compose (Postgres + NATS)
 docker-up:
 	docker compose up -d
 
-## docker-up-postgres: Start vaultd with Postgres backend
-docker-up-postgres:
-	docker compose --profile postgres up -d
+## docker-up-mtls: Start with docker compose + mTLS overlay (run gen-certs first)
+docker-up-mtls:
+	docker compose -f docker-compose.yml -f docker-compose.mtls.yml up -d
 
 ## docker-down: Stop all compose services
 docker-down:

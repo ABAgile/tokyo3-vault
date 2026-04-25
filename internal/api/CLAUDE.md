@@ -18,7 +18,7 @@ HTTP handlers for vaultd. All routes go through the `auth` middleware in `middle
 | `dynamic.go` | dynamic backends, roles, credential issuance, lease management |
 | `certs.go` | cert principal registration + `authFromClientCert` (mTLS auth helper) |
 | `access.go` | unified access view per project/env |
-| `audit.go` | audit log queries (reads from `auditStore`) + **all action string constants** + `logAudit`/`logAuditMeta` helpers |
+| `audit.go` | audit log queries (reads from `auditStore`) + **all action string constants** + `logAudit`/`logAuditEnv` helpers |
 | `users.go` | server-admin user management |
 | `scim.go` | SCIM 2.0 Users + Groups endpoints + SCIM token management |
 
@@ -27,9 +27,15 @@ HTTP handlers for vaultd. All routes go through the `auth` middleware in `middle
 1. Add the method to the appropriate handler file
 2. Register the route in `server.go` → `Routes()`
 3. Add an action constant in `audit.go` if it's auditable
-4. Call `s.logAudit(r, ActionXxx, projectID, resource)` **and check the error** (fail-closed):
+4. Call `s.logAudit` or `s.logAuditEnv` **and check the error** (fail-closed):
    ```go
+   // non-env actions (auth, user, member, cert, project-level):
    if err := s.logAudit(r, ActionXxx, projectID, resource); err != nil {
+       writeError(w, http.StatusInternalServerError, "audit unavailable")
+       return
+   }
+   // env-scoped actions (secrets, dynamic):
+   if err := s.logAuditEnv(r, ActionXxx, projectID, envID, resource, metadata); err != nil {
        writeError(w, http.StatusInternalServerError, "audit unavailable")
        return
    }

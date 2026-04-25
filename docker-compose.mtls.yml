@@ -1,0 +1,72 @@
+# docker-compose.mtls.yml — mTLS overlay
+#
+# Enables TLS on all inter-service connections:
+#   vaultd HTTPS API        VAULT_TLS_CERT / VAULT_TLS_KEY
+#   NATS server TLS + mTLS  --tls / --tlsverify + client certs on both sides
+#   vaultd → postgres       client cert (requires postgres ssl=on; see note)
+#   audit-consumer → NATS   client cert
+#   audit-consumer → audit-db  client cert
+#
+# Prerequisites:
+#   1. bash certs/gen.sh          # generate certs/ (once)
+#   2. make docker-up-mtls        # or:
+#      docker compose -f docker-compose.yml -f docker-compose.mtls.yml up -d
+#
+# Note on postgres server TLS:
+#   Enabling ssl=on in the official postgres image requires the private key to
+#   be owned by the postgres OS user (uid 70 on alpine) with mode 600, which
+#   conflicts with bind-mounted host files.  The client-cert env vars
+#   (VAULT_DB_SSL_*, AUDIT_*_DB_SSL_*) are wired up here for completeness but
+#   take effect only after you configure the postgres services with ssl=on.
+#   One option: replace the postgres image with a custom image that bakes in
+#   the cert setup, or use Docker secrets.
+
+services:
+
+  # ── NATS: enable server TLS + require client certs ────────────────────────
+  nats:
+    command:
+      - "--jetstream"
+      - "--store_dir=/data"
+      - "--tls"
+      - "--tlscert=/certs/nats-server.crt"
+      - "--tlskey=/certs/nats-server.key"
+      - "--tlscacert=/certs/ca.crt"
+      - "--tlsverify"
+    volumes:
+      - ./certs:/certs:ro
+
+  # ── vaultd: HTTPS + mTLS client certs for NATS and Postgres ───────────────
+  vaultd:
+    environment:
+      VAULT_TLS_CERT:           /certs/vaultd-server.crt
+      VAULT_TLS_KEY:            /certs/vaultd-server.key
+      NATS_AUDIT_CERT:          /certs/vaultd-client.crt
+      NATS_AUDIT_KEY:           /certs/vaultd-client.key
+      NATS_AUDIT_CA:            /certs/ca.crt
+      VAULT_ADMIN_DB_SSL_CERT:  /certs/vaultd-admin-client.crt
+      VAULT_ADMIN_DB_SSL_KEY:   /certs/vaultd-admin-client.key
+      VAULT_ADMIN_DB_SSL_CA:    /certs/ca.crt
+      VAULT_DB_SSL_CERT:        /certs/vaultd-client.crt
+      VAULT_DB_SSL_KEY:         /certs/vaultd-client.key
+      VAULT_DB_SSL_CA:          /certs/ca.crt
+      AUDIT_DB_SSL_CERT:        /certs/vaultd-client.crt
+      AUDIT_DB_SSL_KEY:         /certs/vaultd-client.key
+      AUDIT_DB_SSL_CA:          /certs/ca.crt
+    volumes:
+      - ./certs:/certs:ro
+
+  # ── audit-consumer: mTLS client certs for NATS, admin migration, and write ──
+  audit-consumer:
+    environment:
+      NATS_CONSUMER_CERT:           /certs/audit-consumer-client.crt
+      NATS_CONSUMER_KEY:            /certs/audit-consumer-client.key
+      NATS_CONSUMER_CA:             /certs/ca.crt
+      AUDIT_ADMIN_DB_SSL_CERT:      /certs/audit-admin-client.crt
+      AUDIT_ADMIN_DB_SSL_KEY:       /certs/audit-admin-client.key
+      AUDIT_ADMIN_DB_SSL_CA:        /certs/ca.crt
+      AUDIT_WRITE_DB_SSL_CERT:      /certs/audit-consumer-client.crt
+      AUDIT_WRITE_DB_SSL_KEY:       /certs/audit-consumer-client.key
+      AUDIT_WRITE_DB_SSL_CA:        /certs/ca.crt
+    volumes:
+      - ./certs:/certs:ro

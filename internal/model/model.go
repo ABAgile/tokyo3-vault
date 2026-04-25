@@ -140,6 +140,7 @@ type AuditLog struct {
 	Action    string
 	ActorID   *string // token ID; nil for unauthenticated actions
 	ProjectID *string
+	EnvID     *string
 	Resource  *string // e.g. secret key name
 	Metadata  *string // free-form JSON string for extra context
 	IP        *string

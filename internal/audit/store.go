@@ -16,6 +16,7 @@ import (
 // Filter controls which audit log entries ListAuditLogs returns.
 type Filter struct {
 	ProjectID string // empty = all projects
+	EnvID     string // empty = all environments
 	Action    string // empty = all actions
 	Limit     int    // 0 = default (50)
 }
@@ -40,9 +41,9 @@ type DB struct {
 
 // OpenPostgres opens an audit Postgres database. tlsCfg may be nil for a plain
 // DSN connection; pass a *tls.Config carrying a client certificate for mTLS.
-// The schema is created if absent. The DSN should encode the appropriate role
-// credentials (vault_audit_reader for the server, vault_audit_writer for the
-// consumer).
+// The DSN should encode the appropriate role credentials (vault_audit_reader
+// for the server, vault_audit_writer for the consumer). Schema is managed by
+// postgres/audit-db-init.sh which runs at first postgres startup.
 func OpenPostgres(dsn string, tlsCfg *tls.Config) (*DB, error) {
 	var sqldb *sql.DB
 	if tlsCfg != nil {
@@ -63,12 +64,7 @@ func OpenPostgres(dsn string, tlsCfg *tls.Config) (*DB, error) {
 		sqldb.Close()
 		return nil, fmt.Errorf("ping audit postgres: %w", err)
 	}
-	d := &DB{db: sqldb}
-	if err := d.ensureSchema(context.Background()); err != nil {
-		sqldb.Close()
-		return nil, err
-	}
-	return d, nil
+	return &DB{db: sqldb}, nil
 }
 
 // OpenSQLite opens (or creates) an audit SQLite database at path. The schema
@@ -106,12 +102,14 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     action     TEXT    NOT NULL,
     actor_id   TEXT,
     project_id TEXT,
+    env_id     TEXT,
     resource   TEXT,
     metadata   TEXT,
     ip         TEXT,
     created_at %s NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_audit_project_id ON audit_logs(project_id);
+CREATE INDEX IF NOT EXISTS idx_audit_env_id     ON audit_logs(env_id);
 CREATE INDEX IF NOT EXISTS idx_audit_created_at ON audit_logs(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_action     ON audit_logs(action);`, tsType))
 	if err != nil {
@@ -134,13 +132,13 @@ func (d *DB) ph(n int) string {
 // safely without producing duplicate rows.
 func (d *DB) UpsertAuditLog(ctx context.Context, e Entry) error {
 	q := fmt.Sprintf(
-		`INSERT INTO audit_logs (id, action, actor_id, project_id, resource, metadata, ip, created_at)
-		 VALUES (%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (id) DO NOTHING`,
-		d.ph(1), d.ph(2), d.ph(3), d.ph(4), d.ph(5), d.ph(6), d.ph(7), d.ph(8),
+		`INSERT INTO audit_logs (id, action, actor_id, project_id, env_id, resource, metadata, ip, created_at)
+		 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (id) DO NOTHING`,
+		d.ph(1), d.ph(2), d.ph(3), d.ph(4), d.ph(5), d.ph(6), d.ph(7), d.ph(8), d.ph(9),
 	)
 	_, err := d.db.ExecContext(ctx, q,
 		e.ID, e.Action,
-		nilIfEmpty(e.ActorID), nilIfEmpty(e.ProjectID),
+		nilIfEmpty(e.ActorID), nilIfEmpty(e.ProjectID), nilIfEmpty(e.EnvID),
 		nilIfEmpty(e.Resource), nilIfEmpty(e.Metadata), nilIfEmpty(e.IP),
 		e.OccurredAt,
 	)
@@ -163,6 +161,11 @@ func (d *DB) ListAuditLogs(ctx context.Context, f Filter) ([]*model.AuditLog, er
 		args = append(args, f.ProjectID)
 		n++
 	}
+	if f.EnvID != "" {
+		where = append(where, "env_id = "+d.ph(n))
+		args = append(args, f.EnvID)
+		n++
+	}
 	if f.Action != "" {
 		where = append(where, "action = "+d.ph(n))
 		args = append(args, f.Action)
@@ -171,7 +174,7 @@ func (d *DB) ListAuditLogs(ctx context.Context, f Filter) ([]*model.AuditLog, er
 	args = append(args, limit)
 
 	q := fmt.Sprintf(
-		`SELECT id, action, actor_id, project_id, resource, metadata, ip, created_at
+		`SELECT id, action, actor_id, project_id, env_id, resource, metadata, ip, created_at
 		 FROM audit_logs WHERE %s ORDER BY created_at DESC LIMIT %s`,
 		strings.Join(where, " AND "), d.ph(n),
 	)
@@ -184,7 +187,7 @@ func (d *DB) ListAuditLogs(ctx context.Context, f Filter) ([]*model.AuditLog, er
 	var out []*model.AuditLog
 	for rows.Next() {
 		e := &model.AuditLog{}
-		if err := rows.Scan(&e.ID, &e.Action, &e.ActorID, &e.ProjectID,
+		if err := rows.Scan(&e.ID, &e.Action, &e.ActorID, &e.ProjectID, &e.EnvID,
 			&e.Resource, &e.Metadata, &e.IP, &e.CreatedAt); err != nil {
 			return nil, err
 		}

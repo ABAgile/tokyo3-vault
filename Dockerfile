@@ -2,7 +2,7 @@
 FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS builder
 
 ARG TARGETOS=linux
-ARG TARGETARCH=amd64
+ARG TARGETARCH=arm64
 
 WORKDIR /src
 
@@ -10,30 +10,14 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 
-COPY . .
-
-# Build args for version stamping — override in CI with --build-arg.
-ARG VERSION=dev
-ARG COMMIT=unknown
-ARG BUILD_TIME=unknown
-
-ENV MODULE=github.com/abagile/tokyo3-vault
+COPY cmd/ cmd/
+COPY internal/ internal/
 
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build \
-      -ldflags="-s -w \
-        -X '${MODULE}/internal/build.Version=${VERSION}' \
-        -X '${MODULE}/internal/build.Commit=${COMMIT}' \
-        -X '${MODULE}/internal/build.BuildTime=${BUILD_TIME}'" \
-      -o /out/vaultd ./cmd/vaultd
+    go build -ldflags="-s -w" -o /out/vaultd ./cmd/vaultd
 
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build \
-      -ldflags="-s -w \
-        -X '${MODULE}/internal/build.Version=${VERSION}' \
-        -X '${MODULE}/internal/build.Commit=${COMMIT}' \
-        -X '${MODULE}/internal/build.BuildTime=${BUILD_TIME}'" \
-      -o /out/vault ./cmd/vault
+    go build -ldflags="-s -w" -o /out/vault ./cmd/vault
 
 # ── Stage 2: Runtime image ─────────────────────────────────────────────────────
 FROM alpine:3.21
@@ -44,8 +28,6 @@ RUN apk add --no-cache ca-certificates
 COPY --from=builder /out/vaultd /usr/local/bin/vaultd
 COPY --from=builder /out/vault  /usr/local/bin/vault
 
-# /data is used when SQLite is chosen over Postgres (VAULT_DB_PATH / AUDIT_*_DB_PATH).
-VOLUME /data
 EXPOSE 8443
 
 # Default: run the API server.

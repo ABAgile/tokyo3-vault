@@ -143,15 +143,17 @@ GET /api/v1/audit (reader credential)
 
 **Tamper evidence**: the NATS stream is configured with `DenyDelete` and `DenyPurge`, so no individual message or the entire stream can be deleted via the NATS API. `FileStorage` ensures records survive restarts.
 
-**Credential separation** (five distinct identities):
+**Credential separation** (six distinct identities):
 
 | Identity | Rights | Used by |
 |----------|--------|---------|
-| `vault_app` | full CRUD on main DB | `vaultd serve` |
+| `vault_app` | DML-only on main DB | `vaultd serve` (runtime) |
+| `vault` (admin) | DDL on main DB | `vaultd serve` (startup migration only) |
 | `nats_publisher` | PUBLISH-only on `audit.events` | `vaultd serve` |
 | `vault_audit_reader` | SELECT-only on `audit_logs` | `vaultd serve` (GET /api/v1/audit) |
 | `nats_consumer` | SUBSCRIBE + consumer management | `vaultd audit-consumer` |
-| `vault_audit_writer` | INSERT-only on `audit_logs` | `vaultd audit-consumer` |
+| `vault_audit_writer` | INSERT-only on `audit_logs` | `vaultd audit-consumer` (runtime) |
+| `vault_audit` (admin) | DDL on audit DB | `vaultd audit-consumer` (startup migration only) |
 
 ### Covered events
 
@@ -177,6 +179,7 @@ GET /api/v1/audit (reader credential)
 | `action` | Action string, e.g. `secret.get` — see Covered events table above |
 | `actor_id` | Token ID of the caller; empty for unauthenticated operations |
 | `project_id` | Empty string when not project-scoped |
+| `env_id` | Environment UUID for env-scoped actions (`secret.*`, `dynamic.*`, `env.*`); empty otherwise |
 | `resource` | Identifies the affected resource (secret key name, user email, SPIFFE ID, etc.) |
 | `metadata` | Free-form string; secret values are masked to first 3 characters + `...` |
 | `ip` | From `X-Forwarded-For` header (first value) or `RemoteAddr` |

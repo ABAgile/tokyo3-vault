@@ -2,7 +2,7 @@
 
 > Source: [`internal/model/model.go`](../internal/model/model.go)
 
-> **Note on `AUDIT_LOG`**: this entity lives in a physically separate audit database (`AUDIT_DATABASE_URL` / `AUDIT_DB_PATH`), not in the main vault DB. Its `actor_id` and `project_id` columns are plain TEXT — there are no enforced foreign keys. Relationship arrows to PROJECT and TOKEN are logical documentation only.
+> **Note on `AUDIT_LOG`**: this entity lives in a physically separate audit database (see `AUDIT_DATABASE_URL` / `AUDIT_WRITE_DATABASE_URL`), not in the main vault DB. Its `actor_id`, `project_id`, and `env_id` columns are plain TEXT — there are no enforced foreign keys. Relationship arrows to PROJECT, ENVIRONMENT, and TOKEN are logical documentation only. Schema is managed by `internal/audit/migrations/` and applied by `vaultd audit-consumer` at startup.
 
 ```mermaid
 erDiagram
@@ -80,6 +80,7 @@ erDiagram
         string action     "e.g. secret.set"
         string actor_id   "TOKEN id; no FK — separate audit DB"
         string project_id "PROJECT id; no FK — separate audit DB"
+        string env_id     "ENVIRONMENT id; no FK — nullable"
         string resource   "nullable"
         string metadata   "free-form JSON; nullable"
         string ip         "nullable"
@@ -132,6 +133,7 @@ erDiagram
     PROJECT          ||--o{ DYNAMIC_BACKEND : "configures"
     PROJECT          ||--o{ DYNAMIC_LEASE   : "tracks"
     PROJECT          ||--o{ AUDIT_LOG       : "logged under (logical ref only)"
+    ENVIRONMENT      ||--o{ AUDIT_LOG       : "scoped to (logical ref only)"
     PROJECT          }o--o{ TOKEN           : "scopes (optional)"
     PROJECT          }o--o{ CERT_PRINCIPAL  : "scopes (optional)"
 

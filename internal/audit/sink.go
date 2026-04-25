@@ -34,6 +34,7 @@ type Entry struct {
 	Action     string    `json:"action"`
 	ActorID    string    `json:"actor_id,omitempty"`
 	ProjectID  string    `json:"project_id,omitempty"`
+	EnvID      string    `json:"env_id,omitempty"`
 	Resource   string    `json:"resource,omitempty"`
 	IP         string    `json:"ip,omitempty"`
 	Metadata   string    `json:"metadata,omitempty"`

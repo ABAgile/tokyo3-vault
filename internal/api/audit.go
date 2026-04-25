@@ -74,26 +74,28 @@ const (
 // the current request: write HTTP 500 and return immediately so that sensitive
 // operations are never served without a durable audit record (fail-closed).
 func (s *Server) logAudit(r *http.Request, action, projectID, resource string) error {
-	return s.logAuditMeta(r, action, projectID, resource, "")
+	return s.logAuditEnv(r, action, projectID, "", resource, "")
 }
 
-// logAuditMeta is like logAudit but also carries a free-form JSON metadata
-// string (e.g. masked secret value). Returns an error on publish failure.
-func (s *Server) logAuditMeta(r *http.Request, action, projectID, resource, metadata string) error {
+// logAuditEnv is the canonical audit helper. envID scopes the entry to a
+// specific environment (empty for project-level or global actions). metadata
+// is an optional free-form JSON string. Returns an error on publish failure.
+func (s *Server) logAuditEnv(r *http.Request, action, projectID, envID, resource, metadata string) error {
 	tok := tokenFromCtx(r)
 
 	e := audit.Entry{
 		ID:         uuid.NewString(),
 		Action:     action,
 		OccurredAt: time.Now().UTC(),
+		ProjectID:  projectID,
+		EnvID:      envID,
+		Resource:   resource,
+		Metadata:   metadata,
+		IP:         clientIP(r),
 	}
 	if tok != nil {
 		e.ActorID = tok.ID
 	}
-	e.ProjectID = projectID
-	e.Resource = resource
-	e.Metadata = metadata
-	e.IP = clientIP(r)
 
 	if err := s.audit.Log(r.Context(), e); err != nil {
 		s.log.Error("audit write failed — request blocked (fail-closed)",
@@ -121,6 +123,7 @@ type auditLogResponse struct {
 	Action    string  `json:"action"`
 	ActorID   *string `json:"actor_id,omitempty"`
 	ProjectID *string `json:"project_id,omitempty"`
+	EnvID     *string `json:"env_id,omitempty"`
 	Resource  *string `json:"resource,omitempty"`
 	Metadata  *string `json:"metadata,omitempty"`
 	IP        *string `json:"ip,omitempty"`
@@ -128,7 +131,7 @@ type auditLogResponse struct {
 }
 
 // handleListAuditLogs serves GET /api/v1/audit
-// Query params: project=<slug>, action=<string>, limit=<int>
+// Query params: project=<slug>, env=<slug>, action=<string>, limit=<int>
 //
 // Access:
 //   - With ?project=<slug>: requires project owner role (or server admin).
@@ -160,6 +163,20 @@ func (s *Server) handleListAuditLogs(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		f.ProjectID = p.ID
+
+		if envSlug := r.URL.Query().Get("env"); envSlug != "" {
+			env, err := s.store.GetEnvironment(r.Context(), p.ID, envSlug)
+			if errors.Is(err, store.ErrNotFound) {
+				writeError(w, http.StatusNotFound, "environment not found")
+				return
+			}
+			if err != nil {
+				s.log.Error("get environment for audit", "err", err)
+				writeError(w, http.StatusInternalServerError, "internal error")
+				return
+			}
+			f.EnvID = env.ID
+		}
 	} else {
 		if !s.requireServerAdmin(w, r) {
 			return
@@ -192,6 +209,7 @@ func (s *Server) handleListAuditLogs(w http.ResponseWriter, r *http.Request) {
 			Action:    e.Action,
 			ActorID:   e.ActorID,
 			ProjectID: e.ProjectID,
+			EnvID:     e.EnvID,
 			Resource:  e.Resource,
 			Metadata:  e.Metadata,
 			IP:        e.IP,

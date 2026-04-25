@@ -5,4 +5,3 @@ bin/
 .dev.env
 .git/
 .gitignore
-vault-dev.db

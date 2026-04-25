@@ -66,7 +66,7 @@ Three subcommands:
 
 1. Dispatch `audit-consumer` early (before opening the main store) if that subcommand was requested
 2. Parse key provider from env (`VAULT_MASTER_KEY` or `VAULT_KMS_KEY_ID`)
-3. Open and auto-migrate the store (`VAULT_DATABASE_URL` → Postgres; `VAULT_DB_PATH` → SQLite)
+3. Open the main store: for Postgres, run schema migrations with `VAULT_ADMIN_DATABASE_URL` (owner/DDL role) then open the runtime connection with `VAULT_DATABASE_URL` (DML-only `vault_app` role); for SQLite, open `VAULT_DB_PATH` directly (migrations run inline)
 4. Create `ProjectKeyCache` with configurable TTL (default 5 minutes)
 5. Dispatch `migrate-keys` → `runMigrateKeys(); exit` if that subcommand was requested
 6. Open `audit.JetStreamSink` (publisher credential, PUBLISH-only on `audit.events`); falls back to `NoopSink` when `NATS_URL` is unset
@@ -165,7 +165,11 @@ Key relationships:
 |----------|----------|---------|-------------|
 | `VAULT_MASTER_KEY` | one of two | — | 64-char hex AES-256 KEK (dev only) |
 | `VAULT_KMS_KEY_ID` | one of two | — | AWS KMS key ID, ARN, or alias |
-| `VAULT_DATABASE_URL` | one of two | — | Postgres DSN |
+| `VAULT_ADMIN_DATABASE_URL` | no | falls back to `VAULT_DATABASE_URL` | Postgres DSN for schema migrations (owner/DDL role) |
+| `VAULT_ADMIN_DB_SSL_CERT` | no | — | Client cert for admin DB mTLS |
+| `VAULT_ADMIN_DB_SSL_KEY` | no | — | Client key for admin DB mTLS |
+| `VAULT_ADMIN_DB_SSL_CA` | no | — | CA cert to verify admin Postgres server |
+| `VAULT_DATABASE_URL` | one of two | — | Postgres DSN (DML-only `vault_app` role) |
 | `VAULT_DB_PATH` | one of two | `vault.db` | SQLite file path |
 | `VAULT_ADDR` | no | `:8443` | Listen address |
 | `VAULT_TLS_CERT` | no | — | TLS certificate PEM (hot-reloaded) |
@@ -173,7 +177,7 @@ Key relationships:
 | `VAULT_TLS_CLIENT_CA` | no | — | CA PEM for mTLS client verification |
 | `VAULT_DB_SSL_CERT` | no | — | Client cert for vault→Postgres TLS |
 | `VAULT_DB_SSL_KEY` | no | — | Client key for vault→Postgres TLS |
-| `VAULT_DB_SSL_ROOTCERT` | no | — | CA cert to verify Postgres server |
+| `VAULT_DB_SSL_CA` | no | — | CA cert to verify Postgres server |
 | `VAULT_PROJECT_KEY_CACHE_TTL` | no | `5m` | How long plaintext PEKs stay in RAM |
 | `VAULT_OIDC_ISSUER` | no | — | IdP issuer URL; enables OIDC when set (all four OIDC vars required together) |
 | `VAULT_OIDC_CLIENT_ID` | no | — | OAuth2 client ID |
@@ -193,7 +197,7 @@ Key relationships:
 | `AUDIT_DB_PATH` | no | — | SQLite path for audit query DB |
 | `AUDIT_DB_SSL_CERT` | no | — | Client cert PEM for audit DB mTLS |
 | `AUDIT_DB_SSL_KEY` | no | — | Client key PEM for audit DB mTLS |
-| `AUDIT_DB_SSL_ROOTCERT` | no | — | CA cert PEM for audit DB server verification |
+| `AUDIT_DB_SSL_CA` | no | — | CA cert PEM for audit DB server verification |
 
 **Audit consumer — `vaultd audit-consumer` (completely separate credentials)**
 
@@ -203,8 +207,12 @@ Key relationships:
 | `NATS_CONSUMER_CERT` | no | — | mTLS client cert PEM for consumer |
 | `NATS_CONSUMER_KEY` | no | — | mTLS client key PEM for consumer |
 | `NATS_CONSUMER_CA` | no | — | CA PEM for NATS server verification |
-| `AUDIT_WRITE_DATABASE_URL` | one of two | — | Postgres DSN (INSERT-only audit writer) |
-| `AUDIT_WRITE_DB_PATH` | one of two | `audit.db` | SQLite path for audit write DB |
+| `AUDIT_ADMIN_DATABASE_URL` | no | falls back to `AUDIT_WRITE_DATABASE_URL` | Postgres DSN for schema migrations (`vault_audit` owner/DDL role) |
+| `AUDIT_ADMIN_DB_SSL_CERT` | no | — | Client cert for audit admin DB mTLS |
+| `AUDIT_ADMIN_DB_SSL_KEY` | no | — | Client key for audit admin DB mTLS |
+| `AUDIT_ADMIN_DB_SSL_CA` | no | — | CA cert to verify audit admin Postgres server |
+| `AUDIT_WRITE_DATABASE_URL` | one of two | — | Postgres DSN (INSERT-only `vault_audit_writer` role) |
+| `AUDIT_WRITE_DB_PATH` | one of two | `audit.db` | SQLite path for audit write DB (dev only) |
 | `AUDIT_WRITE_DB_SSL_CERT` | no | — | Client cert PEM for audit write DB mTLS |
 | `AUDIT_WRITE_DB_SSL_KEY` | no | — | Client key PEM for audit write DB mTLS |
-| `AUDIT_WRITE_DB_SSL_ROOTCERT` | no | — | CA cert PEM for audit write DB server verification |
+| `AUDIT_WRITE_DB_SSL_CA` | no | — | CA cert PEM for audit write DB server verification |

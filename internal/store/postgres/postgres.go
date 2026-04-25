@@ -27,7 +27,34 @@ type DB struct {
 	db *sql.DB
 }
 
-// Open connects to a Postgres database and runs migrations.
+// Migrate connects to Postgres with dsn (the admin/owner role) and runs all
+// pending schema migrations. Call this once at startup before opening the
+// restricted runtime connection via OpenWithTLS. tlsCfg may be nil.
+func Migrate(dsn string, tlsCfg *tls.Config) error {
+	var db *sql.DB
+	if tlsCfg != nil {
+		connCfg, err := pgx.ParseConfig(dsn)
+		if err != nil {
+			return fmt.Errorf("parse admin postgres dsn: %w", err)
+		}
+		connCfg.TLSConfig = tlsCfg
+		db = pgxstdlib.OpenDB(*connCfg)
+	} else {
+		var err error
+		db, err = sql.Open("pgx", dsn)
+		if err != nil {
+			return fmt.Errorf("open admin postgres: %w", err)
+		}
+	}
+	defer db.Close()
+	if err := db.Ping(); err != nil {
+		return fmt.Errorf("ping admin postgres: %w", err)
+	}
+	return (&DB{db: db}).migrate()
+}
+
+// Open connects to a Postgres database. Schema migration is the caller's
+// responsibility — call Migrate with an admin DSN first.
 // dsn is a postgres:// URL or a key=value connection string.
 func Open(dsn string) (*DB, error) {
 	return OpenWithTLS(dsn, nil)
@@ -35,6 +62,7 @@ func Open(dsn string) (*DB, error) {
 
 // OpenWithTLS connects using a custom TLS config, enabling client certificate
 // authentication when tlsCfg is non-nil. Pass nil for a plain (DSN-only) connection.
+// Schema migration is the caller's responsibility — call Migrate with an admin DSN first.
 func OpenWithTLS(dsn string, tlsCfg *tls.Config) (*DB, error) {
 	var db *sql.DB
 	if tlsCfg != nil {
@@ -59,11 +87,7 @@ func OpenWithTLS(dsn string, tlsCfg *tls.Config) (*DB, error) {
 	if err := db.Ping(); err != nil {
 		return nil, fmt.Errorf("ping postgres: %w", err)
 	}
-	s := &DB{db: db}
-	if err := s.migrate(); err != nil {
-		return nil, fmt.Errorf("migrate: %w", err)
-	}
-	return s, nil
+	return &DB{db: db}, nil
 }
 
 func (s *DB) migrate() error {

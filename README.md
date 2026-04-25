@@ -269,7 +269,7 @@ These restrictions narrow access — they cannot grant more than the owning user
 |---|---|---|
 | `VAULT_DB_SSL_CERT` | — | Path to PEM client certificate for the vault store PostgreSQL connection. |
 | `VAULT_DB_SSL_KEY` | — | Path to PEM private key paired with `VAULT_DB_SSL_CERT`. |
-| `VAULT_DB_SSL_ROOTCERT` | — | Path to PEM CA certificate for server verification of the vault store connection. |
+| `VAULT_DB_SSL_CA` | — | Path to PEM CA certificate for server verification of the vault store connection. |
 
 Set all three `VAULT_DB_SSL_*` vars together to authenticate vault's admin database connection via client certificate instead of a password in the DSN.
 
@@ -294,7 +294,7 @@ If `NATS_URL` is unset, audit events are discarded (development only). In produc
 | `AUDIT_DB_PATH` | — | SQLite path for audit query DB (alternative to Postgres) |
 | `AUDIT_DB_SSL_CERT` | — | Client certificate PEM path for audit DB mTLS |
 | `AUDIT_DB_SSL_KEY` | — | Client key PEM path for audit DB mTLS |
-| `AUDIT_DB_SSL_ROOTCERT` | — | CA certificate PEM path for audit DB server verification |
+| `AUDIT_DB_SSL_CA` | — | CA certificate PEM path for audit DB server verification |
 
 **Audit consumer — `vaultd audit-consumer` (completely separate credentials):**
 
@@ -308,7 +308,7 @@ If `NATS_URL` is unset, audit events are discarded (development only). In produc
 | `AUDIT_WRITE_DB_PATH` | `audit.db` | SQLite path for audit write DB |
 | `AUDIT_WRITE_DB_SSL_CERT` | — | Client certificate PEM path for audit write DB mTLS |
 | `AUDIT_WRITE_DB_SSL_KEY` | — | Client key PEM path for audit write DB mTLS |
-| `AUDIT_WRITE_DB_SSL_ROOTCERT` | — | CA certificate PEM path for audit write DB server verification |
+| `AUDIT_WRITE_DB_SSL_CA` | — | CA certificate PEM path for audit write DB server verification |
 
 ### vaultd subcommands
 

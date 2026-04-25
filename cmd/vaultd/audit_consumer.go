@@ -10,11 +10,15 @@ package main
 //	NATS_CONSUMER_CERT            Consumer client certificate PEM path (mTLS)
 //	NATS_CONSUMER_KEY             Consumer client key PEM path
 //	NATS_CONSUMER_CA              CA certificate PEM path for NATS server verification
-//	AUDIT_WRITE_DATABASE_URL      Postgres DSN (vault_audit_writer user)
+//	AUDIT_ADMIN_DATABASE_URL      Postgres DSN for schema migrations (vault_audit owner — DDL)
+//	AUDIT_ADMIN_DB_SSL_CERT       Client cert for audit admin DB mTLS
+//	AUDIT_ADMIN_DB_SSL_KEY        Client key for audit admin DB mTLS
+//	AUDIT_ADMIN_DB_SSL_CA         CA cert for audit admin DB server verification
+//	AUDIT_WRITE_DATABASE_URL      Postgres DSN (vault_audit_writer user — INSERT-only)
 //	AUDIT_WRITE_DB_PATH           SQLite path (alternative to Postgres; default: audit.db)
 //	AUDIT_WRITE_DB_SSL_CERT       Client cert for audit DB mTLS
 //	AUDIT_WRITE_DB_SSL_KEY        Client key for audit DB mTLS
-//	AUDIT_WRITE_DB_SSL_ROOTCERT   CA cert for audit DB server verification
+//	AUDIT_WRITE_DB_SSL_CA         CA cert for audit DB server verification
 //
 // The consumer connects to NATS with a credential that has SUBSCRIBE + consumer
 // management rights on audit.events — distinct from the publisher credential
@@ -42,6 +46,10 @@ const auditConsumerName = "audit-db-writer"
 // runAuditConsumer is the entry point for `vaultd audit-consumer`. It blocks
 // until ctx is cancelled (SIGINT/SIGTERM).
 func runAuditConsumer(ctx context.Context, log *slog.Logger) error {
+	if err := migrateAuditDB(log); err != nil {
+		return fmt.Errorf("audit db migration: %w", err)
+	}
+
 	adb, err := openAuditWriteDB(log)
 	if err != nil {
 		return fmt.Errorf("open audit write db: %w", err)
@@ -130,12 +138,41 @@ func runAuditConsumer(ctx context.Context, log *slog.Logger) error {
 	}
 }
 
+// migrateAuditDB runs audit schema migrations with the admin DSN. Falls back
+// to AUDIT_WRITE_DATABASE_URL with a warning when AUDIT_ADMIN_DATABASE_URL is
+// not set. Skipped entirely when AUDIT_WRITE_DATABASE_URL is also unset (SQLite).
+func migrateAuditDB(log *slog.Logger) error {
+	writeDSN := os.Getenv("AUDIT_WRITE_DATABASE_URL")
+	if writeDSN == "" {
+		return nil // SQLite: ensureSchema handles this in OpenSQLite
+	}
+	adminDSN := os.Getenv("AUDIT_ADMIN_DATABASE_URL")
+	if adminDSN == "" {
+		log.Warn("AUDIT_ADMIN_DATABASE_URL not set — using AUDIT_WRITE_DATABASE_URL for schema migration (not for production)")
+		adminDSN = writeDSN
+	}
+	tlsCfg, err := tlsutil.FromFiles(
+		os.Getenv("AUDIT_ADMIN_DB_SSL_CERT"),
+		os.Getenv("AUDIT_ADMIN_DB_SSL_KEY"),
+		os.Getenv("AUDIT_ADMIN_DB_SSL_CA"),
+	)
+	if err != nil {
+		return fmt.Errorf("audit admin db TLS: %w", err)
+	}
+	if tlsCfg != nil {
+		log.Info("audit db: schema migration with mTLS client cert")
+	} else {
+		log.Info("audit db: running schema migrations")
+	}
+	return audit.Migrate(adminDSN, tlsCfg)
+}
+
 func openAuditWriteDB(log *slog.Logger) (*audit.DB, error) {
 	if dsn := os.Getenv("AUDIT_WRITE_DATABASE_URL"); dsn != "" {
 		tlsCfg, err := tlsutil.FromFiles(
 			os.Getenv("AUDIT_WRITE_DB_SSL_CERT"),
 			os.Getenv("AUDIT_WRITE_DB_SSL_KEY"),
-			os.Getenv("AUDIT_WRITE_DB_SSL_ROOTCERT"),
+			os.Getenv("AUDIT_WRITE_DB_SSL_CA"),
 		)
 		if err != nil {
 			return nil, fmt.Errorf("audit write db TLS: %w", err)

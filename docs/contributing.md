@@ -21,9 +21,12 @@ gofmt -s -w .
 # Start a local server (auto-generates VAULT_MASTER_KEY + SQLite on first run)
 make run-server
 
-# Start with docker compose (SQLite + Litestream, or --profile postgres for Postgres)
+# Start with docker compose (Postgres + NATS + audit-consumer)
 make docker-up
-make docker-up-postgres
+
+# mTLS overlay (generates certs first, then brings up with mutual TLS)
+bash certs/gen.sh
+make docker-up-mtls
 ```
 
 Always run in order: `gofmt -s -w .` → `make test` → `staticcheck ./...` before committing.
@@ -33,10 +36,10 @@ Always run in order: `gofmt -s -w .` → `make test` → `staticcheck ./...` bef
 ```
 cmd/
   vault/        CLI client entry point
-  vaultd/       Server entry point (startup, env parsing, TLS config)
+  vaultd/       Server entry point (startup, env parsing, TLS config, audit-consumer)
 internal/
   api/          HTTP handlers and middleware
-  audit/        Audit pipeline — Sink interface, JetStreamSink, audit DB, Entry type
+  audit/        Audit pipeline — Sink, JetStreamSink, DB, Entry, Migrate; migrations/
   auth/         Password hashing + token generation/validation
   build/        Version metadata
   crypto/       AES-256-GCM helpers, KeyProvider interface, ProjectKeyCache
@@ -47,12 +50,16 @@ internal/
     postgres/   PostgreSQL implementation + migrations
     sqlite/     SQLite implementation + migrations (same schema)
   tlsutil/      TLS certificate loading + self-signed cert generation
+certs/          gen.sh — generates CA + server/client certs for the mTLS overlay
+postgres/       DB init scripts (role creation; schema managed by migrations)
 docs/           Architecture and reference documentation
 ```
 
 ## Database migrations
 
-Migrations live in `internal/store/postgres/migrations/` and `internal/store/sqlite/migrations/`. They are embedded into the binary at compile time via `//go:embed`.
+### Main vault DB
+
+Migrations live in `internal/store/postgres/migrations/` and `internal/store/sqlite/migrations/`. They are embedded into the binary at compile time via `//go:embed` and run at `vaultd serve` startup with the admin credential (`VAULT_ADMIN_DATABASE_URL`).
 
 Naming convention: `NNN_description.sql` (zero-padded 3-digit prefix). Files are sorted lexicographically and applied in order; each file is applied exactly once. The `schema_migrations` table tracks which files have been applied.
 
@@ -61,6 +68,12 @@ To add a migration:
 1. Create `NNN_your_change.sql` in both `postgres/migrations/` and `sqlite/migrations/` — the SQL will usually differ slightly between dialects.
 2. Test with `go test ./internal/store/...`.
 3. Do not modify existing migration files — always add a new one.
+
+### Audit DB
+
+Audit DB migrations live in `internal/audit/migrations/` (Postgres only — the SQLite dev path handles schema inline via `ensureSchema`). They are embedded into the `audit` package and run by `vaultd audit-consumer` at startup using `AUDIT_ADMIN_DATABASE_URL` (the `vault_audit` owner role).
+
+Role setup (users, grants) is handled once at postgres first-start by `postgres/audit-db-init.sh`. Schema (tables, indexes) is owned by the versioned migration files.
 
 ## Adding a new dynamic backend type
 
@@ -99,9 +112,15 @@ Implement `internal/store/store.go`'s `Store` interface (about 40 methods). See 
 1. Add handler(s) to the appropriate file in `internal/api/` (or create a new file).
 2. Register the route in `internal/api/server.go`'s `Routes()` method — all protected routes must be wrapped with `s.auth(...)`.
 3. Add audit log constant(s) to `internal/api/audit.go`.
-4. Call `s.logAudit` and **check the error** (fail-closed — if the audit publish fails the request must not complete):
+4. Call the appropriate audit helper and **check the error** (fail-closed — if the audit publish fails the request must not complete):
    ```go
+   // Non-env-scoped actions (auth, users, tokens, members, certs, projects):
    if err := s.logAudit(r, ActionXxx, projectID, resource); err != nil {
+       writeError(w, http.StatusInternalServerError, "audit unavailable")
+       return
+   }
+   // Env-scoped actions (secrets, dynamic backends/roles/leases):
+   if err := s.logAuditEnv(r, ActionXxx, projectID, envID, resource, metadata); err != nil {
        writeError(w, http.StatusInternalServerError, "audit unavailable")
        return
    }
@@ -158,7 +177,9 @@ Authentication endpoints (`/login`, `/signup`) have no rate limiting. Deploy beh
 
 ### SQLite vs Postgres
 
-SQLite is appropriate for single-node deployments where Litestream or similar replication is used for durability. For multi-instance or high-availability deployments, use Postgres. The store interface abstracts all persistence; no application logic changes are needed when switching.
+SQLite is appropriate for single-node development or small deployments with external backup. For multi-instance or high-availability deployments, use Postgres. The store interface abstracts all persistence; no application logic changes are needed when switching.
+
+The audit DB is always Postgres in production (set `AUDIT_WRITE_DATABASE_URL`). The SQLite fallback (`AUDIT_WRITE_DB_PATH`) is for local development only — the audit-consumer's `ensureSchema` handles schema creation automatically for SQLite, so no migrations directory is needed.
 
 ### TLS certificate rotation
 

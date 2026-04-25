@@ -2,13 +2,16 @@
 
 > Step-by-step traces of the most important operations.
 
-## Server startup
+## Server startup (`vaultd serve`)
 
 ```
 main()
- ├─ [audit-consumer subcommand] → runAuditConsumer(); exit   — separate credential set
+ ├─ [audit-consumer subcommand] → runAuditConsumer(); exit   — see below
  ├─ openKeyProvider()        — parse VAULT_MASTER_KEY / VAULT_KMS_KEY_ID
- ├─ openStore()              — open Postgres or SQLite; apply pending migrations
+ ├─ openStore()
+ │   ├─ Postgres: migrateVaultDB(VAULT_ADMIN_DATABASE_URL, admin cred) → run migrations
+ │   │            OpenWithTLS(VAULT_DATABASE_URL, vault_app cred)       → runtime pool
+ │   └─ SQLite:  sqlite.Open(VAULT_DB_PATH) — migrations run inline
  ├─ NewProjectKeyCache(kp)   — in-memory PEK cache, TTL from VAULT_PROJECT_KEY_CACHE_TTL
  ├─ [migrate-keys subcommand] → runMigrateKeys(); exit
  ├─ openAuditSink()          — NATS JetStream publisher (PUBLISH-only); NoopSink if NATS_URL unset
@@ -21,6 +24,24 @@ main()
 ```
 
 All routes pass through the `limitBody` middleware (4 MB cap) and then the per-route `auth` middleware.
+
+## Audit consumer startup (`vaultd audit-consumer`)
+
+```
+runAuditConsumer()
+ ├─ migrateAuditDB()
+ │   ├─ AUDIT_WRITE_DATABASE_URL unset? → skip (SQLite path: ensureSchema runs in OpenSQLite)
+ │   ├─ AUDIT_ADMIN_DATABASE_URL set?   → use it (vault_audit owner, DDL rights)
+ │   │   else warn + fall back to AUDIT_WRITE_DATABASE_URL
+ │   └─ audit.Migrate(adminDSN, tlsCfg) — apply pending NNN_*.sql from internal/audit/migrations/
+ ├─ openAuditWriteDB()
+ │   ├─ AUDIT_WRITE_DATABASE_URL set → OpenPostgres (vault_audit_writer, INSERT-only)
+ │   └─ else                         → OpenSQLite(AUDIT_WRITE_DB_PATH, default: audit.db)
+ ├─ connectConsumerNATS()   — NATS_URL + optional mTLS (NATS_CONSUMER_CERT/KEY/CA)
+ ├─ js.CreateOrUpdateStream() — idempotent: ensures AUDIT stream exists
+ └─ loop: cons.Fetch(64) → json.Unmarshal → adb.UpsertAuditLog (ON CONFLICT DO NOTHING)
+           Ack on success; Nak on upsert failure; Ack+discard on unmarshal failure
+```
 
 ## Authentication middleware (every protected request)
 
@@ -63,7 +84,7 @@ GET /v1/projects/{project}/envs/{env}/secrets/{key}
  │   └─ projectKP.UnwrapDEK(encDEK) → 32-byte DEK
  │      AES-256-GCM open(DEK, encValue) → plaintext
  │
- ├─ logAuditMeta(action=secret.get, resource=key, metadata={masked value})
+ ├─ logAuditEnv(action=secret.get, projectID, envID, resource=key, metadata={masked value})
  │   └─ audit.Sink.Log → NATS JetStream (fail-closed: HTTP 500 if publish fails)
  └─ JSON response: {key, value, version, ...}
 ```
@@ -88,9 +109,9 @@ PUT /v1/projects/{project}/envs/{env}/secrets/{key}
  │   ├─ INSERT secret_version (version = MAX+1)
  │   └─ UPDATE secret.current_version_id
  │
- ├─ logAuditMeta(action=secret.set, metadata={masked value})
+ ├─ logAuditEnv(action=secret.set, projectID, envID, resource=key, metadata="")
  │   └─ audit.Sink.Log → NATS JetStream (fail-closed)
- └─ 204 No Content
+ └─ JSON response: {id, version, created_at, created_by}
 ```
 
 ## Issuing dynamic credentials
@@ -121,7 +142,7 @@ POST /v1/projects/{project}/envs/{env}/dynamic/{backend}/roles/{role}/creds
  │       revocation_tmpl (snapshot),   ← denormalized so deletion of role/backend
  │       expires_at, created_by)        ← doesn't block future revocation
  │
- ├─ logAuditMeta(action=dynamic.lease.issue, metadata={username, ttl, masked password})
+ ├─ logAuditEnv(action=dynamic.lease.issue, projectID, envID, resource=backendSlug/roleName, metadata={username, ttl, masked password})
  │   └─ audit.Sink.Log → NATS JetStream (fail-closed)
  └─ JSON response: {username, password, expires_at, lease_id}
      NOTE: password is returned exactly once and never stored in plaintext.
@@ -199,9 +220,9 @@ POST /v1/projects/{project}/envs/{env}/secrets/dotenv
      ├─ crypto.EncryptSecret(kp, value)
      └─ store.SetSecret(...)
  │
- ├─ logAuditMeta(action=secret.dotenv_upload, metadata={count})
- │   └─ audit.Sink.Log → NATS JetStream (fail-closed)
- └─ 204 No Content
+ ├─ logAuditEnv(action=secret.dotenv_upload, projectID, envID, resource=key, metadata={masked value})
+ │   └─ audit.Sink.Log → NATS JetStream (fail-closed, one call per uploaded key)
+ └─ JSON response: {uploaded, skipped}
 ```
 
 ## Secret rollback
@@ -217,7 +238,7 @@ POST /v1/projects/{project}/envs/{env}/secrets/{key}/rollback
  │   └─ not found → 404
  ├─ store.RollbackSecret(secret.ID, version.ID)
  │   └─ UPDATE secret SET current_version_id = version.ID
- ├─ logAudit(action=secret.rollback, metadata={version})
+ ├─ logAuditEnv(action=secret.rollback, projectID, envID, resource=key, metadata="")
  │   └─ audit.Sink.Log → NATS JetStream (fail-closed)
  └─ 204 No Content
      NOTE: a rollback does NOT delete newer versions; they remain available for

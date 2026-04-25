@@ -9,8 +9,17 @@
 //
 // Storage — exactly one must be set:
 //
-//	VAULT_DATABASE_URL    Postgres DSN (postgres://...) — uses Postgres store
-//	VAULT_DB_PATH         SQLite file path (default: vault.db) — uses SQLite store
+//	VAULT_DATABASE_URL      Postgres DSN (postgres://...) — uses Postgres store (vault_app user, DML-only)
+//	VAULT_DB_PATH           SQLite file path (default: vault.db) — uses SQLite store
+//
+// Vault DB admin (Postgres only — schema migration):
+//
+//	VAULT_ADMIN_DATABASE_URL  Postgres DSN for schema migration (vault owner, DDL privileges).
+//	                          Falls back to VAULT_DATABASE_URL if unset, but that requires
+//	                          the runtime role to have DDL privileges — not for production.
+//	VAULT_ADMIN_DB_SSL_CERT   Client cert PEM path for admin DB mTLS
+//	VAULT_ADMIN_DB_SSL_KEY    Client key PEM path for admin DB mTLS
+//	VAULT_ADMIN_DB_SSL_CA     CA cert PEM path for admin DB server verification
 //
 // TLS (server always uses HTTPS):
 //
@@ -28,7 +37,7 @@
 //
 //	VAULT_DB_SSL_CERT     Path to client certificate PEM for the vault→postgres connection.
 //	VAULT_DB_SSL_KEY      Path to client key PEM. Must be paired with VAULT_DB_SSL_CERT.
-//	VAULT_DB_SSL_ROOTCERT Path to CA certificate PEM for verifying the postgres server cert.
+//	VAULT_DB_SSL_CA Path to CA certificate PEM for verifying the postgres server cert.
 //
 // Optional:
 //
@@ -54,7 +63,7 @@
 //	                      Omit both to disable audit log queries (dev only).
 //	AUDIT_DB_SSL_CERT     Client cert PEM path for audit DB mTLS.
 //	AUDIT_DB_SSL_KEY      Client key PEM path for audit DB mTLS.
-//	AUDIT_DB_SSL_ROOTCERT CA cert PEM path for audit DB server verification.
+//	AUDIT_DB_SSL_CA CA cert PEM path for audit DB server verification.
 //
 // Subcommands:
 //
@@ -378,7 +387,7 @@ func openAuditQueryStore(log *slog.Logger) (audit.QueryStore, error) {
 		tlsCfg, err := tlsutil.FromFiles(
 			os.Getenv("AUDIT_DB_SSL_CERT"),
 			os.Getenv("AUDIT_DB_SSL_KEY"),
-			os.Getenv("AUDIT_DB_SSL_ROOTCERT"),
+			os.Getenv("AUDIT_DB_SSL_CA"),
 		)
 		if err != nil {
 			return nil, fmt.Errorf("audit DB TLS: %w", err)
@@ -399,13 +408,42 @@ func openAuditQueryStore(log *slog.Logger) (audit.QueryStore, error) {
 }
 
 // openStore selects SQLite or Postgres based on environment variables.
-// For Postgres, VAULT_DB_SSL_CERT/KEY/ROOTCERT enable client certificate auth.
+// For Postgres, runs schema migrations with the admin DSN first, then opens
+// the runtime connection. VAULT_DB_SSL_CERT/KEY/CA enable client certificate auth.
+// migrateVaultDB runs schema migrations with the admin DSN before the runtime
+// connection is opened. Falls back to VAULT_DATABASE_URL with a warning when
+// VAULT_ADMIN_DATABASE_URL is not set.
+func migrateVaultDB(log *slog.Logger) error {
+	adminDSN := os.Getenv("VAULT_ADMIN_DATABASE_URL")
+	if adminDSN == "" {
+		log.Warn("VAULT_ADMIN_DATABASE_URL not set — using VAULT_DATABASE_URL for schema migration (not for production)")
+		adminDSN = os.Getenv("VAULT_DATABASE_URL")
+	}
+	tlsCfg, err := tlsutil.FromFiles(
+		os.Getenv("VAULT_ADMIN_DB_SSL_CERT"),
+		os.Getenv("VAULT_ADMIN_DB_SSL_KEY"),
+		os.Getenv("VAULT_ADMIN_DB_SSL_CA"),
+	)
+	if err != nil {
+		return fmt.Errorf("vault admin db TLS: %w", err)
+	}
+	if tlsCfg != nil {
+		log.Info("vault db: schema migration with mTLS client cert")
+	} else {
+		log.Info("vault db: running schema migrations")
+	}
+	return postgres.Migrate(adminDSN, tlsCfg)
+}
+
 func openStore(log *slog.Logger) (store.Store, error) {
 	if dsn := os.Getenv("VAULT_DATABASE_URL"); dsn != "" {
+		if err := migrateVaultDB(log); err != nil {
+			return nil, fmt.Errorf("vault db migration: %w", err)
+		}
 		tlsCfg, err := tlsutil.FromFiles(
 			os.Getenv("VAULT_DB_SSL_CERT"),
 			os.Getenv("VAULT_DB_SSL_KEY"),
-			os.Getenv("VAULT_DB_SSL_ROOTCERT"),
+			os.Getenv("VAULT_DB_SSL_CA"),
 		)
 		if err != nil {
 			return nil, fmt.Errorf("postgres TLS config: %w", err)
