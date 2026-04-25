@@ -15,8 +15,9 @@ const (
 	ActionAuthLogin  = "auth.login"
 	ActionAuthLogout = "auth.logout"
 
-	ActionProjectCreate = "project.create"
-	ActionProjectDelete = "project.delete"
+	ActionProjectCreate    = "project.create"
+	ActionProjectDelete    = "project.delete"
+	ActionProjectRotateKey = "project.rotate_key"
 
 	ActionEnvCreate = "env.create"
 	ActionEnvDelete = "env.delete"

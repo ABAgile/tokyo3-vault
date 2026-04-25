@@ -68,10 +68,16 @@ func (Stub) ListProjects(_ context.Context) ([]*model.Project, error) { return n
 func (Stub) ListProjectsByMember(_ context.Context, _ string) ([]*model.Project, error) {
 	return nil, nil
 }
-func (Stub) DeleteProject(_ context.Context, _ string) error           { return nil }
-func (Stub) SetProjectKey(_ context.Context, _ string, _ []byte) error { return nil }
+func (Stub) DeleteProject(_ context.Context, _ string) error { return nil }
+func (Stub) SetProjectKey(_ context.Context, _ string, _ []byte, _ time.Time) error { return nil }
 func (Stub) RewrapProjectDEKs(_ context.Context, _ string, _ func([]byte) ([]byte, error)) error {
 	return nil
+}
+func (Stub) RotateProjectPEK(_ context.Context, _ string, _ []byte, _ time.Time, _ func([]byte) ([]byte, error)) error {
+	return nil
+}
+func (Stub) ListProjectsForPEKRotation(_ context.Context, _ time.Time) ([]*model.Project, error) {
+	return nil, nil
 }
 
 // ── Project members ───────────────────────────────────────────────────────────

@@ -95,6 +95,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/v1/projects", s.auth(s.handleCreateProject))
 	mux.HandleFunc("GET /api/v1/projects/{project}", s.auth(s.handleGetProject))
 	mux.HandleFunc("DELETE /api/v1/projects/{project}", s.auth(s.handleDeleteProject))
+	mux.HandleFunc("POST /api/v1/projects/{project}/rotate-key", s.auth(s.handleRotateProjectKey))
 
 	// Auth
 	mux.HandleFunc("PUT /api/v1/auth/password", s.auth(s.handleChangePassword))

@@ -85,7 +85,8 @@ type Project struct {
 	ID           string
 	Name         string
 	Slug         string
-	EncryptedPEK []byte // PEK wrapped by server KEK; nil until migrated
+	EncryptedPEK []byte     // PEK wrapped by server KEK; nil until migrated
+	PEKRotatedAt *time.Time // nil until first SetProjectKey call
 	CreatedAt    time.Time
 }
 

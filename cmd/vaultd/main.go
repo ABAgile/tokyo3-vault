@@ -45,6 +45,9 @@
 //	VAULT_PROJECT_KEY_CACHE_TTL   How long a project's plaintext PEK stays cached in memory
 //	                              (default: 5m). Longer = fewer KMS calls; shorter = faster
 //	                              effect after PEK rotation. Accepts Go duration strings (5m, 1h).
+//	VAULT_PEK_ROTATION_PERIOD     How long a project PEK may exist before automatic rotation
+//	                              (default: 2160h / 90 days). The background rotator checks
+//	                              every hour; set to 0 to disable automatic rotation.
 //
 // NATS / Audit sink (serve subcommand):
 //
@@ -139,6 +142,19 @@ func main() {
 	revoker := dynamic.NewRevoker(st, kp, projectKP, log)
 	go revoker.Run(ctx)
 
+	rotationPeriod := 90 * 24 * time.Hour
+	if v := os.Getenv("VAULT_PEK_ROTATION_PERIOD"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			rotationPeriod = d
+		} else {
+			log.Warn("invalid VAULT_PEK_ROTATION_PERIOD, using default", "value", v, "default", rotationPeriod)
+		}
+	}
+	if rotationPeriod > 0 {
+		rotator := newPEKRotator(st, kp, projectKP, auditSink, rotationPeriod, log)
+		go rotator.Run(ctx)
+	}
+
 	addr := os.Getenv("VAULT_ADDR")
 	if addr == "" {
 		addr = ":8443"
@@ -193,12 +209,11 @@ func runMigrateKeys(ctx context.Context, st store.Store, kp crypto.KeyProvider, 
 		if err != nil {
 			return fmt.Errorf("wrap PEK for %s: %w", p.Slug, err)
 		}
-		if err := st.SetProjectKey(ctx, p.ID, encPEK); err != nil {
-			return fmt.Errorf("store PEK for %s: %w", p.Slug, err)
-		}
 
+		// RotateProjectPEK stores the new PEK and re-wraps all DEKs atomically.
+		// Old DEKs here are wrapped by the server KEK directly (pre-migration).
 		projectKP := crypto.NewProjectKeyProvider(pek)
-		err = st.RewrapProjectDEKs(ctx, p.ID, func(old []byte) ([]byte, error) {
+		err = st.RotateProjectPEK(ctx, p.ID, encPEK, time.Now().UTC(), func(old []byte) ([]byte, error) {
 			dek, err := kp.UnwrapDEK(ctx, old)
 			if err != nil {
 				return nil, err
@@ -206,7 +221,7 @@ func runMigrateKeys(ctx context.Context, st store.Store, kp crypto.KeyProvider, 
 			return projectKP.WrapDEK(ctx, dek)
 		})
 		if err != nil {
-			return fmt.Errorf("rewrap DEKs for %s: %w", p.Slug, err)
+			return fmt.Errorf("migrate PEK for %s: %w", p.Slug, err)
 		}
 		log.Info("migrate-keys: migrated", "slug", p.Slug, "id", p.ID)
 	}

@@ -16,6 +16,8 @@ main()
  ├─ openAuditSink()          — NATS JetStream publisher (PUBLISH-only); NoopSink if VAULT_NATS_URL unset
  ├─ NewRevoker(...)          — background goroutine: sweep expired leases immediately,
  │                            then every 60 s
+ ├─ newPEKRotator(...)       — background goroutine: sweep stale PEKs immediately,
+ │                            then every 1 h; skipped if VAULT_PEK_ROTATION_PERIOD=0
  ├─ buildServerTLS()         — load cert files (hot-reload) or generate self-signed
  ├─ buildOIDCProvider()      — OIDC provider from VAULT_OIDC_* env vars; nil when unset
  └─ http.Server.ListenAndServeTLS()
@@ -189,15 +191,72 @@ runMigrateKeys(ctx, store, kp)
      for each project where encrypted_pek IS NULL:
       ├─ rand.Read(32)                     — new PEK
       ├─ kp.WrapDEK(pek)                  → encPEK  (may call KMS)
-      ├─ store.SetProjectKey(project.ID, encPEK)
       │
-      └─ store.RewrapProjectDEKs(project.ID, func(oldEncDEK) newEncDEK):
-          ├─ kp.UnwrapDEK(oldEncDEK)      — unwrap under server KEK
-          └─ projectKP.WrapDEK(dek)       — re-wrap under new PEK
-          (entire rewrap is one DB transaction per project)
+      └─ store.RotateProjectPEK(project.ID, encPEK, now(), func(oldEncDEK) newEncDEK):
+          ├─ BEGIN TRANSACTION
+          ├─ for each secret_version DEK:
+          │    kp.UnwrapDEK(oldEncDEK)    — unwrap under server KEK
+          │    projectKP.WrapDEK(dek)     — re-wrap under new PEK
+          ├─ for each dynamic_backend config DEK: same rewrap
+          ├─ UPDATE projects SET encrypted_pek = encPEK, pek_rotated_at = now()
+          └─ COMMIT  (or ROLLBACK on any error — project stays un-migrated, safe to retry)
 ```
 
-Projects with `encrypted_pek != NULL` are silently skipped — safe to re-run at any time.
+Projects with `encrypted_pek IS NOT NULL` are silently skipped — safe to re-run at any time.
+
+## Automatic PEK rotation (background)
+
+```
+PEKRotator.Run(ctx)
+ ├─ sweep() immediately on startup    — catch PEKs that aged past the threshold while
+ │                                      the server was down
+ └─ time.Ticker(1h) → sweep()
+
+sweep():
+ ├─ store.ListProjects()
+ │   └─ for each project where encrypted_pek IS NULL:
+ │        log.Warn("project has no PEK, run vaultd migrate-keys")
+ │
+ ├─ store.ListProjectsForPEKRotation(threshold = now() - VAULT_PEK_ROTATION_PERIOD)
+ │   └─ WHERE encrypted_pek IS NOT NULL
+ │        AND (pek_rotated_at IS NULL OR pek_rotated_at < threshold)
+ │      ORDER BY pek_rotated_at NULLS FIRST
+ │
+ └─ for each stale project:
+     rotateProjectPEK(project)
+      ├─ kp.UnwrapDEK(project.EncryptedPEK)    — plaintext old PEK (stack only, never stored)
+      ├─ rand.Read(32)                           — fresh PEK
+      ├─ kp.WrapDEK(newPEK)                     → newEncPEK  (may call KMS)
+      ├─ store.RotateProjectPEK(project.ID, newEncPEK, now(), rewrapFunc)
+      │   └─ atomic: re-wraps all DEKs + updates encrypted_pek + pek_rotated_at in one tx
+      │      on any failure: ROLLBACK — old PEK remains valid, project retried next sweep
+      ├─ projectKP.Invalidate(project.ID)        — evict cached plaintext PEK
+      ├─ log.Info("rotated PEK")
+      └─ audit.Sink.Log(action=project.rotate_key)  — best-effort; rotation already committed
+```
+
+## On-demand PEK rotation (API)
+
+```
+POST /api/v1/projects/{slug}/rotate-key
+ │
+ ├─ auth middleware
+ ├─ store.GetProject(slug)
+ ├─ requireOwner(tok, project.ID)       — owner-only; machine tokens rejected
+ ├─ project.EncryptedPEK == nil?        → 409 Conflict (run migrate-keys first)
+ │
+ ├─ kp.UnwrapDEK(project.EncryptedPEK) — plaintext old PEK
+ ├─ rand.Read(32)                        — fresh PEK
+ ├─ kp.WrapDEK(newPEK)                  → newEncPEK
+ │
+ ├─ store.RotateProjectPEK(project.ID, newEncPEK, now(), rewrapFunc)
+ │   └─ atomic: re-wraps all DEKs + updates encrypted_pek + pek_rotated_at in one tx
+ │
+ ├─ projectKP.Invalidate(project.ID)
+ ├─ logAudit(action=project.rotate_key, projectID, resource=slug)
+ │   └─ audit.Sink.Log → NATS JetStream (fail-closed: HTTP 500 if publish fails)
+ └─ 204 No Content
+```
 
 ## dotenv upload
 

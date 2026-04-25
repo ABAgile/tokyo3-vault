@@ -103,19 +103,34 @@ Each project has its own PEK, wrapped by the server KEK and stored in `projects.
 
 This bounds KMS API calls to roughly one per project per TTL window under steady traffic.
 
-`ProjectKeyCache.Invalidate(projectID)` clears the cached entry. Call this after rotating a project's PEK so the next request fetches the new key.
+`ProjectKeyCache.Invalidate(projectID)` clears the cached entry. It is called automatically after every PEK rotation so the next request fetches and caches the new key.
+
+### PEK rotation
+
+`projects.pek_rotated_at` records when each PEK was last rotated (NULL until the first rotation).
+
+**Automatic rotation** — the `PEKRotator` background goroutine runs a sweep at server startup and every hour thereafter. It queries for projects whose `pek_rotated_at IS NULL OR pek_rotated_at < now() - period` (`VAULT_PEK_ROTATION_PERIOD`, default 90 days) and rotates each one in turn. Projects with `encrypted_pek IS NULL` (not yet migrated) are logged as warnings and skipped.
+
+**On-demand rotation** — project owners can trigger an immediate rotation via `POST /projects/{slug}/rotate-key`. This follows the same code path and emits a `project.rotate_key` audit event (fail-closed).
+
+Both paths use `store.RotateProjectPEK`, which re-wraps all DEKs **and** updates `encrypted_pek` + `pek_rotated_at` in a single DB transaction. A crash mid-rotation leaves the database unchanged; the project will be retried on the next sweep.
+
+The automatic rotator emits a `project.rotate_key` audit event on success (best-effort: the rotation has already committed, so a NATS failure is logged but does not roll back the key change).
+
+> When AWS KMS automatic key rotation is enabled, `VAULT_PEK_ROTATION_PERIOD` doubles as the re-wrap schedule: each PEK rotation calls `kp.UnwrapDEK` (KMS uses the old key version) then `kp.WrapDEK` (KMS uses the current key version), progressively migrating all stored PEKs to the latest KMS key material.
 
 ### Key migration
 
 Projects created before PEK support have `encrypted_pek = NULL`. The `ForProject` method detects this and returns the server-level provider directly, so existing DEKs continue to work without any data migration.
 
-`vaultd migrate-keys` iterates all un-migrated projects:
+`vaultd migrate-keys` iterates all un-migrated projects and for each one atomically:
 
-1. Generate a fresh 32-byte PEK
-2. Wrap it with the server KEK → store in `projects.encrypted_pek`
-3. Re-wrap all secret-version and dynamic-backend DEKs for that project in a single DB transaction (`RewrapProjectDEKs`)
+1. Generates a fresh 32-byte PEK
+2. Wraps it with the server KEK → `encPEK`
+3. Re-wraps all secret-version and dynamic-backend DEKs under the new PEK
+4. Stores `encPEK` and sets `pek_rotated_at = now()`
 
-The migration is idempotent (skips projects that already have a PEK) and safe to re-run.
+All four steps run inside `store.RotateProjectPEK` — a single DB transaction per project. If the transaction fails, the project remains un-migrated and `migrate-keys` can be re-run safely (idempotent: projects with an existing PEK are skipped).
 
 > After migrating keys, the KMS cost is proportional to the number of projects × (1 / cache TTL), not the number of secrets.
 

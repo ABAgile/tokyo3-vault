@@ -75,9 +75,10 @@ Two subcommands:
 4. Dispatch `migrate-keys` → `runMigrateKeys(); exit` if that subcommand was requested
 5. Open `audit.JetStreamSink` (publisher credential, PUBLISH-only on `audit.events`); falls back to `NoopSink` when `VAULT_NATS_URL` is unset
 6. Start background `Revoker` goroutine (sweeps expired dynamic leases every 60 s; also sweeps on startup)
-7. Build TLS config — hot-reloading cert files if provided, else self-signed
-8. Build OIDC provider from `VAULT_OIDC_*` env vars; `nil` provider when unconfigured (local auth only)
-9. Start `http.Server` on `VAULT_ADDR` (default `:8443`)
+7. Start background `PEKRotator` goroutine (sweeps for stale PEKs every hour; also sweeps on startup; disabled when `VAULT_PEK_ROTATION_PERIOD=0`)
+8. Build TLS config — hot-reloading cert files if provided, else self-signed
+9. Build OIDC provider from `VAULT_OIDC_*` env vars; `nil` provider when unconfigured (local auth only)
+10. Start `http.Server` on `VAULT_ADDR` (default `:8443`)
 
 Graceful shutdown is triggered by SIGINT or SIGTERM.
 
@@ -93,7 +94,7 @@ Handler files map roughly to resource types:
 |------|-----------|
 | `auth.go` | signup, login, logout, change-password |
 | `tokens.go` | machine token CRUD |
-| `projects.go` | project CRUD + slug helpers |
+| `projects.go` | project CRUD, slug helpers, on-demand PEK rotation (`POST /projects/{slug}/rotate-key`) |
 | `environments.go` | environment CRUD |
 | `members.go` | project membership management |
 | `secrets.go` | secret CRUD, dotenv import/export, rollback |
@@ -105,14 +106,14 @@ Handler files map roughly to resource types:
 
 ### `internal/crypto` — encryption & key management
 
-Three abstractions:
+Four abstractions:
 
 - **`KeyProvider`** interface: `WrapDEK` / `UnwrapDEK`
 - **`LocalKeyProvider`**: wraps/unwraps in-process with AES-256-GCM (dev only)
 - **`KMSKeyProvider`**: delegates to AWS KMS (production)
 - **`ProjectKeyCache`**: caches per-project plaintext PEKs in memory; backed by either provider
 
-See [security.md](security.md) for the full key hierarchy.
+`cmd/vaultd/rotator.go` contains `PEKRotator`, which runs as a background goroutine and rotates project PEKs older than `VAULT_PEK_ROTATION_PERIOD`. See [security.md](security.md) for the full key hierarchy and rotation policy.
 
 ### `internal/store` — persistence
 
@@ -182,6 +183,7 @@ Key relationships:
 | `VAULT_DB_KEY` | no | — | Client key for vault→Postgres TLS |
 | `VAULT_DB_CA` | no | — | CA cert to verify Postgres server |
 | `VAULT_PROJECT_KEY_CACHE_TTL` | no | `5m` | How long plaintext PEKs stay in RAM |
+| `VAULT_PEK_ROTATION_PERIOD` | no | `2160h` (90 days) | Maximum age of a project PEK before automatic rotation; set to `0` to disable |
 | `VAULT_OIDC_ISSUER` | no | — | IdP issuer URL; enables OIDC when set (all four OIDC vars required together) |
 | `VAULT_OIDC_CLIENT_ID` | no | — | OAuth2 client ID |
 | `VAULT_OIDC_CLIENT_SECRET` | no | — | OAuth2 client secret |

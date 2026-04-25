@@ -4,10 +4,13 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 
+	"github.com/abagile/tokyo3-vault/internal/crypto"
 	"github.com/abagile/tokyo3-vault/internal/model"
 	"github.com/abagile/tokyo3-vault/internal/store"
 )
@@ -99,7 +102,7 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 	pek := make([]byte, 32)
 	if _, randErr := rand.Read(pek); randErr == nil {
 		if encPEK, wrapErr := s.kp.WrapDEK(r.Context(), pek); wrapErr == nil {
-			if err := s.store.SetProjectKey(r.Context(), p.ID, encPEK); err != nil {
+			if err := s.store.SetProjectKey(r.Context(), p.ID, encPEK, time.Now().UTC()); err != nil {
 				s.log.Warn("set project key", "project", p.ID, "err", err)
 			}
 		} else {
@@ -163,6 +166,73 @@ func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.logAudit(r, ActionProjectDelete, "", slug); err != nil {
+		writeError(w, http.StatusInternalServerError, "audit unavailable")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleRotateProjectKey generates a fresh PEK, atomically re-wraps all project
+// DEKs, and invalidates the in-memory cache. Owner-only; returns 204 on success.
+func (s *Server) handleRotateProjectKey(w http.ResponseWriter, r *http.Request) {
+	tok := tokenFromCtx(r)
+	slug := r.PathValue("project")
+	p, err := s.store.GetProject(r.Context(), slug)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "project not found")
+		return
+	}
+	if err != nil {
+		s.log.Error("rotate project key: get project", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if !s.requireOwner(w, r, tok, p.ID) {
+		return
+	}
+	if p.EncryptedPEK == nil {
+		writeError(w, http.StatusConflict, "project has no envelope key; run vaultd migrate-keys first")
+		return
+	}
+
+	oldPEK, err := s.kp.UnwrapDEK(r.Context(), p.EncryptedPEK)
+	if err != nil {
+		s.log.Error("rotate project key: unwrap old PEK", "project", slug, "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	oldProjectKP := crypto.NewProjectKeyProvider(oldPEK)
+
+	newPEK := make([]byte, 32)
+	if _, err := rand.Read(newPEK); err != nil {
+		s.log.Error("rotate project key: generate PEK", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	newEncPEK, err := s.kp.WrapDEK(r.Context(), newPEK)
+	if err != nil {
+		s.log.Error("rotate project key: wrap new PEK", "project", slug, "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	newProjectKP := crypto.NewProjectKeyProvider(newPEK)
+
+	rotatedAt := time.Now().UTC()
+	err = s.store.RotateProjectPEK(r.Context(), p.ID, newEncPEK, rotatedAt, func(encDEK []byte) ([]byte, error) {
+		dek, err := oldProjectKP.UnwrapDEK(r.Context(), encDEK)
+		if err != nil {
+			return nil, fmt.Errorf("unwrap DEK: %w", err)
+		}
+		return newProjectKP.WrapDEK(r.Context(), dek)
+	})
+	if err != nil {
+		s.log.Error("rotate project key: rotate", "project", slug, "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	s.projectKP.Invalidate(p.ID)
+
+	if err := s.logAudit(r, ActionProjectRotateKey, p.ID, slug); err != nil {
 		writeError(w, http.StatusInternalServerError, "audit unavailable")
 		return
 	}

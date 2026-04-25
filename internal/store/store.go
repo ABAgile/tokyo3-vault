@@ -140,10 +140,16 @@ type Store interface {
 	DeleteCertPrincipal(ctx context.Context, id, userID string) error
 
 	// Project envelope keys
-	// SetProjectKey stores the KEK-wrapped PEK for a project.
-	SetProjectKey(ctx context.Context, projectID string, encPEK []byte) error
+	// SetProjectKey stores the KEK-wrapped PEK and its creation timestamp for a project.
+	SetProjectKey(ctx context.Context, projectID string, encPEK []byte, rotatedAt time.Time) error
 	// RewrapProjectDEKs re-wraps every secret_versions.encrypted_dek and every
 	// dynamic_backends.encrypted_config_dek for the project in one transaction,
 	// applying rewrap(oldEncDEK) → newEncDEK to each row.
 	RewrapProjectDEKs(ctx context.Context, projectID string, rewrap func([]byte) ([]byte, error)) error
+	// RotateProjectPEK atomically re-wraps all DEKs under newEncPEK and updates the
+	// project's encrypted_pek and pek_rotated_at in the same transaction.
+	RotateProjectPEK(ctx context.Context, projectID string, newEncPEK []byte, rotatedAt time.Time, rewrap func([]byte) ([]byte, error)) error
+	// ListProjectsForPEKRotation returns projects with a non-nil PEK whose
+	// pek_rotated_at is NULL or before threshold, ordered oldest-first.
+	ListProjectsForPEKRotation(ctx context.Context, threshold time.Time) ([]*model.Project, error)
 }

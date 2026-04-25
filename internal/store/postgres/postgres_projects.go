@@ -34,8 +34,8 @@ func (s *DB) CreateProject(ctx context.Context, name, slug string) (*model.Proje
 func (s *DB) GetProject(ctx context.Context, slug string) (*model.Project, error) {
 	p := &model.Project{}
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, name, slug, encrypted_pek, created_at FROM projects WHERE slug = $1`, slug,
-	).Scan(&p.ID, &p.Name, &p.Slug, &p.EncryptedPEK, &p.CreatedAt)
+		`SELECT id, name, slug, encrypted_pek, pek_rotated_at, created_at FROM projects WHERE slug = $1`, slug,
+	).Scan(&p.ID, &p.Name, &p.Slug, &p.EncryptedPEK, &p.PEKRotatedAt, &p.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, store.ErrNotFound
 	}
@@ -45,8 +45,8 @@ func (s *DB) GetProject(ctx context.Context, slug string) (*model.Project, error
 func (s *DB) GetProjectByID(ctx context.Context, id string) (*model.Project, error) {
 	p := &model.Project{}
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, name, slug, encrypted_pek, created_at FROM projects WHERE id = $1`, id,
-	).Scan(&p.ID, &p.Name, &p.Slug, &p.EncryptedPEK, &p.CreatedAt)
+		`SELECT id, name, slug, encrypted_pek, pek_rotated_at, created_at FROM projects WHERE id = $1`, id,
+	).Scan(&p.ID, &p.Name, &p.Slug, &p.EncryptedPEK, &p.PEKRotatedAt, &p.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, store.ErrNotFound
 	}
@@ -55,7 +55,7 @@ func (s *DB) GetProjectByID(ctx context.Context, id string) (*model.Project, err
 
 func (s *DB) ListProjectsByMember(ctx context.Context, userID string) ([]*model.Project, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT p.id, p.name, p.slug, p.encrypted_pek, p.created_at
+		`SELECT p.id, p.name, p.slug, p.encrypted_pek, p.pek_rotated_at, p.created_at
 		 FROM projects p
 		 JOIN project_members pm ON pm.project_id = p.id
 		 WHERE pm.user_id = $1
@@ -68,7 +68,7 @@ func (s *DB) ListProjectsByMember(ctx context.Context, userID string) ([]*model.
 	var projects []*model.Project
 	for rows.Next() {
 		p := &model.Project{}
-		if err := rows.Scan(&p.ID, &p.Name, &p.Slug, &p.EncryptedPEK, &p.CreatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Slug, &p.EncryptedPEK, &p.PEKRotatedAt, &p.CreatedAt); err != nil {
 			return nil, err
 		}
 		projects = append(projects, p)
@@ -77,7 +77,9 @@ func (s *DB) ListProjectsByMember(ctx context.Context, userID string) ([]*model.
 }
 
 func (s *DB) ListProjects(ctx context.Context) ([]*model.Project, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, slug, encrypted_pek, created_at FROM projects ORDER BY name`)
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, name, slug, encrypted_pek, pek_rotated_at, created_at FROM projects ORDER BY name`,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -85,7 +87,7 @@ func (s *DB) ListProjects(ctx context.Context) ([]*model.Project, error) {
 	var projects []*model.Project
 	for rows.Next() {
 		p := &model.Project{}
-		if err := rows.Scan(&p.ID, &p.Name, &p.Slug, &p.EncryptedPEK, &p.CreatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Slug, &p.EncryptedPEK, &p.PEKRotatedAt, &p.CreatedAt); err != nil {
 			return nil, err
 		}
 		projects = append(projects, p)
@@ -93,21 +95,23 @@ func (s *DB) ListProjects(ctx context.Context) ([]*model.Project, error) {
 	return projects, rows.Err()
 }
 
-func (s *DB) SetProjectKey(ctx context.Context, projectID string, encPEK []byte) error {
+func (s *DB) SetProjectKey(ctx context.Context, projectID string, encPEK []byte, rotatedAt time.Time) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE projects SET encrypted_pek = $1 WHERE id = $2`, encPEK, projectID,
+		`UPDATE projects SET encrypted_pek = $1, pek_rotated_at = $2 WHERE id = $3`,
+		encPEK, rotatedAt, projectID,
 	)
 	return err
 }
 
-func (s *DB) RewrapProjectDEKs(ctx context.Context, projectID string, rewrap func([]byte) ([]byte, error)) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
+// rewrapProjectDEKsTx re-wraps all secret-version and dynamic-backend DEKs for
+// a project within an existing transaction. Extracted so both RewrapProjectDEKs
+// and RotateProjectPEK can share the logic without duplication.
+func rewrapProjectDEKsTx(ctx context.Context, tx *sql.Tx, projectID string, rewrap func([]byte) ([]byte, error)) error {
+	type idDEK struct {
+		id  string
+		dek []byte
 	}
-	defer tx.Rollback()
 
-	// Re-wrap all secret version DEKs for this project.
 	svRows, err := tx.QueryContext(ctx,
 		`SELECT sv.id, sv.encrypted_dek
 		 FROM secret_versions sv
@@ -116,10 +120,6 @@ func (s *DB) RewrapProjectDEKs(ctx context.Context, projectID string, rewrap fun
 	)
 	if err != nil {
 		return err
-	}
-	type idDEK struct {
-		id  string
-		dek []byte
 	}
 	var svs []idDEK
 	for svRows.Next() {
@@ -146,7 +146,6 @@ func (s *DB) RewrapProjectDEKs(ctx context.Context, projectID string, rewrap fun
 		}
 	}
 
-	// Re-wrap all dynamic backend config DEKs for this project.
 	dbRows, err := tx.QueryContext(ctx,
 		`SELECT id, encrypted_config_dek FROM dynamic_backends WHERE project_id = $1`, projectID,
 	)
@@ -177,8 +176,61 @@ func (s *DB) RewrapProjectDEKs(ctx context.Context, projectID string, rewrap fun
 			return err
 		}
 	}
+	return nil
+}
 
+func (s *DB) RewrapProjectDEKs(ctx context.Context, projectID string, rewrap func([]byte) ([]byte, error)) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := rewrapProjectDEKsTx(ctx, tx, projectID, rewrap); err != nil {
+		return err
+	}
 	return tx.Commit()
+}
+
+func (s *DB) RotateProjectPEK(ctx context.Context, projectID string, newEncPEK []byte, rotatedAt time.Time, rewrap func([]byte) ([]byte, error)) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := rewrapProjectDEKsTx(ctx, tx, projectID, rewrap); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE projects SET encrypted_pek = $1, pek_rotated_at = $2 WHERE id = $3`,
+		newEncPEK, rotatedAt, projectID,
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *DB) ListProjectsForPEKRotation(ctx context.Context, threshold time.Time) ([]*model.Project, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, name, slug, encrypted_pek, pek_rotated_at, created_at
+		 FROM projects
+		 WHERE encrypted_pek IS NOT NULL
+		   AND (pek_rotated_at IS NULL OR pek_rotated_at < $1)
+		 ORDER BY pek_rotated_at NULLS FIRST`,
+		threshold,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var projects []*model.Project
+	for rows.Next() {
+		p := &model.Project{}
+		if err := rows.Scan(&p.ID, &p.Name, &p.Slug, &p.EncryptedPEK, &p.PEKRotatedAt, &p.CreatedAt); err != nil {
+			return nil, err
+		}
+		projects = append(projects, p)
+	}
+	return projects, rows.Err()
 }
 
 func (s *DB) DeleteProject(ctx context.Context, slug string) error {
