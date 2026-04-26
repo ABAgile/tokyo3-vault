@@ -501,7 +501,7 @@ func parseTrustedProxies(log *slog.Logger) []*net.IPNet {
 		return nil
 	}
 	var out []*net.IPNet
-	for _, s := range strings.Split(v, ",") {
+	for s := range strings.SplitSeq(v, ",") {
 		s = strings.TrimSpace(s)
 		if s == "" {
 			continue

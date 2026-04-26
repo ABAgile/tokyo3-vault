@@ -32,65 +32,88 @@ func TestMigrate_Idempotent(t *testing.T) {
 
 // ── Users ─────────────────────────────────────────────────────────────────────
 
-func TestUsers_CRUD(t *testing.T) {
+func mustCreateUser(t *testing.T, db *DB, email, hash, role string) *model.User {
+	t.Helper()
+	u, err := db.CreateUser(context.Background(), email, hash, role)
+	if err != nil {
+		t.Fatalf("CreateUser(%s): %v", email, err)
+	}
+	return u
+}
+
+func TestUsers_HasAdminUser(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
 
-	// HasAdminUser — empty DB.
 	has, err := db.HasAdminUser(ctx)
 	if err != nil || has {
-		t.Fatalf("HasAdminUser empty: %v, %v", has, err)
+		t.Fatalf("HasAdminUser empty: has=%v err=%v", has, err)
 	}
 
-	// CreateUser.
-	u, err := db.CreateUser(ctx, "alice@example.com", "hash1", model.UserRoleAdmin)
-	if err != nil {
-		t.Fatalf("CreateUser: %v", err)
+	mustCreateUser(t, db, "admin@example.com", "h", model.UserRoleAdmin)
+
+	has, err = db.HasAdminUser(ctx)
+	if err != nil || !has {
+		t.Fatalf("HasAdminUser after create: has=%v err=%v", has, err)
 	}
+}
+
+func TestUsers_Create(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	u := mustCreateUser(t, db, "alice@example.com", "hash1", model.UserRoleAdmin)
 	if u.ID == "" || u.Email != "alice@example.com" || u.Role != model.UserRoleAdmin {
 		t.Errorf("unexpected user: %+v", u)
 	}
 
-	// Duplicate email → ErrConflict.
-	_, err = db.CreateUser(ctx, "alice@example.com", "hash2", model.UserRoleMember)
+	_, err := db.CreateUser(ctx, "alice@example.com", "hash2", model.UserRoleMember)
 	if err != store.ErrConflict {
 		t.Errorf("duplicate email: err = %v, want ErrConflict", err)
 	}
+}
 
-	// HasAdminUser — now true.
-	has, err = db.HasAdminUser(ctx)
-	if err != nil || !has {
-		t.Fatalf("HasAdminUser after create: %v, %v", has, err)
-	}
+func TestUsers_GetByEmail(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	u := mustCreateUser(t, db, "alice@example.com", "h", model.UserRoleMember)
 
-	// GetUserByEmail.
 	got, err := db.GetUserByEmail(ctx, "alice@example.com")
 	if err != nil || got.ID != u.ID {
-		t.Errorf("GetUserByEmail: %v %v", got, err)
+		t.Errorf("GetUserByEmail found: %v %v", got, err)
 	}
 	_, err = db.GetUserByEmail(ctx, "nobody@example.com")
 	if err != store.ErrNotFound {
 		t.Errorf("GetUserByEmail missing: err = %v, want ErrNotFound", err)
 	}
+}
 
-	// GetUserByID.
-	got, err = db.GetUserByID(ctx, u.ID)
+func TestUsers_GetByID(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	u := mustCreateUser(t, db, "alice@example.com", "h", model.UserRoleMember)
+
+	got, err := db.GetUserByID(ctx, u.ID)
 	if err != nil || got.Email != "alice@example.com" {
-		t.Errorf("GetUserByID: %v %v", got, err)
+		t.Errorf("GetUserByID found: %v %v", got, err)
 	}
 	_, err = db.GetUserByID(ctx, "no-such-id")
 	if err != store.ErrNotFound {
 		t.Errorf("GetUserByID missing: err = %v, want ErrNotFound", err)
 	}
+}
 
-	// ListUsers.
-	db.CreateUser(ctx, "bob@example.com", "hash3", model.UserRoleMember)
+func TestUsers_ListAndUpdatePassword(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	u := mustCreateUser(t, db, "alice@example.com", "h1", model.UserRoleAdmin)
+	mustCreateUser(t, db, "bob@example.com", "h2", model.UserRoleMember)
+
 	users, err := db.ListUsers(ctx)
 	if err != nil || len(users) != 2 {
 		t.Errorf("ListUsers: len=%d err=%v", len(users), err)
 	}
 
-	// UpdateUserPassword.
 	if err := db.UpdateUserPassword(ctx, u.ID, "newhash"); err != nil {
 		t.Errorf("UpdateUserPassword: %v", err)
 	}

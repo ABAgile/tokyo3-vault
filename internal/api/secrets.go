@@ -435,24 +435,10 @@ func (s *Server) handleImportSecrets(w http.ResponseWriter, r *http.Request) {
 	}
 
 	createdBy := tokenCreatedBy(tokenFromCtx(r))
-	imported, skipped := 0, 0
-	for i, sec := range srcSecrets {
-		if !inKeyFilter(keyFilter, sec.Key) {
-			continue
-		}
-		if srcVersions[i] == nil {
-			continue
-		}
-		did, err := s.copySecret(r, sec, srcVersions[i], srcKP, dstProject.ID, dstEnvID, dstKP, createdBy, req.Overwrite)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		if did {
-			imported++
-		} else {
-			skipped++
-		}
+	imported, skipped, importErr := s.importSecretsList(r, srcSecrets, srcVersions, keyFilter, srcKP, dstProject.ID, dstEnvID, dstKP, createdBy, req.Overwrite)
+	if importErr != nil {
+		writeError(w, http.StatusInternalServerError, importErr.Error())
+		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"imported": imported,
@@ -463,6 +449,29 @@ func (s *Server) handleImportSecrets(w http.ResponseWriter, r *http.Request) {
 // inKeyFilter reports whether key should be copied. An empty filter means "all keys".
 func inKeyFilter(filter map[string]bool, key string) bool {
 	return len(filter) == 0 || filter[key]
+}
+
+// importSecretsList iterates srcSecrets, applies the key filter, and copies
+// eligible secrets to the destination. Returns (imported, skipped, error).
+func (s *Server) importSecretsList(r *http.Request, srcSecrets []*model.Secret, srcVersions []*model.SecretVersion, keyFilter map[string]bool, srcKP crypto.KeyProvider, dstProjectID, dstEnvID string, dstKP crypto.KeyProvider, createdBy *string, overwrite bool) (imported, skipped int, err error) {
+	for i, sec := range srcSecrets {
+		if !inKeyFilter(keyFilter, sec.Key) {
+			continue
+		}
+		if srcVersions[i] == nil {
+			continue
+		}
+		did, copyErr := s.copySecret(r, sec, srcVersions[i], srcKP, dstProjectID, dstEnvID, dstKP, createdBy, overwrite)
+		if copyErr != nil {
+			return imported, skipped, copyErr
+		}
+		if did {
+			imported++
+		} else {
+			skipped++
+		}
+	}
+	return imported, skipped, nil
 }
 
 // tokenCreatedBy returns a pointer to the token's ID, or nil if tok is nil.

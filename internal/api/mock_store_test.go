@@ -9,6 +9,9 @@ import (
 	"github.com/abagile/tokyo3-vault/internal/testutil/mockstore"
 )
 
+// Ensure mockStore implements store.Store at compile time.
+var _ store.Store = (*mockStore)(nil)
+
 // mockStore implements store.Store. Embed mockstore.Stub for all no-op defaults;
 // override specific methods via function fields for test-controlled responses.
 // Only the overridable fields used by api tests are listed — add more as needed.
@@ -21,6 +24,7 @@ type mockStore struct {
 	listUsers                    func(ctx context.Context) ([]*model.User, error)
 	hasAdminUser                 func(ctx context.Context) (bool, error)
 	updateUserPassword           func(ctx context.Context, userID, hash string) error
+	deleteAllTokensForUser       func(ctx context.Context, userID string) error
 	createToken                  func(ctx context.Context, t *model.Token) error
 	getTokenByHash               func(ctx context.Context, hash string) (*model.Token, error)
 	listTokens                   func(ctx context.Context, userID string) ([]*model.Token, error)
@@ -49,6 +53,43 @@ type mockStore struct {
 	getSecretVersion             func(ctx context.Context, secretID, versionID string) (*model.SecretVersion, error)
 	rollbackSecret               func(ctx context.Context, secretID, versionID string) error
 	pruneSecretVersions          func(ctx context.Context, secretID, currentVersionID string, maxCount int, cutoff time.Time) error
+
+	// Cert principals
+	createCertPrincipal          func(ctx context.Context, p *model.CertPrincipal) error
+	listCertPrincipals           func(ctx context.Context, userID string) ([]*model.CertPrincipal, error)
+	deleteCertPrincipal          func(ctx context.Context, id, userID string) error
+	listTokensWithAccess         func(ctx context.Context, projectID, envID string) ([]*model.Token, error)
+	listCertPrincipalsWithAccess func(ctx context.Context, projectID, envID string) ([]*model.CertPrincipal, error)
+
+	// Dynamic backends
+	setDynamicBackend     func(ctx context.Context, projectID, envID, slug, backendType string, encConfig, encConfigDEK []byte, defaultTTL, maxTTL int) (*model.DynamicBackend, error)
+	getDynamicBackend     func(ctx context.Context, projectID, envID, slug string) (*model.DynamicBackend, error)
+	getDynamicBackendByID func(ctx context.Context, id string) (*model.DynamicBackend, error)
+	deleteDynamicBackend  func(ctx context.Context, projectID, envID, slug string) error
+
+	// Dynamic roles
+	setDynamicRole    func(ctx context.Context, backendID, name, creationTmpl, revocationTmpl string, ttl *int) (*model.DynamicRole, error)
+	getDynamicRole    func(ctx context.Context, backendID, name string) (*model.DynamicRole, error)
+	listDynamicRoles  func(ctx context.Context, backendID string) ([]*model.DynamicRole, error)
+	deleteDynamicRole func(ctx context.Context, backendID, name string) error
+
+	// Dynamic leases
+	listDynamicLeases  func(ctx context.Context, projectID, envID string) ([]*model.DynamicLease, error)
+	revokeDynamicLease func(ctx context.Context, id string) error
+	getDynamicLease    func(ctx context.Context, id string) (*model.DynamicLease, error)
+
+	// SCIM tokens
+	getSCIMTokenByHash func(ctx context.Context, hash string) (*model.SCIMToken, error)
+	createSCIMToken    func(ctx context.Context, t *model.SCIMToken) error
+	listSCIMTokens     func(ctx context.Context) ([]*model.SCIMToken, error)
+	deleteSCIMToken    func(ctx context.Context, id string) error
+
+	// SCIM group roles
+	listSCIMGroupRoles        func(ctx context.Context) ([]*model.SCIMGroupRole, error)
+	listSCIMGroupRolesByGroup func(ctx context.Context, groupID string) ([]*model.SCIMGroupRole, error)
+	getSCIMGroupRole          func(ctx context.Context, id string) (*model.SCIMGroupRole, error)
+	setSCIMGroupRole          func(ctx context.Context, groupID, displayName string, projectID, envID *string, role string) (*model.SCIMGroupRole, error)
+	deleteSCIMGroupRole       func(ctx context.Context, id string) error
 }
 
 func (m *mockStore) CreateUser(ctx context.Context, email, hash, role string) (*model.User, error) {
@@ -84,6 +125,12 @@ func (m *mockStore) HasAdminUser(ctx context.Context) (bool, error) {
 func (m *mockStore) UpdateUserPassword(ctx context.Context, userID, hash string) error {
 	if m.updateUserPassword != nil {
 		return m.updateUserPassword(ctx, userID, hash)
+	}
+	return nil
+}
+func (m *mockStore) DeleteAllTokensForUser(ctx context.Context, userID string) error {
+	if m.deleteAllTokensForUser != nil {
+		return m.deleteAllTokensForUser(ctx, userID)
 	}
 	return nil
 }
@@ -257,5 +304,173 @@ func (m *mockStore) PruneSecretVersions(ctx context.Context, secretID, currentVe
 	return nil
 }
 
-// All other store.Store methods (dynamic, SCIM, OIDC, certs, project keys)
+// Cert principals
+
+func (m *mockStore) CreateCertPrincipal(ctx context.Context, p *model.CertPrincipal) error {
+	if m.createCertPrincipal != nil {
+		return m.createCertPrincipal(ctx, p)
+	}
+	return nil
+}
+func (m *mockStore) ListCertPrincipals(ctx context.Context, userID string) ([]*model.CertPrincipal, error) {
+	if m.listCertPrincipals != nil {
+		return m.listCertPrincipals(ctx, userID)
+	}
+	return nil, nil
+}
+func (m *mockStore) DeleteCertPrincipal(ctx context.Context, id, userID string) error {
+	if m.deleteCertPrincipal != nil {
+		return m.deleteCertPrincipal(ctx, id, userID)
+	}
+	return nil
+}
+func (m *mockStore) ListTokensWithAccess(ctx context.Context, projectID, envID string) ([]*model.Token, error) {
+	if m.listTokensWithAccess != nil {
+		return m.listTokensWithAccess(ctx, projectID, envID)
+	}
+	return nil, nil
+}
+func (m *mockStore) ListCertPrincipalsWithAccess(ctx context.Context, projectID, envID string) ([]*model.CertPrincipal, error) {
+	if m.listCertPrincipalsWithAccess != nil {
+		return m.listCertPrincipalsWithAccess(ctx, projectID, envID)
+	}
+	return nil, nil
+}
+
+// Dynamic backends
+
+func (m *mockStore) SetDynamicBackend(ctx context.Context, projectID, envID, slug, backendType string, encConfig, encConfigDEK []byte, defaultTTL, maxTTL int) (*model.DynamicBackend, error) {
+	if m.setDynamicBackend != nil {
+		return m.setDynamicBackend(ctx, projectID, envID, slug, backendType, encConfig, encConfigDEK, defaultTTL, maxTTL)
+	}
+	return nil, store.ErrNotFound
+}
+func (m *mockStore) GetDynamicBackend(ctx context.Context, projectID, envID, slug string) (*model.DynamicBackend, error) {
+	if m.getDynamicBackend != nil {
+		return m.getDynamicBackend(ctx, projectID, envID, slug)
+	}
+	return nil, store.ErrNotFound
+}
+func (m *mockStore) GetDynamicBackendByID(ctx context.Context, id string) (*model.DynamicBackend, error) {
+	if m.getDynamicBackendByID != nil {
+		return m.getDynamicBackendByID(ctx, id)
+	}
+	return nil, store.ErrNotFound
+}
+func (m *mockStore) DeleteDynamicBackend(ctx context.Context, projectID, envID, slug string) error {
+	if m.deleteDynamicBackend != nil {
+		return m.deleteDynamicBackend(ctx, projectID, envID, slug)
+	}
+	return nil
+}
+
+// Dynamic roles
+
+func (m *mockStore) SetDynamicRole(ctx context.Context, backendID, name, creationTmpl, revocationTmpl string, ttl *int) (*model.DynamicRole, error) {
+	if m.setDynamicRole != nil {
+		return m.setDynamicRole(ctx, backendID, name, creationTmpl, revocationTmpl, ttl)
+	}
+	return nil, store.ErrNotFound
+}
+func (m *mockStore) GetDynamicRole(ctx context.Context, backendID, name string) (*model.DynamicRole, error) {
+	if m.getDynamicRole != nil {
+		return m.getDynamicRole(ctx, backendID, name)
+	}
+	return nil, store.ErrNotFound
+}
+func (m *mockStore) ListDynamicRoles(ctx context.Context, backendID string) ([]*model.DynamicRole, error) {
+	if m.listDynamicRoles != nil {
+		return m.listDynamicRoles(ctx, backendID)
+	}
+	return []*model.DynamicRole{}, nil
+}
+func (m *mockStore) DeleteDynamicRole(ctx context.Context, backendID, name string) error {
+	if m.deleteDynamicRole != nil {
+		return m.deleteDynamicRole(ctx, backendID, name)
+	}
+	return nil
+}
+
+// Dynamic leases
+
+func (m *mockStore) ListDynamicLeases(ctx context.Context, projectID, envID string) ([]*model.DynamicLease, error) {
+	if m.listDynamicLeases != nil {
+		return m.listDynamicLeases(ctx, projectID, envID)
+	}
+	return nil, nil
+}
+func (m *mockStore) RevokeDynamicLease(ctx context.Context, id string) error {
+	if m.revokeDynamicLease != nil {
+		return m.revokeDynamicLease(ctx, id)
+	}
+	return nil
+}
+func (m *mockStore) GetDynamicLease(ctx context.Context, id string) (*model.DynamicLease, error) {
+	if m.getDynamicLease != nil {
+		return m.getDynamicLease(ctx, id)
+	}
+	return nil, store.ErrNotFound
+}
+
+// SCIM tokens
+
+func (m *mockStore) GetSCIMTokenByHash(ctx context.Context, hash string) (*model.SCIMToken, error) {
+	if m.getSCIMTokenByHash != nil {
+		return m.getSCIMTokenByHash(ctx, hash)
+	}
+	return nil, store.ErrNotFound
+}
+func (m *mockStore) CreateSCIMToken(ctx context.Context, t *model.SCIMToken) error {
+	if m.createSCIMToken != nil {
+		return m.createSCIMToken(ctx, t)
+	}
+	return nil
+}
+func (m *mockStore) ListSCIMTokens(ctx context.Context) ([]*model.SCIMToken, error) {
+	if m.listSCIMTokens != nil {
+		return m.listSCIMTokens(ctx)
+	}
+	return nil, nil
+}
+func (m *mockStore) DeleteSCIMToken(ctx context.Context, id string) error {
+	if m.deleteSCIMToken != nil {
+		return m.deleteSCIMToken(ctx, id)
+	}
+	return nil
+}
+
+// SCIM group roles
+
+func (m *mockStore) ListSCIMGroupRoles(ctx context.Context) ([]*model.SCIMGroupRole, error) {
+	if m.listSCIMGroupRoles != nil {
+		return m.listSCIMGroupRoles(ctx)
+	}
+	return nil, nil
+}
+func (m *mockStore) ListSCIMGroupRolesByGroup(ctx context.Context, groupID string) ([]*model.SCIMGroupRole, error) {
+	if m.listSCIMGroupRolesByGroup != nil {
+		return m.listSCIMGroupRolesByGroup(ctx, groupID)
+	}
+	return nil, nil
+}
+func (m *mockStore) GetSCIMGroupRole(ctx context.Context, id string) (*model.SCIMGroupRole, error) {
+	if m.getSCIMGroupRole != nil {
+		return m.getSCIMGroupRole(ctx, id)
+	}
+	return nil, store.ErrNotFound
+}
+func (m *mockStore) SetSCIMGroupRole(ctx context.Context, groupID, displayName string, projectID, envID *string, role string) (*model.SCIMGroupRole, error) {
+	if m.setSCIMGroupRole != nil {
+		return m.setSCIMGroupRole(ctx, groupID, displayName, projectID, envID, role)
+	}
+	return nil, store.ErrNotFound
+}
+func (m *mockStore) DeleteSCIMGroupRole(ctx context.Context, id string) error {
+	if m.deleteSCIMGroupRole != nil {
+		return m.deleteSCIMGroupRole(ctx, id)
+	}
+	return nil
+}
+
+// All other store.Store methods (OIDC, project keys, SCIM tokens)
 // are satisfied by the embedded mockstore.Stub with safe no-op defaults.

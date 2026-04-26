@@ -41,7 +41,6 @@ Example:
 			if len(args) == 0 {
 				return fmt.Errorf("command is required after --")
 			}
-
 			g, err := config.MustToken()
 			if err != nil {
 				return err
@@ -51,68 +50,20 @@ Example:
 			if err != nil {
 				return err
 			}
-
-			// Collect dynamic runs: .vault.toml blocks + --dynamic flags.
-			repo, _ := config.LoadRepo()
-			dynRuns := append([]config.DynamicRun(nil), repo.Dynamic...)
-			for _, f := range dynamicFlags {
-				dr, err := parseDynamicFlag(f)
-				if err != nil {
-					return fmt.Errorf("--dynamic %q: %w", f, err)
-				}
-				dynRuns = append(dynRuns, dr)
+			dynRuns, err := collectDynRuns(dynamicFlags)
+			if err != nil {
+				return err
 			}
-
 			c := client.New(g.ServerURL, g.Token)
-
-			// Issue dynamic creds first; build prefix-keyed map for expansion.
-			dynVars := make(map[string]string)
-			for _, dr := range dynRuns {
-				var creds issuedCredsResp
-				if err := c.Post(dynCredsPath(project, envSlug, dr.Slug, dr.Role),
-					map[string]any{"ttl": dr.TTL}, &creds); err != nil {
-					return fmt.Errorf("issue dynamic creds %s/%s: %w", dr.Slug, dr.Role, err)
-				}
-				pfx := dynVarPrefix(dr.Slug)
-				dynVars[pfx+"USERNAME"] = creds.Username
-				dynVars[pfx+"PASSWORD"] = creds.Password
-				dynVars[pfx+"EXPIRES_AT"] = creds.ExpiresAt
+			dynVars, err := issueDynVars(c, project, envSlug, dynRuns)
+			if err != nil {
+				return err
 			}
-
-			// Fetch static secrets and expand their values against dynVars + OS env.
-			var metas []secretMeta
-			if err := c.Get(secretsPath(project, envSlug), &metas); err != nil {
-				return fmt.Errorf("fetch secrets: %w", err)
+			injected, err := fetchInjectedSecrets(c, project, envSlug, dynVars)
+			if err != nil {
+				return err
 			}
-			injected := make([]string, 0, len(metas))
-			for _, m := range metas {
-				var s secretFull
-				if err := c.Get(secretsPath(project, envSlug)+"/"+m.Key, &s); err != nil {
-					return fmt.Errorf("fetch secret %s: %w", m.Key, err)
-				}
-				expanded := os.Expand(s.Value, func(key string) string {
-					if v, ok := dynVars[key]; ok {
-						return v
-					}
-					return os.Getenv(key)
-				})
-				injected = append(injected, m.Key+"="+expanded)
-			}
-
-			// Build final env: inherit OS env, strip vault CLI and VAULT_DYN_* vars,
-			// append dynamic vars (for potential inter-secret references), then static secrets.
-			// VAULT_DYN_* are appended temporarily then stripped so the child never sees raw creds.
-			filtered := make([]string, 0, len(os.Environ()))
-			for _, kv := range os.Environ() {
-				if strings.HasPrefix(kv, "VAULT_TOKEN=") ||
-					strings.HasPrefix(kv, "VAULT_SERVER_URL=") ||
-					strings.HasPrefix(kv, "VAULT_DYN_") {
-					continue
-				}
-				filtered = append(filtered, kv)
-			}
-			finalEnv := append(filtered, injected...)
-
+			finalEnv := append(filteredOSEnv(), injected...)
 			binary, err := exec.LookPath(args[0])
 			if err != nil {
 				return fmt.Errorf("command not found: %s", args[0])
@@ -124,6 +75,76 @@ Example:
 	addProjectEnvFlags(cmd, &project, &env)
 	cmd.Flags().StringArrayVar(&dynamicFlags, "dynamic", nil, "Issue dynamic creds: slug:role or slug:role:ttl (repeatable)")
 	return cmd
+}
+
+// collectDynRuns merges .vault.toml dynamic blocks with --dynamic flag values.
+func collectDynRuns(flags []string) ([]config.DynamicRun, error) {
+	repo, _ := config.LoadRepo()
+	dynRuns := append([]config.DynamicRun(nil), repo.Dynamic...)
+	for _, f := range flags {
+		dr, err := parseDynamicFlag(f)
+		if err != nil {
+			return nil, fmt.Errorf("--dynamic %q: %w", f, err)
+		}
+		dynRuns = append(dynRuns, dr)
+	}
+	return dynRuns, nil
+}
+
+// issueDynVars issues credentials for each dynamic backend and returns a map
+// of VAULT_DYN_<NAME>_* variable names to their values.
+func issueDynVars(c *client.Client, project, envSlug string, dynRuns []config.DynamicRun) (map[string]string, error) {
+	dynVars := make(map[string]string)
+	for _, dr := range dynRuns {
+		var creds issuedCredsResp
+		if err := c.Post(dynCredsPath(project, envSlug, dr.Slug, dr.Role),
+			map[string]any{"ttl": dr.TTL}, &creds); err != nil {
+			return nil, fmt.Errorf("issue dynamic creds %s/%s: %w", dr.Slug, dr.Role, err)
+		}
+		pfx := dynVarPrefix(dr.Slug)
+		dynVars[pfx+"USERNAME"] = creds.Username
+		dynVars[pfx+"PASSWORD"] = creds.Password
+		dynVars[pfx+"EXPIRES_AT"] = creds.ExpiresAt
+	}
+	return dynVars, nil
+}
+
+// fetchInjectedSecrets fetches all secrets and returns KEY=value strings with
+// dynamic variable references expanded.
+func fetchInjectedSecrets(c *client.Client, project, envSlug string, dynVars map[string]string) ([]string, error) {
+	var metas []secretMeta
+	if err := c.Get(secretsPath(project, envSlug), &metas); err != nil {
+		return nil, fmt.Errorf("fetch secrets: %w", err)
+	}
+	injected := make([]string, 0, len(metas))
+	for _, m := range metas {
+		var s secretFull
+		if err := c.Get(secretsPath(project, envSlug)+"/"+m.Key, &s); err != nil {
+			return nil, fmt.Errorf("fetch secret %s: %w", m.Key, err)
+		}
+		expanded := os.Expand(s.Value, func(key string) string {
+			if v, ok := dynVars[key]; ok {
+				return v
+			}
+			return os.Getenv(key)
+		})
+		injected = append(injected, m.Key+"="+expanded)
+	}
+	return injected, nil
+}
+
+// filteredOSEnv returns os.Environ() with vault CLI and VAULT_DYN_* entries removed.
+func filteredOSEnv() []string {
+	filtered := make([]string, 0, len(os.Environ()))
+	for _, kv := range os.Environ() {
+		if strings.HasPrefix(kv, "VAULT_TOKEN=") ||
+			strings.HasPrefix(kv, "VAULT_SERVER_URL=") ||
+			strings.HasPrefix(kv, "VAULT_DYN_") {
+			continue
+		}
+		filtered = append(filtered, kv)
+	}
+	return filtered
 }
 
 func NewExportCmd() *cobra.Command {

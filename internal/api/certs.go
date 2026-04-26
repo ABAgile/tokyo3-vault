@@ -121,6 +121,33 @@ func certPrincipalToToken(p *model.CertPrincipal) *model.Token {
 	}
 }
 
+// ── helpers ───────────────────────────────────────────────────────────────────
+
+// parseCertPrincipalIdentifier validates the SPIFFE ID or email SAN from the
+// request and returns (spiffeID, emailSAN, error). Exactly one of spiffeID or
+// emailSAN will be non-nil on success.
+func parseCertPrincipalIdentifier(req registerPrincipalRequest) (*string, *string, error) {
+	hasSpiffe := req.SPIFFEID != ""
+	hasEmail := req.EmailSAN != ""
+	if !hasSpiffe && !hasEmail {
+		return nil, nil, fmt.Errorf("one of spiffe_id or email_san is required")
+	}
+	if hasSpiffe && hasEmail {
+		return nil, nil, fmt.Errorf("only one of spiffe_id or email_san may be set")
+	}
+	if hasSpiffe {
+		u, err := url.Parse(req.SPIFFEID)
+		if err != nil || u.Scheme != "spiffe" || u.Host == "" {
+			return nil, nil, fmt.Errorf("spiffe_id must be a valid URI with spiffe:// scheme")
+		}
+		return &req.SPIFFEID, nil, nil
+	}
+	if _, err := mail.ParseAddress(req.EmailSAN); err != nil {
+		return nil, nil, fmt.Errorf("email_san must be a valid email address")
+	}
+	return nil, &req.EmailSAN, nil
+}
+
 // ── handlers ──────────────────────────────────────────────────────────────────
 
 func (s *Server) handleRegisterCertPrincipal(w http.ResponseWriter, r *http.Request) {
@@ -143,15 +170,9 @@ func (s *Server) handleRegisterCertPrincipal(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Exactly one identifier must be supplied.
-	hasSpiffe := req.SPIFFEID != ""
-	hasEmail := req.EmailSAN != ""
-	if !hasSpiffe && !hasEmail {
-		writeError(w, http.StatusBadRequest, "one of spiffe_id or email_san is required")
-		return
-	}
-	if hasSpiffe && hasEmail {
-		writeError(w, http.StatusBadRequest, "only one of spiffe_id or email_san may be set")
+	spiffeID, emailSAN, identErr := parseCertPrincipalIdentifier(req)
+	if identErr != nil {
+		writeError(w, http.StatusBadRequest, identErr.Error())
 		return
 	}
 
@@ -159,21 +180,8 @@ func (s *Server) handleRegisterCertPrincipal(w http.ResponseWriter, r *http.Requ
 		UserID:      tok.UserID,
 		Description: req.Description,
 		ReadOnly:    req.ReadOnly,
-	}
-
-	if hasSpiffe {
-		u, err := url.Parse(req.SPIFFEID)
-		if err != nil || u.Scheme != "spiffe" || u.Host == "" {
-			writeError(w, http.StatusBadRequest, "spiffe_id must be a valid URI with spiffe:// scheme")
-			return
-		}
-		p.SPIFFEID = &req.SPIFFEID
-	} else {
-		if _, err := mail.ParseAddress(req.EmailSAN); err != nil {
-			writeError(w, http.StatusBadRequest, "email_san must be a valid email address")
-			return
-		}
-		p.EmailSAN = &req.EmailSAN
+		SPIFFEID:    spiffeID,
+		EmailSAN:    emailSAN,
 	}
 
 	projectID, envID, httpErr := s.resolveTokenScope(w, r, req.Project, req.Env)

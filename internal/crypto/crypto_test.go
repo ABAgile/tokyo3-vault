@@ -201,3 +201,41 @@ func TestRewrapDEK(t *testing.T) {
 		t.Error("expected error using old KEK on rewrapped DEK")
 	}
 }
+
+// TestDecryptSecret_ShortCiphertext tests the "ciphertext too short" path.
+func TestDecryptSecret_ShortCiphertext(t *testing.T) {
+	ctx := context.Background()
+	kekHex, _ := GenerateKEK()
+	kek, _ := ParseKEK(kekHex)
+	kp := NewLocalKeyProvider(kek)
+
+	// Generate a valid DEK.
+	_, encDEK, err := EncryptSecret(ctx, kp, []byte("plaintext"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Use a 1-byte "ciphertext" — too short for GCM nonce.
+	_, err = DecryptSecret(ctx, kp, encDEK, []byte{0x01})
+	if err == nil {
+		t.Error("expected error for too-short ciphertext, got nil")
+	}
+}
+
+// TestRewrapDEK_UnwrapError tests the error path when unwrap fails.
+func TestRewrapDEK_UnwrapError(t *testing.T) {
+	ctx := context.Background()
+	kekHex, _ := GenerateKEK()
+	kek, _ := ParseKEK(kekHex)
+	kp := NewLocalKeyProvider(kek)
+
+	newHex, _ := GenerateKEK()
+	newKEK, _ := ParseKEK(newHex)
+	newKP := NewLocalKeyProvider(newKEK)
+
+	// Pass garbage as encryptedDEK so unwrap fails.
+	_, err := RewrapDEK(ctx, kp, newKP, []byte("garbage-not-a-real-ciphertext"))
+	if err == nil {
+		t.Error("expected error from RewrapDEK with invalid DEK ciphertext, got nil")
+	}
+}

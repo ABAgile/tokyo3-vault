@@ -675,6 +675,11 @@ func (s *Server) handleDeleteSCIMToken(w http.ResponseWriter, r *http.Request) {
 
 // ── SCIM group→role mapping management (admin API) ────────────────────────────
 
+// isValidGroupRole reports whether role is one of the three allowed values.
+func isValidGroupRole(role string) bool {
+	return role == model.RoleViewer || role == model.RoleEditor || role == model.RoleOwner
+}
+
 func (s *Server) handleCreateSCIMGroupRole(w http.ResponseWriter, r *http.Request) {
 	if !s.requireServerAdmin(w, r) {
 		return
@@ -694,7 +699,7 @@ func (s *Server) handleCreateSCIMGroupRole(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "group_id, project_slug, and role are required")
 		return
 	}
-	if req.Role != model.RoleViewer && req.Role != model.RoleEditor && req.Role != model.RoleOwner {
+	if !isValidGroupRole(req.Role) {
 		writeError(w, http.StatusBadRequest, "role must be viewer, editor, or owner")
 		return
 	}
@@ -708,19 +713,9 @@ func (s *Server) handleCreateSCIMGroupRole(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	var envID *string
-	if req.EnvSlug != "" {
-		env, err := s.store.GetEnvironment(r.Context(), p.ID, req.EnvSlug)
-		if errors.Is(err, store.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "environment not found")
-			return
-		}
-		if err != nil {
-			s.log.Error("scim group role — get env", "err", err)
-			writeError(w, http.StatusInternalServerError, "internal error")
-			return
-		}
-		envID = &env.ID
+	envID, ok := s.resolveOptionalEnv(w, r, p.ID, req.EnvSlug)
+	if !ok {
+		return
 	}
 	displayName := req.DisplayName
 	if displayName == "" {
@@ -733,6 +728,26 @@ func (s *Server) handleCreateSCIMGroupRole(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, http.StatusCreated, scimGroupRoleToResponse(gr))
+}
+
+// resolveOptionalEnv looks up envSlug within projectID if non-empty. Returns
+// (*envID, true) on success or (nil, true) when envSlug is empty. Writes an
+// HTTP error and returns (nil, false) on failure.
+func (s *Server) resolveOptionalEnv(w http.ResponseWriter, r *http.Request, projectID, envSlug string) (*string, bool) {
+	if envSlug == "" {
+		return nil, true
+	}
+	env, err := s.store.GetEnvironment(r.Context(), projectID, envSlug)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "environment not found")
+		return nil, false
+	}
+	if err != nil {
+		s.log.Error("scim group role — get env", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return nil, false
+	}
+	return &env.ID, true
 }
 
 func (s *Server) handleListSCIMGroupRoles(w http.ResponseWriter, r *http.Request) {

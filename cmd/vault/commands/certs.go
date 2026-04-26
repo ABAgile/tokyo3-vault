@@ -77,49 +77,13 @@ func newPrincipalsRegisterCmd() *cobra.Command {
 			if spiffeID != "" && emailSAN != "" {
 				return fmt.Errorf("only one of --spiffe-id or --email-san may be set")
 			}
-			body := map[string]any{
-				"description": args[0],
-				"read_only":   readOnly,
-			}
-			if spiffeID != "" {
-				body["spiffe_id"] = spiffeID
-			}
-			if emailSAN != "" {
-				body["email_san"] = emailSAN
-			}
-			if project != "" {
-				body["project"] = project
-			}
-			if env != "" {
-				body["env"] = env
-			}
-			if expiresIn != "" {
-				body["expires_in"] = expiresIn
-			}
+			body := buildCertPrincipalBody(args[0], spiffeID, emailSAN, project, env, expiresIn, readOnly)
 			c := client.New(g.ServerURL, g.Token)
 			var resp certPrincipalResp
 			if err := c.Post("/api/v1/cert-principals", body, &resp); err != nil {
 				return err
 			}
-			fmt.Printf("id:          %s\n", resp.ID)
-			if resp.SPIFFEID != nil {
-				fmt.Printf("spiffe_id:   %s\n", *resp.SPIFFEID)
-			}
-			if resp.EmailSAN != nil {
-				fmt.Printf("email_san:   %s\n", *resp.EmailSAN)
-			}
-			fmt.Printf("description: %s\n", resp.Description)
-			if resp.ProjectID != nil {
-				fmt.Printf("project_id:  %s\n", *resp.ProjectID)
-			}
-			if resp.EnvID != nil {
-				fmt.Printf("env_id:      %s\n", *resp.EnvID)
-			}
-			fmt.Printf("read_only:   %v\n", resp.ReadOnly)
-			if resp.ExpiresAt != nil {
-				fmt.Printf("expires_at:  %s\n", fmtTime(*resp.ExpiresAt))
-			}
-			fmt.Printf("created_at:  %s\n", fmtTime(resp.CreatedAt))
+			printCertPrincipal(resp)
 			return nil
 		},
 	}
@@ -130,6 +94,48 @@ func newPrincipalsRegisterCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&readOnly, "read-only", false, "Restrict to read-only operations")
 	cmd.Flags().StringVar(&expiresIn, "expires-in", "", "Mapping expiry as a Go duration, e.g. 8760h (1 year)")
 	return cmd
+}
+
+func buildCertPrincipalBody(description, spiffeID, emailSAN, project, env, expiresIn string, readOnly bool) map[string]any {
+	body := map[string]any{"description": description, "read_only": readOnly}
+	if spiffeID != "" {
+		body["spiffe_id"] = spiffeID
+	}
+	if emailSAN != "" {
+		body["email_san"] = emailSAN
+	}
+	if project != "" {
+		body["project"] = project
+	}
+	if env != "" {
+		body["env"] = env
+	}
+	if expiresIn != "" {
+		body["expires_in"] = expiresIn
+	}
+	return body
+}
+
+func printCertPrincipal(resp certPrincipalResp) {
+	fmt.Printf("id:          %s\n", resp.ID)
+	if resp.SPIFFEID != nil {
+		fmt.Printf("spiffe_id:   %s\n", *resp.SPIFFEID)
+	}
+	if resp.EmailSAN != nil {
+		fmt.Printf("email_san:   %s\n", *resp.EmailSAN)
+	}
+	fmt.Printf("description: %s\n", resp.Description)
+	if resp.ProjectID != nil {
+		fmt.Printf("project_id:  %s\n", *resp.ProjectID)
+	}
+	if resp.EnvID != nil {
+		fmt.Printf("env_id:      %s\n", *resp.EnvID)
+	}
+	fmt.Printf("read_only:   %v\n", resp.ReadOnly)
+	if resp.ExpiresAt != nil {
+		fmt.Printf("expires_at:  %s\n", fmtTime(*resp.ExpiresAt))
+	}
+	fmt.Printf("created_at:  %s\n", fmtTime(resp.CreatedAt))
 }
 
 // ── list ──────────────────────────────────────────────────────────────────────
