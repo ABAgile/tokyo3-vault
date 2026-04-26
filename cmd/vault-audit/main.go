@@ -5,6 +5,7 @@
 //	vault-audit consume   Read audit events from NATS JetStream and upsert them
 //	                      into the dedicated audit database. Runs until SIGINT/SIGTERM.
 //	vault-audit query     Query the audit database and print matching entries.
+//	vault-audit version   Print version information.
 //
 // # Environment variables (both subcommands share the database vars)
 //
@@ -36,6 +37,7 @@ import (
 	"github.com/abagile/tokyo3-vault/internal/audit"
 	auditpg "github.com/abagile/tokyo3-vault/internal/audit/postgres"
 	auditsqlite "github.com/abagile/tokyo3-vault/internal/audit/sqlite"
+	"github.com/abagile/tokyo3-vault/internal/build"
 	"github.com/abagile/tokyo3-vault/internal/tlsutil"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
@@ -56,7 +58,7 @@ func main() {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(newConsumeCmd(ctx, log), newQueryCmd(ctx))
+	root.AddCommand(newConsumeCmd(ctx, log), newQueryCmd(ctx), newVersionCmd())
 
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
@@ -98,6 +100,22 @@ func openAuditDB(log *slog.Logger, defaultPath string) (audit.Store, error) {
 	}
 	log.Info("audit db: sqlite", "path", path)
 	return auditsqlite.Open(path)
+}
+
+// ── version ───────────────────────────────────────────────────────────────────
+
+func newVersionCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Print version information",
+		Run: func(cmd *cobra.Command, args []string) {
+			commitTime := build.CommitTime
+			if t, err := time.Parse(time.RFC3339, build.CommitTime); err == nil {
+				commitTime = t.Local().Format("2006-01-02 15:04:05 MST")
+			}
+			fmt.Printf("vault-audit %s (commit %s, committed %s)\n", build.Version, build.Commit, commitTime)
+		},
+	}
 }
 
 // ── consume ───────────────────────────────────────────────────────────────────

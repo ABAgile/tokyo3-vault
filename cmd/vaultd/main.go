@@ -63,6 +63,7 @@
 //	vaultd serve           Start the server (default when no subcommand is given)
 //	vaultd migrate-keys    Migrate all projects to use per-project envelope keys (PEKs).
 //	                       Safe to re-run (idempotent). Requires the same env vars as serve.
+//	vaultd version         Print version information and exit.
 package main
 
 import (
@@ -79,6 +80,7 @@ import (
 
 	"github.com/abagile/tokyo3-vault/internal/api"
 	"github.com/abagile/tokyo3-vault/internal/audit"
+	"github.com/abagile/tokyo3-vault/internal/build"
 	"github.com/abagile/tokyo3-vault/internal/crypto"
 	"github.com/abagile/tokyo3-vault/internal/dynamic"
 	oidcpkg "github.com/abagile/tokyo3-vault/internal/oidc"
@@ -97,6 +99,15 @@ func main() {
 	subcommand := "serve"
 	if len(os.Args) > 1 {
 		subcommand = os.Args[1]
+	}
+
+	if subcommand == "version" {
+		commitTime := build.CommitTime
+		if t, err := time.Parse(time.RFC3339, build.CommitTime); err == nil {
+			commitTime = t.Local().Format("2006-01-02 15:04:05 MST")
+		}
+		fmt.Printf("vaultd %s (commit %s, committed %s)\n", build.Version, build.Commit, commitTime)
+		return
 	}
 
 	kp, err := openKeyProvider(ctx, log)
