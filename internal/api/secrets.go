@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,12 +9,30 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/abagile/tokyo3-vault/internal/crypto"
 	"github.com/abagile/tokyo3-vault/internal/envfile"
 	"github.com/abagile/tokyo3-vault/internal/model"
 	"github.com/abagile/tokyo3-vault/internal/store"
 )
+
+// pruneVersions removes old versions of a secret after a new one is written.
+// Errors are logged and swallowed — pruning is best-effort and must not fail the write.
+func (s *Server) pruneVersions(ctx context.Context, sv *model.SecretVersion) {
+	count := s.pruneMinCount
+	if count == 0 {
+		count = defaultPruneMinCount
+	}
+	age := s.pruneMinAge
+	if age == 0 {
+		age = defaultPruneMinAge
+	}
+	cutoff := time.Now().UTC().Add(-age)
+	if err := s.store.PruneSecretVersions(ctx, sv.SecretID, sv.ID, count, cutoff); err != nil {
+		s.log.Warn("prune secret versions", "secret_id", sv.SecretID, "err", err)
+	}
+}
 
 var keyRe = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
 
@@ -233,6 +252,7 @@ func (s *Server) writeSetSecret(w http.ResponseWriter, r *http.Request, project 
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	s.pruneVersions(r.Context(), sv)
 	if err := s.logAuditEnv(r, ActionSecretSet, project.ID, envID, key, ""); err != nil {
 		writeError(w, http.StatusInternalServerError, "audit unavailable")
 		return
@@ -502,10 +522,12 @@ func (s *Server) copySecret(r *http.Request, sec *model.Secret, sv *model.Secret
 		return false, fmt.Errorf("internal error")
 	}
 	comment := sec.Comment
-	if _, err := s.store.SetSecret(r.Context(), dstProjectID, dstEnvID, sec.Key, &comment, encVal, encDEK, createdBy); err != nil {
+	newSV, err := s.store.SetSecret(r.Context(), dstProjectID, dstEnvID, sec.Key, &comment, encVal, encDEK, createdBy)
+	if err != nil {
 		s.log.Error("set dst secret", "key", sec.Key, "err", err)
 		return false, fmt.Errorf("internal error")
 	}
+	s.pruneVersions(r.Context(), newSV)
 	if err := s.logAuditEnv(r, ActionSecretImport, dstProjectID, dstEnvID, sec.Key, secretAuditMeta(maskValue(string(plaintext)))); err != nil {
 		return false, err
 	}
@@ -575,11 +597,13 @@ func (s *Server) handleUploadEnvfile(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		comment := entry.Comment
-		if _, err := s.store.SetSecret(r.Context(), project.ID, envID, entry.Key, &comment, encVal, encDEK, createdBy); err != nil {
+		sv, err := s.store.SetSecret(r.Context(), project.ID, envID, entry.Key, &comment, encVal, encDEK, createdBy)
+		if err != nil {
 			s.log.Error("set secret", "key", entry.Key, "err", err)
 			writeError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
+		s.pruneVersions(r.Context(), sv)
 		if err := s.logAuditEnv(r, ActionSecretEnvfileUpload, project.ID, envID, entry.Key, secretAuditMeta(maskValue(entry.Value))); err != nil {
 			writeError(w, http.StatusInternalServerError, "audit unavailable")
 			return

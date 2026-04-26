@@ -123,6 +123,15 @@ type SecretStore interface {
 	GetSecretVersion(ctx context.Context, secretID, versionID string) (*model.SecretVersion, error)
 	// RollbackSecret points current_version_id at a previous version.
 	RollbackSecret(ctx context.Context, secretID, versionID string) error
+	// PruneSecretVersions deletes old versions of a secret that fall outside the
+	// retention window. A version is pruned only when BOTH conditions are met:
+	// its rank by version DESC exceeds maxCount AND its created_at is before cutoff.
+	// currentVersionID is always preserved regardless of either condition.
+	PruneSecretVersions(ctx context.Context, secretID, currentVersionID string, maxCount int, cutoff time.Time) error
+	// ListSecretsForPrune returns [secretID, currentVersionID] for every secret.
+	// currentVersionID is "" when the secret has no current version (skip pruning).
+	// Used exclusively by the background version pruner.
+	ListSecretsForPrune(ctx context.Context) ([][2]string, error)
 }
 
 // DynamicStore covers dynamic credential backends, roles, and leases.

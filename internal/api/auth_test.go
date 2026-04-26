@@ -250,6 +250,7 @@ func TestClientIP(t *testing.T) {
 		{"x-forwarded-for with spaces", "10.0.0.1:80", "  9.8.7.6  , 10.0.0.1", "9.8.7.6"},
 	}
 
+	srv := newTestServer(t, &mockStore{})
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			r, _ := http.NewRequest(http.MethodGet, "/", nil)
@@ -257,7 +258,7 @@ func TestClientIP(t *testing.T) {
 			if tc.xff != "" {
 				r.Header.Set("X-Forwarded-For", tc.xff)
 			}
-			got := clientIP(r)
+			got := srv.clientIP(r)
 			if got != tc.want {
 				t.Errorf("clientIP = %q, want %q", got, tc.want)
 			}

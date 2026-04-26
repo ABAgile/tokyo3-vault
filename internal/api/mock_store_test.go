@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"time"
 
 	"github.com/abagile/tokyo3-vault/internal/model"
 	"github.com/abagile/tokyo3-vault/internal/store"
@@ -47,6 +48,7 @@ type mockStore struct {
 	listSecretVersions           func(ctx context.Context, secretID string) ([]*model.SecretVersion, error)
 	getSecretVersion             func(ctx context.Context, secretID, versionID string) (*model.SecretVersion, error)
 	rollbackSecret               func(ctx context.Context, secretID, versionID string) error
+	pruneSecretVersions          func(ctx context.Context, secretID, currentVersionID string, maxCount int, cutoff time.Time) error
 }
 
 func (m *mockStore) CreateUser(ctx context.Context, email, hash, role string) (*model.User, error) {
@@ -245,6 +247,12 @@ func (m *mockStore) GetSecretVersion(ctx context.Context, secretID, versionID st
 func (m *mockStore) RollbackSecret(ctx context.Context, secretID, versionID string) error {
 	if m.rollbackSecret != nil {
 		return m.rollbackSecret(ctx, secretID, versionID)
+	}
+	return nil
+}
+func (m *mockStore) PruneSecretVersions(ctx context.Context, secretID, currentVersionID string, maxCount int, cutoff time.Time) error {
+	if m.pruneSecretVersions != nil {
+		return m.pruneSecretVersions(ctx, secretID, currentVersionID, maxCount, cutoff)
 	}
 	return nil
 }

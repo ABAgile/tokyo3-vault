@@ -87,7 +87,7 @@ func (s *Server) logAuditEnv(r *http.Request, action, projectID, envID, resource
 		EnvID:      envID,
 		Resource:   resource,
 		Metadata:   metadata,
-		IP:         clientIP(r),
+		IP:         s.clientIP(r),
 	}
 	if tok != nil {
 		e.ActorID = tok.ID

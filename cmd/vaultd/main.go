@@ -48,6 +48,21 @@
 //	VAULT_PEK_ROTATION_PERIOD     How long a project PEK may exist before automatic rotation
 //	                              (default: 2160h / 90 days). The background rotator checks
 //	                              every hour; set to 0 to disable automatic rotation.
+//	VAULT_TRUSTED_PROXIES         Comma-separated list of additional CIDR ranges appended to
+//	                              the built-in defaults (127.0.0.0/8, ::1/128, 10.0.0.0/8,
+//	                              172.16.0.0/12, 192.168.0.0/16, fc00::/7) when deciding
+//	                              whether to trust X-Forwarded-For for client IP extraction.
+//	                              Set when your reverse proxy sits outside the built-in ranges.
+//	VAULT_AUTH_RATE_PER_MIN       Maximum auth-endpoint requests per minute per client IP
+//	                              (default: 5). Applies to /auth/login, /auth/signup, and
+//	                              PUT /auth/password. Both the sustained rate and the burst
+//	                              cap are set to this value.
+//	VAULT_VERSION_MIN_KEEP        Minimum number of secret versions to retain per secret
+//	                              (default: 10). A version is pruned only when BOTH this
+//	                              threshold and VAULT_VERSION_MIN_DAYS are exceeded.
+//	VAULT_VERSION_MIN_DAYS        Minimum age in days a secret version must reach before it
+//	                              is eligible for pruning (default: 180). Works together with
+//	                              VAULT_VERSION_MIN_KEEP — both conditions must hold.
 //
 // NATS / Audit sink (serve subcommand):
 //
@@ -72,9 +87,12 @@ import (
 	"crypto/tls"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -153,6 +171,40 @@ func main() {
 	revoker := dynamic.NewRevoker(st, kp, projectKP, log)
 	go revoker.Run(ctx)
 
+	// ── configurable parameters ────────────────────────────────────────────────
+
+	trustedProxies := parseTrustedProxies(log)
+
+	authRatePerMin := 5
+	if v := os.Getenv("VAULT_AUTH_RATE_PER_MIN"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			authRatePerMin = n
+		} else {
+			log.Warn("invalid VAULT_AUTH_RATE_PER_MIN, using default", "value", v, "default", authRatePerMin)
+		}
+	}
+
+	pruneMinCount := 10
+	if v := os.Getenv("VAULT_VERSION_MIN_KEEP"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			pruneMinCount = n
+		} else {
+			log.Warn("invalid VAULT_VERSION_MIN_KEEP, using default", "value", v, "default", pruneMinCount)
+		}
+	}
+
+	pruneMinDays := 180
+	if v := os.Getenv("VAULT_VERSION_MIN_DAYS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			pruneMinDays = n
+		} else {
+			log.Warn("invalid VAULT_VERSION_MIN_DAYS, using default", "value", v, "default", pruneMinDays)
+		}
+	}
+	pruneMinAge := time.Duration(pruneMinDays) * 24 * time.Hour
+
+	go newVersionPruner(st, log, pruneMinCount, pruneMinAge).Run(ctx)
+
 	rotationPeriod := 90 * 24 * time.Hour
 	if v := os.Getenv("VAULT_PEK_ROTATION_PERIOD"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
@@ -183,7 +235,15 @@ func main() {
 		os.Exit(1)
 	}
 
-	srv := api.New(st, kp, projectKP, log, oidcProvider, oidcEnforce, auditSink)
+	srv := api.New(st, kp, projectKP, log, api.Config{
+		OIDC:           oidcProvider,
+		OIDCEnforce:    oidcEnforce,
+		Sink:           auditSink,
+		TrustedProxies: trustedProxies,
+		AuthRatePerMin: authRatePerMin,
+		PruneMinCount:  pruneMinCount,
+		PruneMinAge:    pruneMinAge,
+	})
 	httpSrv := &http.Server{
 		Addr:      addr,
 		Handler:   srv.Routes(),
@@ -429,4 +489,29 @@ func openStore(log *slog.Logger) (store.Store, error) {
 	}
 	log.Info("using SQLite store", "path", dbPath)
 	return sqlite.Open(dbPath)
+}
+
+// parseTrustedProxies reads VAULT_TRUSTED_PROXIES (comma-separated CIDRs) and
+// returns parsed IPNet values. Invalid entries are logged and skipped.
+// Returns nil when the variable is unset, which causes the server to use the
+// built-in loopback + RFC-1918 + ULA defaults.
+func parseTrustedProxies(log *slog.Logger) []*net.IPNet {
+	v := os.Getenv("VAULT_TRUSTED_PROXIES")
+	if v == "" {
+		return nil
+	}
+	var out []*net.IPNet
+	for _, s := range strings.Split(v, ",") {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		_, cidr, err := net.ParseCIDR(s)
+		if err != nil {
+			log.Warn("invalid VAULT_TRUSTED_PROXIES entry, skipping", "value", s, "err", err)
+			continue
+		}
+		out = append(out, cidr)
+	}
+	return out
 }

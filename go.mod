@@ -15,6 +15,7 @@ require (
 	golang.org/x/crypto v0.50.0
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/term v0.42.0
+	golang.org/x/time v0.15.0
 	modernc.org/sqlite v1.48.2
 )
 

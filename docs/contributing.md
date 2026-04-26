@@ -269,14 +269,3 @@ If `issuer.Revoke()` itself fails (target database unreachable), the lease is no
 
 `cert_principals` are matched by full SPIFFE URI equality. There is no prefix or wildcard support. Each workload identity that needs vault access must be registered individually.
 
-### No version pruning for static secrets
-
-Every `SetSecret` call creates a new `SECRET_VERSION` row. Old versions are never deleted. For secrets that are written frequently (e.g. rotating API keys), this can grow the `secret_versions` table indefinitely.
-
-### `X-Forwarded-For` IP logging is not validated
-
-The IP recorded in audit logs comes from the first `X-Forwarded-For` value or `RemoteAddr`. If vault is exposed directly to the internet (no trusted reverse proxy), clients can spoof this header to obscure their IP in audit records.
-
-### No built-in rate limiting
-
-Authentication endpoints (`/login`, `/signup`) have no rate limiting. Deploy behind a reverse proxy (nginx, Caddy, Cloudflare, etc.) that enforces request rate limits before traffic reaches vaultd.

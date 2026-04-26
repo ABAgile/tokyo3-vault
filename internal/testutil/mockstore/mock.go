@@ -130,6 +130,10 @@ func (Stub) GetSecretVersion(_ context.Context, _, _ string) (*model.SecretVersi
 	return nil, store.ErrNotFound
 }
 func (Stub) RollbackSecret(_ context.Context, _, _ string) error { return nil }
+func (Stub) PruneSecretVersions(_ context.Context, _, _ string, _ int, _ time.Time) error {
+	return nil
+}
+func (Stub) ListSecretsForPrune(_ context.Context) ([][2]string, error) { return nil, nil }
 
 // ── Dynamic backends ──────────────────────────────────────────────────────────
 

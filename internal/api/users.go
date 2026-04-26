@@ -134,6 +134,11 @@ func (s *Server) handleResetUserPassword(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	if err := s.store.DeleteAllTokensForUser(r.Context(), targetUserID); err != nil {
+		s.log.Error("revoke tokens after password reset", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
 	if err := s.logAudit(r, ActionAuthChangePassword, "", targetUserID); err != nil {
 		writeError(w, http.StatusInternalServerError, "audit unavailable")
 		return

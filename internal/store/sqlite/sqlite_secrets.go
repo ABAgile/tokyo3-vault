@@ -225,3 +225,38 @@ func (s *DB) RollbackSecret(ctx context.Context, secretID, versionID string) err
 	}
 	return nil
 }
+
+func (s *DB) ListSecretsForPrune(ctx context.Context) ([][2]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, COALESCE(current_version_id, '') FROM secrets`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out [][2]string
+	for rows.Next() {
+		var pair [2]string
+		if err := rows.Scan(&pair[0], &pair[1]); err != nil {
+			return nil, err
+		}
+		out = append(out, pair)
+	}
+	return out, rows.Err()
+}
+
+func (s *DB) PruneSecretVersions(ctx context.Context, secretID, currentVersionID string, maxCount int, cutoff time.Time) error {
+	_, err := s.db.ExecContext(ctx, `
+		WITH ranked AS (
+			SELECT id,
+			       ROW_NUMBER() OVER (ORDER BY version DESC) AS rn,
+			       created_at
+			FROM secret_versions
+			WHERE secret_id = ?
+			  AND id != ?
+		)
+		DELETE FROM secret_versions
+		WHERE id IN (
+			SELECT id FROM ranked
+			WHERE rn > ? AND created_at < ?
+		)`, secretID, currentVersionID, maxCount, cutoff)
+	return err
+}

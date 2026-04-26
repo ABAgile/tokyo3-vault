@@ -41,6 +41,29 @@ Certificate verification itself is handled by Go's TLS stack. `VAULT_TLS_CLIENT_
 - Plaintext passwords are never logged or stored anywhere other than the bcrypt hash in the DB
 - Minimum length: 8 characters (enforced in API handlers)
 
+### Rate limiting
+
+Auth endpoints (`POST /auth/login`, `POST /auth/signup`, `PUT /auth/password`) are protected by a per-IP token-bucket rate limiter. The limiter is seeded at server startup and runs in-process; no external state is needed.
+
+| Parameter | Env var | Default |
+|-----------|---------|---------|
+| Sustained rate (req/min) | `VAULT_AUTH_RATE_PER_MIN` | `5` |
+| Burst cap | — | equals sustained rate |
+
+Exceeding the limit returns `HTTP 429`. The limiter is keyed on the extracted client IP (see Trusted Proxies below), so it tracks the real client rather than a shared proxy address.
+
+### Trusted proxies and X-Forwarded-For
+
+When a request arrives from a trusted CIDR, the server reads the first value of the `X-Forwarded-For` header as the client IP; otherwise it uses `RemoteAddr` directly.
+
+The built-in trusted ranges are: `127.0.0.0/8`, `::1/128`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `fc00::/7`. Additional CIDRs can be appended (not replaced) via `VAULT_TRUSTED_PROXIES` (comma-separated). When your reverse proxy sits outside these ranges, set `VAULT_TRUSTED_PROXIES` explicitly so that the client IP in audit logs reflects the real client rather than the proxy.
+
+The extracted IP is used for both audit records and rate limiting.
+
+### Token invalidation on password change
+
+`PUT /auth/password` (change own password) and `PUT /users/{user_id}/password` (admin reset) both call `DeleteAllTokensForUser` after updating the password hash. All existing session and machine tokens for the affected user are invalidated immediately; any concurrent requests using those tokens will receive `401` on their next authenticated call.
+
 ### First-user bootstrap
 
 The `/signup` endpoint is only accessible when `HasAdminUser()` returns false. The first account always receives the `admin` role. Subsequent accounts require an existing admin to create them via `POST /users`.
@@ -204,7 +227,7 @@ Querying is handled entirely by `vault-audit query`, which reads directly from t
 | `env_id` | Environment UUID for env-scoped actions (`secret.*`, `dynamic.*`, `env.*`); empty otherwise |
 | `resource` | Identifies the affected resource (secret key name, user email, SPIFFE ID, etc.) |
 | `metadata` | Free-form string; secret values are masked to first 3 characters + `...` |
-| `ip` | From `X-Forwarded-For` header (first value) or `RemoteAddr` |
+| `ip` | Client IP: `X-Forwarded-For` (first value) when the TCP connection arrives from a trusted proxy CIDR (`VAULT_TRUSTED_PROXIES`), otherwise `RemoteAddr` |
 | `occurred_at` | Server-side UTC timestamp; stored as `created_at` in the audit DB and returned as `created_at` by the API |
 
 Failed login attempts record the submitted email address in `resource` to support forensic analysis without exposing whether the account exists (the 401 response is identical regardless).
@@ -218,10 +241,18 @@ The audit consumer uses `INSERT ... ON CONFLICT (id) DO NOTHING` so JetStream at
 - When `VAULT_TLS_CERT` / `VAULT_TLS_KEY` are set, `CertLoader.GetCertificate` is used: the certificate is re-read from disk on each TLS handshake when the mtime changes. This supports cert rotation via `tbot` or any certificate manager without a server restart.
 - `VAULT_TLS_CLIENT_CA` enables `tls.VerifyClientCertIfGiven`: client certificates are optional but verified against the CA when present, enabling SPIFFE authentication for workloads that can present a cert.
 
+## Secret Version Retention
+
+Every `SetSecret` call appends a new version row; the `current_version_id` pointer advances but old rows are kept for rollback. The `VersionPruner` background goroutine (started at `vaultd serve`) trims old versions once at startup and then every 24 hours.
+
+A version is eligible for pruning only when **both** conditions hold:
+
+1. There are more than `VAULT_VERSION_MIN_KEEP` versions for the secret (default: `10`).
+2. The version is older than `VAULT_VERSION_MIN_DAYS` days (default: `180`).
+
+The current version is never pruned regardless of age or count. Both thresholds must be exceeded simultaneously — a secret with 50 versions but all written in the last month will not be pruned.
+
 ## Known Security Limitations
 
 - **Dynamic credential templates are user-provided SQL.** There is no parameterization framework; placeholders (`{{username}}`, `{{password}}`, `{{expiry}}`) are replaced by string substitution. This is safe for trusted admins configuring backends but would be a SQL injection vector if templates were user-controlled input from untrusted parties.
 - **Token expiry is checked at auth time, not stored as a DB-level constraint.** A very small window exists between a token expiring and the server detecting it on the next request. This is typical for bearer token systems and is generally acceptable.
-- **The `X-Forwarded-For` header used for IP logging is not validated.** Behind a trusted reverse proxy this is fine; direct internet exposure means a client can spoof its IP in audit logs.
-- **Session tokens are not automatically rotated.** After a password change, existing session tokens remain valid until they expire or are manually deleted.
-- **No rate limiting** is applied to authentication endpoints. Deploy behind a reverse proxy with rate limiting for production.

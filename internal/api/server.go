@@ -4,6 +4,7 @@ package api
 import (
 	"encoding/json"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 
@@ -13,28 +14,83 @@ import (
 	"github.com/abagile/tokyo3-vault/internal/store"
 )
 
-// Server holds shared dependencies for all HTTP handlers.
-type Server struct {
-	store       store.Store
-	kp          crypto.KeyProvider      // server KEK — used only to wrap/unwrap PEKs
-	projectKP   *crypto.ProjectKeyCache // project-scoped key cache; wraps/unwraps per-secret DEKs
-	log         *slog.Logger
-	oidc        *oidcpkg.Provider // nil when OIDC is not configured
-	oidcEnforce bool              // true = local login/signup disabled
-	audit       audit.Sink        // publishes events to NATS JetStream
+const (
+	defaultAuthRatePerMin = 5
+	defaultPruneMinCount  = 10
+	defaultPruneMinAge    = 180 * 24 * time.Hour
+)
+
+// Config holds optional server-wide configuration. Zero values use the defaults
+// documented on each field.
+type Config struct {
+	OIDC        *oidcpkg.Provider
+	OIDCEnforce bool
+	Sink        audit.Sink
+	// TrustedProxies is appended to the built-in loopback + RFC-1918 + ULA ranges
+	// when determining whether to trust X-Forwarded-For for client IP extraction.
+	// nil adds nothing — only the built-in defaults apply.
+	TrustedProxies []*net.IPNet
+	// AuthRatePerMin is the maximum requests per minute per client IP on auth
+	// endpoints (/auth/login, /auth/signup, /auth/password). 0 → default (5).
+	AuthRatePerMin int
+	// PruneMinCount is the minimum number of secret versions to retain per secret.
+	// Pruning only removes versions that exceed BOTH this threshold and PruneMinAge.
+	// 0 → default (10).
+	PruneMinCount int
+	// PruneMinAge is the minimum age a version must exceed before it is eligible
+	// for pruning (together with PruneMinCount). 0 → default (180 days).
+	PruneMinAge time.Duration
 }
 
-// New returns a configured Server. sink publishes audit events to NATS JetStream;
-// pass audit.NoopSink{} in tests.
-func New(st store.Store, kp crypto.KeyProvider, projectKP *crypto.ProjectKeyCache, log *slog.Logger, oidcProvider *oidcpkg.Provider, oidcEnforce bool, sink audit.Sink) *Server {
+// Server holds shared dependencies for all HTTP handlers.
+type Server struct {
+	store          store.Store
+	kp             crypto.KeyProvider      // server KEK — used only to wrap/unwrap PEKs
+	projectKP      *crypto.ProjectKeyCache // project-scoped key cache; wraps/unwraps per-secret DEKs
+	log            *slog.Logger
+	oidc           *oidcpkg.Provider // nil when OIDC is not configured
+	oidcEnforce    bool              // true = local login/signup disabled
+	audit          audit.Sink        // publishes events to NATS JetStream
+	authLimiter    *rateLimiter      // per-IP rate limiter for auth endpoints
+	trustedProxies []*net.IPNet      // nil = built-in defaults only; otherwise defaults + extras
+	pruneMinCount  int               // 0 = use defaultPruneMinCount
+	pruneMinAge    time.Duration     // 0 = use defaultPruneMinAge
+}
+
+// New returns a configured Server.
+func New(st store.Store, kp crypto.KeyProvider, projectKP *crypto.ProjectKeyCache, log *slog.Logger, cfg Config) *Server {
+	sink := cfg.Sink
+	if sink == nil {
+		sink = audit.NoopSink{}
+	}
+	ratePerMin := cfg.AuthRatePerMin
+	if ratePerMin <= 0 {
+		ratePerMin = defaultAuthRatePerMin
+	}
+	burst := max(1, ratePerMin)
+
+	// Trusted proxies are additive: always include the built-in private ranges
+	// and append any operator-supplied extras. Leaving trustedProxies nil (when
+	// no extras are configured) lets clientIP fall back to privateRanges lazily.
+	var proxies []*net.IPNet
+	if len(cfg.TrustedProxies) > 0 {
+		proxies = make([]*net.IPNet, 0, len(privateRanges)+len(cfg.TrustedProxies))
+		proxies = append(proxies, privateRanges...)
+		proxies = append(proxies, cfg.TrustedProxies...)
+	}
+
 	return &Server{
-		store:       st,
-		kp:          kp,
-		projectKP:   projectKP,
-		log:         log,
-		oidc:        oidcProvider,
-		oidcEnforce: oidcEnforce,
-		audit:       sink,
+		store:          st,
+		kp:             kp,
+		projectKP:      projectKP,
+		log:            log,
+		oidc:           cfg.OIDC,
+		oidcEnforce:    cfg.OIDCEnforce,
+		audit:          sink,
+		authLimiter:    newRateLimiter(ratePerMin, burst),
+		trustedProxies: proxies,
+		pruneMinCount:  cfg.PruneMinCount,
+		pruneMinAge:    cfg.PruneMinAge,
 	}
 }
 
@@ -44,8 +100,8 @@ func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 
 	// Auth — local
-	mux.HandleFunc("POST /api/v1/auth/signup", s.handleSignup)
-	mux.HandleFunc("POST /api/v1/auth/login", s.handleLogin)
+	mux.HandleFunc("POST /api/v1/auth/signup", s.rateLimit(s.handleSignup))
+	mux.HandleFunc("POST /api/v1/auth/login", s.rateLimit(s.handleLogin))
 	mux.HandleFunc("DELETE /api/v1/auth/logout", s.auth(s.handleLogout))
 
 	// Auth — OIDC/SSO
@@ -98,7 +154,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/v1/projects/{project}/rotate-key", s.auth(s.handleRotateProjectKey))
 
 	// Auth
-	mux.HandleFunc("PUT /api/v1/auth/password", s.auth(s.handleChangePassword))
+	mux.HandleFunc("PUT /api/v1/auth/password", s.rateLimit(s.auth(s.handleChangePassword)))
 
 	// Users (admin-managed)
 	mux.HandleFunc("GET /api/v1/users", s.auth(s.handleListUsers))

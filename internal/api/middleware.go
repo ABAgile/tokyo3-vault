@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -11,6 +12,36 @@ import (
 	"github.com/abagile/tokyo3-vault/internal/model"
 	"github.com/abagile/tokyo3-vault/internal/store"
 )
+
+// privateRanges lists CIDR blocks that are loopback or RFC-1918/4193 private.
+// X-Forwarded-For is trusted only when r.RemoteAddr falls within these ranges,
+// meaning the connection arrived through a local reverse proxy rather than
+// directly from the internet.
+var privateRanges []*net.IPNet
+
+func init() {
+	for _, s := range []string{
+		"127.0.0.0/8", "::1/128",
+		"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+		"fc00::/7",
+	} {
+		_, cidr, _ := net.ParseCIDR(s)
+		privateRanges = append(privateRanges, cidr)
+	}
+}
+
+func isPrivateAddrIn(ip string, proxies []*net.IPNet) bool {
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return false
+	}
+	for _, cidr := range proxies {
+		if cidr.Contains(parsed) {
+			return true
+		}
+	}
+	return false
+}
 
 // isServerAdmin reports whether userID belongs to a user with the server-admin role.
 func (s *Server) isServerAdmin(ctx context.Context, userID string) bool {
@@ -241,15 +272,22 @@ func roleAtLeast(have, need string) bool {
 	return roleRank[have] >= roleRank[need]
 }
 
-// clientIP extracts the best-guess client IP: first value of X-Forwarded-For
-// when present (behind a trusted proxy), or the TCP remote address otherwise.
-func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		return strings.TrimSpace(strings.SplitN(xff, ",", 2)[0])
-	}
+// clientIP extracts the best-guess client IP.
+// X-Forwarded-For is only trusted when r.RemoteAddr falls within the server's
+// configured trusted-proxy CIDR list (s.trustedProxies, defaulting to loopback
+// and RFC-1918/ULA ranges). A direct internet connection cannot spoof its IP
+// this way — we always use r.RemoteAddr for untrusted sources.
+func (s *Server) clientIP(r *http.Request) string {
 	addr := r.RemoteAddr
 	if i := strings.LastIndex(addr, ":"); i != -1 {
-		return addr[:i]
+		addr = addr[:i]
+	}
+	proxies := s.trustedProxies
+	if len(proxies) == 0 {
+		proxies = privateRanges
+	}
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" && isPrivateAddrIn(addr, proxies) {
+		return strings.TrimSpace(strings.SplitN(xff, ",", 2)[0])
 	}
 	return addr
 }

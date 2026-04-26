@@ -76,9 +76,10 @@ Two subcommands:
 5. Open `audit.JetStreamSink` (publisher credential, PUBLISH-only on `audit.events`); falls back to `NoopSink` when `VAULT_NATS_URL` is unset
 6. Start background `Revoker` goroutine (sweeps expired dynamic leases every 60 s; also sweeps on startup)
 7. Start background `PEKRotator` goroutine (sweeps for stale PEKs every hour; also sweeps on startup; disabled when `VAULT_PEK_ROTATION_PERIOD=0`)
-8. Build TLS config — hot-reloading cert files if provided, else self-signed
-9. Build OIDC provider from `VAULT_OIDC_*` env vars; `nil` provider when unconfigured (local auth only)
-10. Start `http.Server` on `VAULT_ADDR` (default `:8443`)
+8. Start background `VersionPruner` goroutine (prunes old secret versions once at startup then every 24 h; controlled by `VAULT_VERSION_MIN_KEEP` and `VAULT_VERSION_MIN_DAYS`)
+9. Build TLS config — hot-reloading cert files if provided, else self-signed
+10. Build OIDC provider from `VAULT_OIDC_*` env vars; `nil` provider when unconfigured (local auth only)
+11. Start `http.Server` on `VAULT_ADDR` (default `:8443`)
 
 Graceful shutdown is triggered by SIGINT or SIGTERM.
 
@@ -184,6 +185,10 @@ Key relationships:
 | `VAULT_DB_CA` | no | — | CA cert to verify Postgres server |
 | `VAULT_PROJECT_KEY_CACHE_TTL` | no | `5m` | How long plaintext PEKs stay in RAM |
 | `VAULT_PEK_ROTATION_PERIOD` | no | `2160h` (90 days) | Maximum age of a project PEK before automatic rotation; set to `0` to disable |
+| `VAULT_TRUSTED_PROXIES` | no | — | Comma-separated CIDRs **appended to** the built-in trusted ranges (loopback, RFC-1918, ULA). X-Forwarded-For is only trusted when the TCP connection comes from a trusted CIDR. |
+| `VAULT_AUTH_RATE_PER_MIN` | no | `5` | Maximum requests per minute per client IP on auth endpoints (`/auth/login`, `/auth/signup`, `PUT /auth/password`). Both the sustained rate and burst cap are set to this value. |
+| `VAULT_VERSION_MIN_KEEP` | no | `10` | Minimum number of secret versions to retain per secret. A version is pruned only when **both** this threshold **and** `VAULT_VERSION_MIN_DAYS` are exceeded. |
+| `VAULT_VERSION_MIN_DAYS` | no | `180` | Minimum age in days a secret version must reach before it is eligible for pruning (together with `VAULT_VERSION_MIN_KEEP`). |
 | `VAULT_OIDC_ISSUER` | no | — | IdP issuer URL; enables OIDC when set (all four OIDC vars required together) |
 | `VAULT_OIDC_CLIENT_ID` | no | — | OAuth2 client ID |
 | `VAULT_OIDC_CLIENT_SECRET` | no | — | OAuth2 client secret |
