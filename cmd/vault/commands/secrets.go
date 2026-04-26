@@ -319,7 +319,7 @@ Example:
 				return fmt.Errorf("read file: %w", err)
 			}
 
-			path := secretsPath(project, env) + "/dotenv"
+			path := secretsPath(project, env) + "/envfile"
 			if overwrite {
 				path += "?overwrite=true"
 			}
@@ -363,7 +363,7 @@ Example:
 			}
 
 			c := client.New(g.ServerURL, g.Token)
-			content, err := c.GetText(secretsPath(project, env) + "/dotenv")
+			content, err := c.GetText(secretsPath(project, env) + "/envfile")
 			if err != nil {
 				return err
 			}

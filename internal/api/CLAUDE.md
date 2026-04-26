@@ -14,7 +14,7 @@ HTTP handlers for vaultd. All routes go through the `auth` middleware in `middle
 | `projects.go` | project CRUD |
 | `environments.go` | environment CRUD |
 | `members.go` | project membership management |
-| `secrets.go` | secret CRUD, dotenv import/export, rollback |
+| `secrets.go` | secret CRUD, envfile upload/download, rollback |
 | `dynamic.go` | dynamic backends, roles, credential issuance, lease management |
 | `certs.go` | cert principal registration + `authFromClientCert` (mTLS auth helper) |
 | `access.go` | unified access view per project/env |

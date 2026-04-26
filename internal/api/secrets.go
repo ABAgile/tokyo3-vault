@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/abagile/tokyo3-vault/internal/crypto"
-	"github.com/abagile/tokyo3-vault/internal/dotenv"
+	"github.com/abagile/tokyo3-vault/internal/envfile"
 	"github.com/abagile/tokyo3-vault/internal/model"
 	"github.com/abagile/tokyo3-vault/internal/store"
 )
@@ -521,10 +521,10 @@ func versionToResponse(sv *model.SecretVersion) versionResponse {
 	}
 }
 
-// handleUploadDotenv parses a raw .env file body and upserts its secrets.
+// handleUploadEnvfile parses a raw .env file body and upserts its secrets.
 // Comments and blank lines preceding each key are stored alongside it.
 // Query param: overwrite=true skips the duplicate check (default: skip existing).
-func (s *Server) handleUploadDotenv(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleUploadEnvfile(w http.ResponseWriter, r *http.Request) {
 	project, envID, ok := s.resolveProjectEnv(r, w)
 	if !ok {
 		return
@@ -540,7 +540,7 @@ func (s *Server) handleUploadDotenv(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entries, err := dotenv.Parse(string(body))
+	entries, err := envfile.Parse(string(body))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid .env file: "+err.Error())
 		return
@@ -580,7 +580,7 @@ func (s *Server) handleUploadDotenv(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
-		if err := s.logAuditEnv(r, ActionSecretDotenvUpload, project.ID, envID, entry.Key, secretAuditMeta(maskValue(entry.Value))); err != nil {
+		if err := s.logAuditEnv(r, ActionSecretEnvfileUpload, project.ID, envID, entry.Key, secretAuditMeta(maskValue(entry.Value))); err != nil {
 			writeError(w, http.StatusInternalServerError, "audit unavailable")
 			return
 		}
@@ -590,9 +590,9 @@ func (s *Server) handleUploadDotenv(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"uploaded": uploaded, "skipped": skipped})
 }
 
-// handleDownloadDotenv decrypts all secrets for a project+env and returns them
+// handleDownloadEnvfile decrypts all secrets for a project+env and returns them
 // as a plain-text .env file, preserving insertion order and stored comments.
-func (s *Server) handleDownloadDotenv(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleDownloadEnvfile(w http.ResponseWriter, r *http.Request) {
 	project, envID, ok := s.resolveProjectEnv(r, w)
 	if !ok {
 		return
@@ -612,7 +612,7 @@ func (s *Server) handleDownloadDotenv(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entries := make([]dotenv.Entry, 0, len(secrets))
+	entries := make([]envfile.Entry, 0, len(secrets))
 	for i, sec := range secrets {
 		sv := versions[i]
 		if sv == nil {
@@ -624,18 +624,18 @@ func (s *Server) handleDownloadDotenv(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
-		if err := s.logAuditEnv(r, ActionSecretDotenvDownload, project.ID, envID, sec.Key, secretAuditMeta(maskValue(string(plaintext)))); err != nil {
+		if err := s.logAuditEnv(r, ActionSecretEnvfileDownload, project.ID, envID, sec.Key, secretAuditMeta(maskValue(string(plaintext)))); err != nil {
 			writeError(w, http.StatusInternalServerError, "audit unavailable")
 			return
 		}
-		entries = append(entries, dotenv.Entry{
+		entries = append(entries, envfile.Entry{
 			Comment: sec.Comment,
 			Key:     sec.Key,
 			Value:   string(plaintext),
 		})
 	}
 
-	content := dotenv.Serialize(entries)
+	content := envfile.Serialize(entries)
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(content))

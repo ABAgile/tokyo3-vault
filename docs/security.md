@@ -119,6 +119,16 @@ The automatic rotator emits a `project.rotate_key` audit event on success (best-
 
 > When AWS KMS automatic key rotation is enabled, `VAULT_PEK_ROTATION_PERIOD` doubles as the re-wrap schedule: each PEK rotation calls `kp.UnwrapDEK` (KMS uses the old key version) then `kp.WrapDEK` (KMS uses the current key version), progressively migrating all stored PEKs to the latest KMS key material.
 
+### DEK rotation — design rationale
+
+DEKs are intentionally not rotated independently. The threat that DEK rotation would address — an attacker obtaining a plaintext DEK and using it to decrypt a secret version — already requires compromising the PEK first, since DEKs are stored wrapped by the PEK. If the PEK is compromised, all DEKs for that project are exposed regardless; rotating individual DEKs provides no marginal protection.
+
+PEK rotation (automatic every 90 days, or on demand) serves as the crypto-hygiene refresh for the entire key hierarchy: after rotation, all DEKs are re-wrapped under fresh PEK material and the in-memory PEK cache is invalidated. This is the correct boundary at which to rotate — one operation protects all secrets in the project.
+
+In-place DEK rotation would also require mutating existing `secret_versions` rows (decrypt value, re-encrypt under new DEK, update both `encrypted_dek` and `encrypted_value`). Secret versions are otherwise immutable records of value changes; mutating them for key-material reasons conflates two orthogonal concerns.
+
+**Secret value rotation** (automatically replacing a secret's content — cycling a database password, regenerating an API key) is a separate concern that requires outbound integration with the target system. It is not implemented and is out of scope for the core vault server.
+
 ### Key migration
 
 Projects created before PEK support have `encrypted_pek = NULL`. The `ForProject` method detects this and returns the server-level provider directly, so existing DEKs continue to work without any data migration.
@@ -173,9 +183,9 @@ Querying is handled entirely by `vault-audit query`, which reads directly from t
 |----------|---------|
 | Auth | `auth.signup`, `auth.login`, `auth.logout`, `auth.login_failed`, `auth.change_password` |
 | OIDC | `auth.oidc.login`, `auth.oidc.jit_provision`, `auth.oidc.identity_linked` |
-| Projects | `project.create`, `project.delete` |
+| Projects | `project.create`, `project.delete`, `project.rotate_key` |
 | Environments | `env.create`, `env.delete` |
-| Secrets | `secret.get`, `secret.set`, `secret.delete`, `secret.rollback`, `secret.import`, `secret.dotenv_upload`, `secret.dotenv_download` |
+| Secrets | `secret.get`, `secret.set`, `secret.delete`, `secret.rollback`, `secret.import`, `secret.envfile_upload`, `secret.envfile_download` |
 | Tokens | `token.create`, `token.delete` |
 | Members | `member.add`, `member.update`, `member.remove` |
 | Dynamic | `dynamic.backend.set`, `dynamic.backend.delete`, `dynamic.role.set`, `dynamic.role.delete`, `dynamic.lease.issue`, `dynamic.lease.revoke` |

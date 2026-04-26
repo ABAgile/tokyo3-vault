@@ -129,8 +129,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/projects/{project}/envs/{env}/secrets/{key}/versions", s.auth(s.handleListSecretVersions))
 	mux.HandleFunc("POST /api/v1/projects/{project}/envs/{env}/secrets/{key}/rollback", s.auth(s.handleRollbackSecret))
 	mux.HandleFunc("POST /api/v1/projects/{project}/envs/{env}/secrets/import", s.auth(s.handleImportSecrets))
-	mux.HandleFunc("GET /api/v1/projects/{project}/envs/{env}/secrets/dotenv", s.auth(s.handleDownloadDotenv))
-	mux.HandleFunc("POST /api/v1/projects/{project}/envs/{env}/secrets/dotenv", s.auth(s.handleUploadDotenv))
+	mux.HandleFunc("GET /api/v1/projects/{project}/envs/{env}/secrets/envfile", s.auth(s.handleDownloadEnvfile))
+	mux.HandleFunc("POST /api/v1/projects/{project}/envs/{env}/secrets/envfile", s.auth(s.handleUploadEnvfile))
 
 	// Dynamic backends — backend configuration (keyed by user-defined name slug)
 	mux.HandleFunc("PUT /api/v1/projects/{project}/envs/{env}/dynamic/{name}", s.auth(s.handleSetDynamicBackend))

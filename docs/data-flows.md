@@ -258,21 +258,21 @@ POST /api/v1/projects/{slug}/rotate-key
  └─ 204 No Content
 ```
 
-## dotenv upload
+## envfile upload
 
 ```
-POST /v1/projects/{project}/envs/{env}/secrets/dotenv
+POST /v1/projects/{project}/envs/{env}/secrets/envfile
  │
  ├─ auth middleware → requireWrite
  ├─ io.ReadAll(r.Body)                — body already capped at 4 MB by limitBody
- ├─ dotenv.Parse(body)               — returns []dotenv.Entry{Key, Value, Comment}
+ ├─ envfile.Parse(body)              — returns []envfile.Entry{Key, Value, Comment}
  │
  └─ for each entry:
      ├─ projectKP.ForProject(...)    — resolved once, shared across all secrets
      ├─ crypto.EncryptSecret(kp, value)
      └─ store.SetSecret(...)
  │
- ├─ logAuditEnv(action=secret.dotenv_upload, projectID, envID, resource=key, metadata={masked value})
+ ├─ logAuditEnv(action=secret.envfile_upload, projectID, envID, resource=key, metadata={masked value})
  │   └─ audit.Sink.Log → NATS JetStream (fail-closed, one call per uploaded key)
  └─ JSON response: {uploaded, skipped}
 ```

@@ -21,13 +21,13 @@ const (
 	ActionEnvCreate = "env.create"
 	ActionEnvDelete = "env.delete"
 
-	ActionSecretGet            = "secret.get"
-	ActionSecretSet            = "secret.set"
-	ActionSecretDelete         = "secret.delete"
-	ActionSecretRollback       = "secret.rollback"
-	ActionSecretImport         = "secret.import"
-	ActionSecretDotenvUpload   = "secret.dotenv_upload"
-	ActionSecretDotenvDownload = "secret.dotenv_download"
+	ActionSecretGet             = "secret.get"
+	ActionSecretSet             = "secret.set"
+	ActionSecretDelete          = "secret.delete"
+	ActionSecretRollback        = "secret.rollback"
+	ActionSecretImport          = "secret.import"
+	ActionSecretEnvfileUpload   = "secret.envfile_upload"
+	ActionSecretEnvfileDownload = "secret.envfile_download"
 
 	ActionAuthChangePassword = "auth.change_password"
 

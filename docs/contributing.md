@@ -46,7 +46,7 @@ internal/
   auth/         Password hashing + token generation/validation
   build/        Version metadata
   crypto/       AES-256-GCM helpers, KeyProvider interface, ProjectKeyCache
-  dotenv/       .env file parser
+  envfile/      .env file format parser/serializer for bulk secret upload and download
   dynamic/      Issuer interface, PostgreSQL issuer, background revoker
   model/        All data types (no logic)
   store/        Store interface
@@ -136,23 +136,128 @@ Tests use a `mockStore` defined in `internal/api/mock_store_test.go`. For new st
 
 Integration tests (Postgres) can be run with a `VAULT_DATABASE_URL` environment variable pointing to a real database. The test suite creates and tears down its own schema.
 
+## Deployment notes
+
+### Deployment modes
+
+Vault supports three standard configurations. Pick one key provider (`VAULT_MASTER_KEY` or `VAULT_KMS_KEY_ID`) and one store backend (SQLite or Postgres); the sections below show the minimal `.env` for each mode.
+
+#### Mode 1 — Local dev: SQLite + master key
+
+No external dependencies. `make run-server` auto-generates this file on first run.
+
+```
+VAULT_MASTER_KEY=<64-char hex>   # vault keygen
+VAULT_DB_PATH=vault.db
+VAULT_ADDR=:8443
+```
+
+TLS: self-signed cert is generated automatically (not for production).
+Audit: no-op sink (`VAULT_NATS_URL` unset; server logs a warning).
+
+---
+
+#### Mode 2 — Postgres with password auth
+
+Standard production setup: Postgres for the main store and audit DB, NATS for the audit pipeline, AWS KMS for key management.
+
+```
+# Key provider
+VAULT_KMS_KEY_ID=alias/vault-prod
+
+# Main DB (admin runs schema migrations; app is DML-only)
+VAULT_ADMIN_DATABASE_URL=postgres://vault_admin:<admin-pw>@db:5432/vault
+VAULT_DATABASE_URL=postgres://vault_app:<app-pw>@db:5432/vault
+
+# Server TLS
+VAULT_TLS_CERT=/etc/vault/tls.crt
+VAULT_TLS_KEY=/etc/vault/tls.key
+
+# Audit sink (vaultd publisher)
+VAULT_NATS_URL=nats://nats:4222
+
+# vault-audit (separate process)
+VAULT_AUDIT_NATS_URL=nats://nats:4222
+VAULT_AUDIT_DATABASE_URL=postgres://vault_audit:<audit-pw>@auditdb:5432/vault_audit
+```
+
+The `docker-compose.yml` ships a reference implementation of this mode.
+
+---
+
+#### Mode 3 — Postgres with mTLS cert auth
+
+Replaces all password credentials with client certificates for vault→Postgres and NATS connections. Typically deployed with `tbot` managing certificate rotation.
+
+```
+# Key provider
+VAULT_KMS_KEY_ID=alias/vault-prod
+
+# Main DB — client cert replaces password in the DSN
+VAULT_ADMIN_DATABASE_URL=postgres://vault_admin@db:5432/vault?sslmode=verify-full
+VAULT_ADMIN_DB_CERT=/etc/vault/db-admin.crt
+VAULT_ADMIN_DB_KEY=/etc/vault/db-admin.key
+VAULT_ADMIN_DB_CA=/etc/vault/db-ca.crt
+
+VAULT_DATABASE_URL=postgres://vault_app@db:5432/vault?sslmode=verify-full
+VAULT_DB_CERT=/etc/vault/db-app.crt
+VAULT_DB_KEY=/etc/vault/db-app.key
+VAULT_DB_CA=/etc/vault/db-ca.crt
+
+# Server TLS + optional inbound mTLS from workloads (enables SPIFFE auth)
+VAULT_TLS_CERT=/etc/vault/tls.crt
+VAULT_TLS_KEY=/etc/vault/tls.key
+VAULT_TLS_CLIENT_CA=/etc/vault/client-ca.crt
+
+# Audit sink over mTLS
+VAULT_NATS_URL=tls://nats:4222
+VAULT_NATS_CERT=/etc/vault/nats.crt
+VAULT_NATS_KEY=/etc/vault/nats.key
+VAULT_NATS_CA=/etc/vault/nats-ca.crt
+
+# vault-audit (separate process)
+VAULT_AUDIT_NATS_URL=tls://nats:4222
+VAULT_AUDIT_NATS_CERT=/etc/vault/audit-nats.crt
+VAULT_AUDIT_NATS_KEY=/etc/vault/audit-nats.key
+VAULT_AUDIT_NATS_CA=/etc/vault/nats-ca.crt
+
+VAULT_AUDIT_DATABASE_URL=postgres://vault_audit@auditdb:5432/vault_audit?sslmode=verify-full
+VAULT_AUDIT_DB_CERT=/etc/vault/audit-db.crt
+VAULT_AUDIT_DB_KEY=/etc/vault/audit-db.key
+VAULT_AUDIT_DB_CA=/etc/vault/db-ca.crt
+```
+
+The `docker-compose.mtls.yml` overlay ships a reference implementation of this mode. Run `bash certs/gen.sh` to generate development certificates, then `make docker-up-mtls`.
+
+---
+
+### SQLite vs Postgres
+
+SQLite is appropriate for single-node development or small deployments with external backup. For multi-instance or high-availability deployments, use Postgres. The store interface abstracts all persistence; no application logic changes are needed when switching.
+
+The audit DB is always Postgres in production (set `VAULT_AUDIT_DATABASE_URL`). The SQLite fallback (`VAULT_AUDIT_DB_PATH`) is for local development only — `vault-audit consume`'s `ensureSchema` handles schema creation automatically for SQLite, so no migrations directory is needed.
+
+### TLS certificate rotation
+
+When `VAULT_TLS_CERT` and `VAULT_TLS_KEY` are set, the server re-reads the files on each TLS handshake when the mtime changes. Update the files in-place (e.g. via `tbot` or `certbot`) and the new certificate takes effect on the next connection — no restart required.
+
+### KMS cost optimization
+
+Each `ProjectKeyCache` miss triggers one KMS `Decrypt` call. With the default 5-minute TTL, a single active project generates at most 12 KMS calls per hour regardless of secret access volume. Increase `VAULT_PROJECT_KEY_CACHE_TTL` to reduce KMS costs at the expense of slower PEK rotation propagation.
+
+### Dynamic backend security
+
+The creation and revocation templates are SQL executed against your target database. The vault server must have network access to the target database and the admin credentials stored in the backend config must have `CREATE ROLE` / `GRANT` / `DROP ROLE` privileges (or equivalent). Use a dedicated admin account with only the minimum privileges needed to create and revoke credentials.
+
 ## Known limitations
 
 ### No dynamic backend type extensibility at runtime
 
 Backend types are registered in a compile-time map. There is no plugin system. Adding a new backend type requires modifying and redeploying the server.
 
-### No secret rotation scheduling
-
-Secrets are written manually (or via CI). There is no built-in cron-style rotation or expiry for static secrets. Automatic rotation must be handled externally (write a new value via the API, then restart dependent processes).
-
 ### Audit DB projection grows indefinitely
 
 The NATS JetStream `AUDIT` stream has built-in 400-day retention (`StreamMaxAge`), satisfying PCI-DSS 10.5. However, the queryable audit DB populated by `vault-audit consume` has no pruning. Implement retention externally: periodically delete rows older than your retention window, copy them to object storage first, or use Postgres table partitioning.
-
-### No project PEK rotation
-
-`vaultd migrate-keys` migrates from the server KEK to per-project PEKs (one-way, idempotent). Once a project has a PEK there is no built-in command to rotate it to a new PEK. A rotation would require: generate new PEK, rewrap all DEKs, store new `encrypted_pek` — essentially the same as migration but starting from an existing PEK. This path is not currently implemented.
 
 ### Lease revocation is not transactional
 
@@ -175,23 +280,3 @@ The IP recorded in audit logs comes from the first `X-Forwarded-For` value or `R
 ### No built-in rate limiting
 
 Authentication endpoints (`/login`, `/signup`) have no rate limiting. Deploy behind a reverse proxy (nginx, Caddy, Cloudflare, etc.) that enforces request rate limits before traffic reaches vaultd.
-
-## Deployment notes
-
-### SQLite vs Postgres
-
-SQLite is appropriate for single-node development or small deployments with external backup. For multi-instance or high-availability deployments, use Postgres. The store interface abstracts all persistence; no application logic changes are needed when switching.
-
-The audit DB is always Postgres in production (set `VAULT_AUDIT_DATABASE_URL`). The SQLite fallback (`VAULT_AUDIT_DB_PATH`) is for local development only — `vault-audit consume`'s `ensureSchema` handles schema creation automatically for SQLite, so no migrations directory is needed.
-
-### TLS certificate rotation
-
-When `VAULT_TLS_CERT` and `VAULT_TLS_KEY` are set, the server re-reads the files on each TLS handshake when the mtime changes. Update the files in-place (e.g. via `tbot` or `certbot`) and the new certificate takes effect on the next connection — no restart required.
-
-### KMS cost optimization
-
-Each `ProjectKeyCache` miss triggers one KMS `Decrypt` call. With the default 5-minute TTL, a single active project generates at most 12 KMS calls per hour regardless of secret access volume. Increase `VAULT_PROJECT_KEY_CACHE_TTL` to reduce KMS costs at the expense of slower PEK rotation propagation.
-
-### Dynamic backend security
-
-The creation and revocation templates are SQL executed against your target database. The vault server must have network access to the target database and the admin credentials stored in the backend config must have `CREATE ROLE` / `GRANT` / `DROP ROLE` privileges (or equivalent). Use a dedicated admin account with only the minimum privileges needed to create and revoke credentials.

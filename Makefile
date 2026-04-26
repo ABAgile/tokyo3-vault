@@ -88,16 +88,16 @@ build-darwin: $(BIN_DIR)
 
 # ── Dev ───────────────────────────────────────────────────────────────────────
 
-## run-server: Start vaultd with dev defaults (auto-generates key if .dev.env absent)
+## run-server: Start vaultd with dev defaults (auto-generates .env on first run)
 run-server: build-server
-	@if [ ! -f .dev.env ]; then \
+	@if [ ! -f .env ]; then \
 	    KEY=$$($(VAULT_BIN) keygen 2>/dev/null || $(BIN_DIR)/vault keygen); \
-	    echo "VAULT_MASTER_KEY=$$KEY" > .dev.env; \
-	    echo "VAULT_DB_PATH=vault.db" >> .dev.env; \
-	    echo "VAULT_ADDR=:8443" >> .dev.env; \
-	    echo "  generated .dev.env (add to .gitignore!)"; \
+	    echo "VAULT_MASTER_KEY=$$KEY" > .env; \
+	    echo "VAULT_DB_PATH=vault.db" >> .env; \
+	    echo "VAULT_ADDR=:8443" >> .env; \
+	    echo "  generated .env"; \
 	fi
-	@export $$(cat .dev.env | xargs) && $(VAULTD_BIN)
+	@export $$(cat .env | xargs) && $(VAULTD_BIN)
 
 ## keygen: Print a fresh random master key
 keygen: build-cli

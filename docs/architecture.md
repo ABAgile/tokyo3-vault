@@ -97,7 +97,7 @@ Handler files map roughly to resource types:
 | `projects.go` | project CRUD, slug helpers, on-demand PEK rotation (`POST /projects/{slug}/rotate-key`) |
 | `environments.go` | environment CRUD |
 | `members.go` | project membership management |
-| `secrets.go` | secret CRUD, dotenv import/export, rollback |
+| `secrets.go` | secret CRUD, envfile upload/download, rollback |
 | `dynamic.go` | dynamic backends, roles, credential issuance, lease management |
 | `certs.go` | SPIFFE principal registration + SPIFFE auth helper |
 | `access.go` | unified access view (members + tokens + principals per project/env) |

@@ -360,9 +360,9 @@ func TestHandleDeleteSecret_NotFound(t *testing.T) {
 	}
 }
 
-// ── handleUploadDotenv ────────────────────────────────────────────────────────
+// ── handleUploadEnvfile ────────────────────────────────────────────────────────
 
-func TestHandleUploadDotenv_OK(t *testing.T) {
+func TestHandleUploadEnvfile_OK(t *testing.T) {
 	var storedKeys []string
 	st := baseStore()
 	st.getSecret = func(_ context.Context, _, _, _ string) (*model.Secret, *model.SecretVersion, error) {
@@ -374,8 +374,8 @@ func TestHandleUploadDotenv_OK(t *testing.T) {
 	}
 
 	srv := newTestServer(t, st)
-	dotenv := "# db config\nDB_URL=postgres://localhost/db\nAPP_KEY=secret123\n"
-	w := call(t, srv.handleUploadDotenv, http.MethodPost, "/", dotenv, ownerTok(), secretPV()...)
+	body := "# db config\nDB_URL=postgres://localhost/db\nAPP_KEY=secret123\n"
+	w := call(t, srv.handleUploadEnvfile, http.MethodPost, "/", body, ownerTok(), secretPV()...)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body)
@@ -393,7 +393,7 @@ func TestHandleUploadDotenv_OK(t *testing.T) {
 	}
 }
 
-func TestHandleUploadDotenv_SkipsExisting(t *testing.T) {
+func TestHandleUploadEnvfile_SkipsExisting(t *testing.T) {
 	st := baseStore()
 	st.getSecret = func(_ context.Context, _, _, key string) (*model.Secret, *model.SecretVersion, error) {
 		if key == "DB_URL" {
@@ -408,8 +408,8 @@ func TestHandleUploadDotenv_SkipsExisting(t *testing.T) {
 	}
 
 	srv := newTestServer(t, st)
-	dotenv := "DB_URL=postgres://localhost\nNEW_KEY=val\n"
-	w := call(t, srv.handleUploadDotenv, http.MethodPost, "/", dotenv, ownerTok(), secretPV()...)
+	body := "DB_URL=postgres://localhost\nNEW_KEY=val\n"
+	w := call(t, srv.handleUploadEnvfile, http.MethodPost, "/", body, ownerTok(), secretPV()...)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", w.Code)
@@ -424,7 +424,7 @@ func TestHandleUploadDotenv_SkipsExisting(t *testing.T) {
 	}
 }
 
-func TestHandleUploadDotenv_Overwrite(t *testing.T) {
+func TestHandleUploadEnvfile_Overwrite(t *testing.T) {
 	st := baseStore()
 	st.getSecret = func(_ context.Context, _, _, _ string) (*model.Secret, *model.SecretVersion, error) {
 		return &model.Secret{Key: "K"}, &model.SecretVersion{}, nil // exists
@@ -437,7 +437,7 @@ func TestHandleUploadDotenv_Overwrite(t *testing.T) {
 
 	srv := newTestServer(t, st)
 	// Use ?overwrite=true query param.
-	w := call(t, srv.handleUploadDotenv, http.MethodPost, "/?overwrite=true", "MY_KEY=newval\n", ownerTok(), secretPV()...)
+	w := call(t, srv.handleUploadEnvfile, http.MethodPost, "/?overwrite=true", "MY_KEY=newval\n", ownerTok(), secretPV()...)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", w.Code)
 	}
@@ -446,15 +446,15 @@ func TestHandleUploadDotenv_Overwrite(t *testing.T) {
 	}
 }
 
-func TestHandleUploadDotenv_InvalidDotenv(t *testing.T) {
+func TestHandleUploadEnvfile_InvalidEnvfile(t *testing.T) {
 	srv := newTestServer(t, baseStore())
-	w := call(t, srv.handleUploadDotenv, http.MethodPost, "/", "NOEQUALS\n", ownerTok(), secretPV()...)
+	w := call(t, srv.handleUploadEnvfile, http.MethodPost, "/", "NOEQUALS\n", ownerTok(), secretPV()...)
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", w.Code)
 	}
 }
 
-func TestHandleUploadDotenv_InvalidKeyFormat(t *testing.T) {
+func TestHandleUploadEnvfile_InvalidKeyFormat(t *testing.T) {
 	// Key "1INVALID" starts with digit — fails keyRe.
 	st := baseStore()
 	st.getSecret = func(_ context.Context, _, _, _ string) (*model.Secret, *model.SecretVersion, error) {
@@ -462,15 +462,15 @@ func TestHandleUploadDotenv_InvalidKeyFormat(t *testing.T) {
 	}
 
 	srv := newTestServer(t, st)
-	w := call(t, srv.handleUploadDotenv, http.MethodPost, "/", "1INVALID=val\n", ownerTok(), secretPV()...)
+	w := call(t, srv.handleUploadEnvfile, http.MethodPost, "/", "1INVALID=val\n", ownerTok(), secretPV()...)
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", w.Code)
 	}
 }
 
-// ── handleDownloadDotenv ──────────────────────────────────────────────────────
+// ── handleDownloadEnvfile ──────────────────────────────────────────────────────
 
-func TestHandleDownloadDotenv_OK(t *testing.T) {
+func TestHandleDownloadEnvfile_OK(t *testing.T) {
 	encVal1, encDEK1 := encryptForTest(t, "postgres://localhost/db")
 	encVal2, encDEK2 := encryptForTest(t, "s3cr3t")
 
@@ -486,7 +486,7 @@ func TestHandleDownloadDotenv_OK(t *testing.T) {
 	}
 
 	srv := newTestServer(t, st)
-	w := call(t, srv.handleDownloadDotenv, http.MethodGet, "/", "", ownerTok(), secretPV()...)
+	w := call(t, srv.handleDownloadEnvfile, http.MethodGet, "/", "", ownerTok(), secretPV()...)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body)
@@ -506,7 +506,7 @@ func TestHandleDownloadDotenv_OK(t *testing.T) {
 	}
 }
 
-func TestHandleDownloadDotenv_SkipsVersionless(t *testing.T) {
+func TestHandleDownloadEnvfile_SkipsVersionless(t *testing.T) {
 	encVal, encDEK := encryptForTest(t, "val")
 
 	st := baseStore()
@@ -521,7 +521,7 @@ func TestHandleDownloadDotenv_SkipsVersionless(t *testing.T) {
 	}
 
 	srv := newTestServer(t, st)
-	w := call(t, srv.handleDownloadDotenv, http.MethodGet, "/", "", ownerTok(), secretPV()...)
+	w := call(t, srv.handleDownloadEnvfile, http.MethodGet, "/", "", ownerTok(), secretPV()...)
 	body := w.Body.String()
 	if strings.Contains(body, "NO_VERSION") {
 		t.Errorf("version-less secret in output: %q", body)

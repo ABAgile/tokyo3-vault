@@ -1,6 +1,6 @@
-// Package dotenv parses and serializes .env files while preserving comments
-// and blank lines that precede each key.
-package dotenv
+// Package envfile parses and serializes secrets in .env file format for bulk
+// upload and download, preserving comments and blank lines that precede each key.
+package envfile
 
 import (
 	"fmt"
