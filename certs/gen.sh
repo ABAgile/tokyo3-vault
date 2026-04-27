@@ -9,7 +9,7 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 DAYS=825
 
 # Load .env from the repo root if present — mirrors docker compose behaviour so
-# VAULT_APP_USERNAME / VAULT_AUDIT_USERNAME stay in sync with the DSNs.
+# VAULT_ADMIN_DB_USERNAME / VAULT_APP_USERNAME / VAULT_AUDIT_USERNAME stay in sync with the DSNs.
 REPO_ROOT="$(cd "$DIR/.." && pwd)"
 if [[ -f "$REPO_ROOT/.env" ]]; then
   set -a
@@ -17,10 +17,11 @@ if [[ -f "$REPO_ROOT/.env" ]]; then
   source "$REPO_ROOT/.env"
   set +a
 fi
+ADMIN_USERNAME="${VAULT_ADMIN_DB_USERNAME:-vault_admin}"
 APP_USERNAME="${VAULT_APP_USERNAME:-vault_app}"
 AUDIT_USERNAME="${VAULT_AUDIT_USERNAME:-vault_audit}"
 
-step() { printf '  %-30s' "$1..."; }
+step() { printf '  %-34s' "$1..."; }
 ok()   { echo "ok"; }
 
 # ── CA ───────────────────────────────────────────────────────────────────────
@@ -77,9 +78,12 @@ issue "vaultd-nats-client"      "vaultd"      "DNS:vaultd"
 issue "vault-audit-nats-client" "vault-audit" "DNS:vault-audit"
 
 # ── Client certs — PostgreSQL (CN must match the DB role for cert auth) ───────
-issue "db-admin-client" "vault_admin"    "DNS:vaultd"
-issue "db-app-client"   "$APP_USERNAME"  "DNS:vaultd"
-issue "db-audit-client" "$AUDIT_USERNAME" "DNS:vault-audit"
+issue "vaultd-admin-db-client"  "$ADMIN_USERNAME"  "DNS:vaultd"
+issue "vaultd-app-db-client"    "$APP_USERNAME"    "DNS:vaultd"
+issue "vault-audit-db-client"   "$AUDIT_USERNAME"  "DNS:vault-audit"
+
+# ── Client certs — vault API workload identities (SPIFFE URI for principal auth) ──
+issue "webapp-vaultd-workload"  "webapp"  "URI:spiffe://vault.internal/workload/webapp"
 
 echo ""
 echo "certs written to certs/"

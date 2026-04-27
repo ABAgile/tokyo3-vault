@@ -1,17 +1,21 @@
 ## Vault — build targets
 ##
 ## Usage:
-##   make build           Build all three binaries to ./bin/
-##   make run-server      Start the server with dev defaults
-##   make keygen          Generate a VAULT_MASTER_KEY
-##   make docker-build    Build Docker image
-##   make docker-up       Start with docker compose (Postgres + NATS)
-##   make docker-up-mtls  Start with docker compose + mTLS overlay
-##   make docker-down     Stop docker compose
-##   make gen-certs       Generate mTLS certs in certs/
-##   make clean           Remove ./bin/
-##   make test            Run tests
-##   make help            Show this help
+##   make build             Build all three binaries to ./bin/
+##   make run               Start vaultd with dev defaults (starts Postgres via compose)
+##   make run-mtls          Start vaultd with mTLS (cert auth, no password in DSN)
+##   make run-audit         Start vault-audit consume (starts NATS + audit-db via compose)
+##   make run-audit-mtls    Start vault-audit consume with mTLS (cert auth, no password in DSN)
+##   make keygen            Generate a VAULT_MASTER_KEY
+##   make check             Full pre-commit sequence (fmt + test + staticcheck + gopls + govulncheck)
+##   make docker-build      Build Docker image
+##   make docker-up         Start with docker compose (Postgres + NATS)
+##   make docker-up-mtls    Start with docker compose + mTLS overlay (auto-generates certs)
+##   make docker-down       Stop docker compose (overlay-aware; safe in any mode)
+##   make gen-certs         Generate mTLS certs in certs/ (manual; auto-run by run-mtls/docker-up-mtls)
+##   make clean             Remove ./bin/
+##   make test              Run tests
+##   make help              Show this help
 
 # ── Variables ─────────────────────────────────────────────────────────────────
 
@@ -35,9 +39,25 @@ LDFLAGS := -s -w
 GO      := go
 GOFLAGS :=
 
+IMAGE_NAME    ?= abagile/vault
+IMAGE_TAG     ?= $(VERSION)
+POSTGRES_PORT ?= 5433
+AUDIT_DB_PORT ?= 5434
+NATS_PORT     ?= 4222
+
+# Docker Compose project name (defaults to directory basename, matching Compose behaviour).
+# Used to derive the shared named volume name for pre-population via tar pipe (no bind mounts).
+COMPOSE_PROJECT := $(notdir $(CURDIR))
+SHARED_VOLUME   := $(COMPOSE_PROJECT)_shared-data
+
 # ── Phony targets ─────────────────────────────────────────────────────────────
 
-.PHONY: all build build-server build-cli build-audit clean test tidy keygen run-server help
+.PHONY: all build build-server build-cli build-audit build-linux build-linux-amd64 build-darwin \
+        run run-mtls run-audit run-audit-mtls keygen gen-certs \
+        _gen-env _sync-pg-scripts _sync-certs \
+        test test-verbose tidy vet lint check \
+        docker-build docker-build-amd64 docker-push docker-up docker-up-mtls docker-down docker-logs \
+        install clean help
 
 all: build
 
@@ -86,18 +106,81 @@ build-darwin: $(BIN_DIR)
 	GOOS=darwin GOARCH=arm64 $(GO) build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/vault-audit-darwin-arm64 $(CMD_AUDIT)
 	@echo "  built macOS arm64 binaries"
 
-# ── Dev ───────────────────────────────────────────────────────────────────────
+# ── Internal helpers ──────────────────────────────────────────────────────────
 
-## run-server: Start vaultd with dev defaults (auto-generates .env on first run)
-run-server: build-server
+# Generate .env with dev defaults on first run. Used by run / run-audit (and their mTLS variants).
+# DSNs use password auth; the mTLS run targets override with cert-auth DSNs at process launch time.
+_gen-env: build-server build-cli
 	@if [ ! -f .env ]; then \
-	    KEY=$$($(VAULT_BIN) keygen 2>/dev/null || $(BIN_DIR)/vault keygen); \
-	    echo "VAULT_MASTER_KEY=$$KEY" > .env; \
-	    echo "VAULT_DB_PATH=vault.db" >> .env; \
-	    echo "VAULT_ADDR=:8443" >> .env; \
+	    KEY=$$($(VAULT_BIN) keygen); \
+	    echo "VAULT_MASTER_KEY=$$KEY"                                                                                                                          > .env; \
+	    echo "VAULT_ADDR=:8443"                                                                                                                               >> .env; \
+	    echo "POSTGRES_PORT=$(POSTGRES_PORT)"                                                                                                                 >> .env; \
+	    echo "VAULT_ADMIN_PASSWORD=changeme"                                                                                                                  >> .env; \
+	    echo "VAULT_APP_PASSWORD=changeme"                                                                                                                    >> .env; \
+	    echo "VAULT_ADMIN_DATABASE_URL=postgres://$${VAULT_ADMIN_DB_USERNAME:-vault_admin}:changeme@localhost:$(POSTGRES_PORT)/vault?sslmode=disable"          >> .env; \
+	    echo "VAULT_DATABASE_URL=postgres://$${VAULT_APP_USERNAME:-vault_app}:changeme@localhost:$(POSTGRES_PORT)/vault?sslmode=disable"                      >> .env; \
+	    echo "NATS_PORT=$(NATS_PORT)"                                                                                                                         >> .env; \
+	    echo "AUDIT_DB_PORT=$(AUDIT_DB_PORT)"                                                                                                                 >> .env; \
+	    echo "VAULT_AUDIT_PASSWORD=changeme"                                                                                                                  >> .env; \
+	    echo "VAULT_AUDIT_NATS_URL=nats://localhost:$(NATS_PORT)"                                                                                             >> .env; \
+	    echo "VAULT_AUDIT_DATABASE_URL=postgres://$${VAULT_AUDIT_USERNAME:-vault_audit}:changeme@localhost:$(AUDIT_DB_PORT)/vault_audit?sslmode=disable"      >> .env; \
 	    echo "  generated .env"; \
 	fi
-	@export $$(cat .env | xargs) && $(VAULTD_BIN)
+
+# Push local postgres/ scripts into shared-data:/shared/pg-scripts (no bind mount needed).
+# Re-runs on every invoke so changes to init scripts are always picked up.
+_sync-pg-scripts:
+	@docker volume create $(SHARED_VOLUME) 2>/dev/null || true
+	@tar -cf - -C postgres . | docker run --rm -i -v $(SHARED_VOLUME):/shared alpine:3.21 sh -c "mkdir -p /shared/pg-scripts && tar -xf - -C /shared/pg-scripts && chmod +x /shared/pg-scripts/*.sh"
+
+# Generate certs if absent, then push local certs/ into shared-data:/shared/certs.
+_sync-certs:
+	@if [ ! -f certs/ca.crt ]; then bash certs/gen.sh; fi
+	@docker volume create $(SHARED_VOLUME) 2>/dev/null || true
+	@tar -cf - -C certs . | docker run --rm -i -v $(SHARED_VOLUME):/shared alpine:3.21 sh -c "mkdir -p /shared/certs && tar -xf - -C /shared/certs"
+
+# ── Dev ───────────────────────────────────────────────────────────────────────
+
+## run: Build and start vaultd with dev defaults (auto-generates .env on first run)
+run: _gen-env _sync-pg-scripts
+	@docker compose up -d db audit-db --wait 2>/dev/null || true
+	@export $$(grep -v '^#' .env | xargs) && $(VAULTD_BIN)
+
+## run-mtls: Build and start vaultd with mTLS (cert auth; overrides DSNs — no password)
+run-mtls: _gen-env _sync-pg-scripts _sync-certs
+	@docker compose -f docker-compose.yml -f docker-compose.mtls.yml up -d db audit-db --wait 2>/dev/null || true
+	@export $$(grep -v '^#' .env | xargs) && \
+	    VAULT_TLS_CERT=certs/vaultd-server.crt \
+	    VAULT_TLS_KEY=certs/vaultd-server.key \
+	    VAULT_TLS_CLIENT_CA=certs/ca.crt \
+	    VAULT_ADMIN_DB_CERT=certs/vaultd-admin-db-client.crt \
+	    VAULT_ADMIN_DB_KEY=certs/vaultd-admin-db-client.key \
+	    VAULT_ADMIN_DB_CA=certs/ca.crt \
+	    VAULT_ADMIN_DATABASE_URL=postgres://$${VAULT_ADMIN_DB_USERNAME:-vault_admin}@localhost:$(POSTGRES_PORT)/vault?sslmode=verify-full \
+	    VAULT_DB_CERT=certs/vaultd-app-db-client.crt \
+	    VAULT_DB_KEY=certs/vaultd-app-db-client.key \
+	    VAULT_DB_CA=certs/ca.crt \
+	    VAULT_DATABASE_URL=postgres://$${VAULT_APP_USERNAME:-vault_app}@localhost:$(POSTGRES_PORT)/vault?sslmode=verify-full \
+	    $(VAULTD_BIN)
+
+## run-audit: Build and start vault-audit consume with dev defaults
+run-audit: build-audit _gen-env _sync-pg-scripts
+	@docker compose up -d nats audit-db --wait 2>/dev/null || true
+	@export $$(grep -v '^#' .env | xargs) && $(AUDIT_BIN) consume
+
+## run-audit-mtls: Build and start vault-audit consume with mTLS (cert auth; overrides DSN — no password)
+run-audit-mtls: build-audit _gen-env _sync-pg-scripts _sync-certs
+	@docker compose -f docker-compose.yml -f docker-compose.mtls.yml up -d nats audit-db --wait 2>/dev/null || true
+	@export $$(grep -v '^#' .env | xargs) && \
+	    VAULT_AUDIT_NATS_CERT=certs/vault-audit-nats-client.crt \
+	    VAULT_AUDIT_NATS_KEY=certs/vault-audit-nats-client.key \
+	    VAULT_AUDIT_NATS_CA=certs/ca.crt \
+	    VAULT_AUDIT_DB_CERT=certs/vault-audit-db-client.crt \
+	    VAULT_AUDIT_DB_KEY=certs/vault-audit-db-client.key \
+	    VAULT_AUDIT_DB_CA=certs/ca.crt \
+	    VAULT_AUDIT_DATABASE_URL=postgres://$${VAULT_AUDIT_USERNAME:-vault_audit}@localhost:$(AUDIT_DB_PORT)/vault_audit?sslmode=verify-full \
+	    $(AUDIT_BIN) consume
 
 ## keygen: Print a fresh random master key
 keygen: build-cli
@@ -125,12 +208,19 @@ tidy:
 vet:
 	$(GO) vet ./...
 
-# ── Install ───────────────────────────────────────────────────────────────────
+## lint: Run staticcheck
+lint:
+	staticcheck ./...
+
+## check: Full pre-commit sequence (gofmt + test + staticcheck + gopls + govulncheck)
+check:
+	gofmt -s -w .
+	$(GO) test ./... -count=1
+	staticcheck ./...
+	find . -type f -name "*.go" -print0 | xargs -0 -n 100 gopls check -severity=hint
+	govulncheck ./...
 
 # ── Docker ────────────────────────────────────────────────────────────────────
-
-IMAGE_NAME  ?= abagile/vault
-IMAGE_TAG   ?= $(VERSION)
 
 ## docker-build: Build the Docker image (linux/arm64, default)
 docker-build:
@@ -156,16 +246,16 @@ docker-push: docker-build
 	docker push $(IMAGE_NAME):latest
 
 ## docker-up: Start vaultd with docker compose (Postgres + NATS)
-docker-up:
+docker-up: _sync-pg-scripts
 	docker compose up -d
 
-## docker-up-mtls: Start with docker compose + mTLS overlay (run gen-certs first)
-docker-up-mtls:
-	docker compose -f docker-compose.yml -f docker-compose.mtls.yml up -d
+## docker-up-mtls: Start with docker compose + mTLS overlay (auto-generates certs on first run)
+docker-up-mtls: _sync-pg-scripts _sync-certs
+	docker compose -f docker-compose.yml -f docker-compose.mtls.yml up -d --remove-orphans
 
-## docker-down: Stop all compose services
+## docker-down: Stop all compose services (overlay-aware; safe to run in any mode)
 docker-down:
-	docker compose down
+	docker compose -f docker-compose.yml -f docker-compose.mtls.yml down
 
 ## docker-logs: Tail vaultd logs
 docker-logs:
@@ -190,6 +280,6 @@ clean:
 
 ## help: Show this help message
 help:
-	@echo "Vault Makefile targets:"
+	@echo "vault Makefile targets:"
 	@echo ""
-	@grep -E '^## ' $(MAKEFILE_LIST) | sed 's/^## /  /' | awk -F: '{printf "  %-22s %s\n", $$1, $$2}'
+	@grep -E '^## ' $(MAKEFILE_LIST) | sed 's/^## /  /' | awk -F: '{printf "  %-24s %s\n", $$1, $$2}'

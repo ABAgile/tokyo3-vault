@@ -21,7 +21,7 @@ CREATE USER :"app_user" WITH PASSWORD :'app_pw';
 GRANT CONNECT ON DATABASE vault TO :"app_user";
 GRANT USAGE   ON SCHEMA  public TO :"app_user";
 
--- Pre-grant DML on all future tables and sequences created by vault_admin (the migration owner).
+-- Pre-grant DML on all future tables and sequences created by the migration owner (POSTGRES_USER).
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO :"app_user";
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
