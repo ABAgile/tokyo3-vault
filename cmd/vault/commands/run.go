@@ -54,7 +54,7 @@ Example:
 			if err != nil {
 				return err
 			}
-			c := client.New(g.ServerURL, g.Token)
+			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, []byte(g.CACert))
 			dynVars, err := issueDynVars(c, project, envSlug, dynRuns)
 			if err != nil {
 				return err
@@ -167,7 +167,7 @@ func NewExportCmd() *cobra.Command {
 				return err
 			}
 
-			c := client.New(g.ServerURL, g.Token)
+			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, []byte(g.CACert))
 			var metas []secretMeta
 			if err := c.Get(secretsPath(project, envSlug), &metas); err != nil {
 				return fmt.Errorf("fetch secrets: %w", err)

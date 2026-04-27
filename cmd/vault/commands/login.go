@@ -2,6 +2,7 @@ package commands
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"syscall"
 
@@ -13,6 +14,8 @@ import (
 
 func NewLoginCmd() *cobra.Command {
 	var serverURL string
+	var insecure bool
+	var caCertFile string
 
 	cmd := &cobra.Command{
 		Use:   "login",
@@ -27,6 +30,15 @@ func NewLoginCmd() *cobra.Command {
 			}
 			serverURL = strings.TrimRight(serverURL, "/")
 
+			var caCert []byte
+			if caCertFile != "" {
+				var err error
+				caCert, err = os.ReadFile(caCertFile)
+				if err != nil {
+					return fmt.Errorf("read --ca-cert: %w", err)
+				}
+			}
+
 			email := promptLine("Email: ")
 			password, err := promptPassword("Password: ")
 			if err != nil {
@@ -39,14 +51,18 @@ func NewLoginCmd() *cobra.Command {
 			err = client.NoAuth(serverURL, "POST", "/api/v1/auth/login",
 				map[string]string{"email": email, "password": password},
 				&resp,
+				insecure,
+				caCert,
 			)
 			if err != nil {
 				return fmt.Errorf("login failed: %w", err)
 			}
 
 			if err := config.SaveGlobal(config.Global{
-				ServerURL: serverURL,
-				Token:     resp.Token,
+				ServerURL:     serverURL,
+				Token:         resp.Token,
+				TLSSkipVerify: insecure,
+				CACert:        string(caCert),
 			}); err != nil {
 				return fmt.Errorf("save config: %w", err)
 			}
@@ -55,11 +71,15 @@ func NewLoginCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&serverURL, "server", "", "Vault server URL (e.g. https://vault.example.com)")
+	cmd.Flags().BoolVarP(&insecure, "insecure", "k", false, "Skip TLS certificate verification (dev only)")
+	cmd.Flags().StringVar(&caCertFile, "ca-cert", "", "Path to CA certificate PEM for TLS verification")
 	return cmd
 }
 
 func NewSignupCmd() *cobra.Command {
 	var serverURL string
+	var insecure bool
+	var caCertFile string
 
 	cmd := &cobra.Command{
 		Use:   "signup",
@@ -69,6 +89,15 @@ func NewSignupCmd() *cobra.Command {
 				serverURL = promptLine("Server URL: ")
 			}
 			serverURL = strings.TrimRight(serverURL, "/")
+
+			var caCert []byte
+			if caCertFile != "" {
+				var err error
+				caCert, err = os.ReadFile(caCertFile)
+				if err != nil {
+					return fmt.Errorf("read --ca-cert: %w", err)
+				}
+			}
 
 			email := promptLine("Email: ")
 			password, err := promptPassword("Password: ")
@@ -82,14 +111,18 @@ func NewSignupCmd() *cobra.Command {
 			err = client.NoAuth(serverURL, "POST", "/api/v1/auth/signup",
 				map[string]string{"email": email, "password": password},
 				&resp,
+				insecure,
+				caCert,
 			)
 			if err != nil {
 				return fmt.Errorf("signup failed: %w", err)
 			}
 
 			if err := config.SaveGlobal(config.Global{
-				ServerURL: serverURL,
-				Token:     resp.Token,
+				ServerURL:     serverURL,
+				Token:         resp.Token,
+				TLSSkipVerify: insecure,
+				CACert:        string(caCert),
 			}); err != nil {
 				return fmt.Errorf("save config: %w", err)
 			}
@@ -98,6 +131,8 @@ func NewSignupCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&serverURL, "server", "", "Vault server URL")
+	cmd.Flags().BoolVarP(&insecure, "insecure", "k", false, "Skip TLS certificate verification (dev only)")
+	cmd.Flags().StringVar(&caCertFile, "ca-cert", "", "Path to CA certificate PEM for TLS verification")
 	return cmd
 }
 
@@ -110,7 +145,7 @@ func NewLogoutCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			c := client.New(g.ServerURL, g.Token)
+			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, []byte(g.CACert))
 			if err := c.Delete("/api/v1/auth/logout"); err != nil {
 				return fmt.Errorf("logout: %w", err)
 			}

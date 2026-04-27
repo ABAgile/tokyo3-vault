@@ -63,7 +63,7 @@ func newSecretsListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			c := client.New(g.ServerURL, g.Token)
+			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, []byte(g.CACert))
 			var secrets []secretMeta
 			if err := c.Get(secretsPath(project, env), &secrets); err != nil {
 				return err
@@ -98,7 +98,7 @@ func newSecretsGetCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			c := client.New(g.ServerURL, g.Token)
+			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, []byte(g.CACert))
 			var s secretFull
 			if err := c.Get(secretsPath(project, env)+"/"+args[0], &s); err != nil {
 				return err
@@ -126,7 +126,7 @@ func newSecretsSetCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			c := client.New(g.ServerURL, g.Token)
+			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, []byte(g.CACert))
 			var resp versionItem
 			err = c.Put(secretsPath(project, env)+"/"+args[0],
 				map[string]string{"value": args[1]}, &resp)
@@ -156,7 +156,7 @@ func newSecretsDeleteCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			c := client.New(g.ServerURL, g.Token)
+			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, []byte(g.CACert))
 			if err := c.Delete(secretsPath(project, env) + "/" + args[0]); err != nil {
 				return err
 			}
@@ -183,7 +183,7 @@ func newSecretsVersionsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			c := client.New(g.ServerURL, g.Token)
+			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, []byte(g.CACert))
 			var versions []versionItem
 			if err := c.Get(secretsPath(project, env)+"/"+args[0]+"/versions", &versions); err != nil {
 				return err
@@ -214,7 +214,7 @@ func newSecretsRollbackCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			c := client.New(g.ServerURL, g.Token)
+			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, []byte(g.CACert))
 			var resp map[string]any
 			err = c.Post(
 				secretsPath(project, env)+"/"+args[0]+"/rollback",
@@ -262,7 +262,7 @@ Examples:
 			if fromEnv == "" {
 				return fmt.Errorf("--from-env is required")
 			}
-			c := client.New(g.ServerURL, g.Token)
+			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, []byte(g.CACert))
 			body := map[string]any{
 				"from_project": fromProject,
 				"from_env":     fromEnv,
@@ -323,7 +323,7 @@ Example:
 			if overwrite {
 				path += "?overwrite=true"
 			}
-			c := client.New(g.ServerURL, g.Token)
+			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, []byte(g.CACert))
 			var resp map[string]any
 			if err := c.PostText(path, string(content), &resp); err != nil {
 				return err
@@ -362,7 +362,7 @@ Example:
 				return err
 			}
 
-			c := client.New(g.ServerURL, g.Token)
+			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, []byte(g.CACert))
 			content, err := c.GetText(secretsPath(project, env) + "/envfile")
 			if err != nil {
 				return err

@@ -1,10 +1,13 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
+	"github.com/abagile/tokyo3-vault/cmd/vault/client"
 	"github.com/abagile/tokyo3-vault/cmd/vault/commands"
+	"github.com/abagile/tokyo3-vault/cmd/vault/config"
 	"github.com/spf13/cobra"
 )
 
@@ -46,7 +49,19 @@ Getting started:
 	)
 
 	if err := root.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, "Error:", err)
+		if errors.Is(err, client.ErrUnauthorized) {
+			// Session was revoked (e.g. password change). Wipe the stale token so
+			// subsequent commands give "not logged in" instead of repeated 401s.
+			if g, loadErr := config.LoadGlobal(); loadErr == nil && g.Token != "" {
+				_ = config.SaveGlobal(config.Global{
+					ServerURL: g.ServerURL,
+					CACert:    g.CACert,
+				})
+			}
+			fmt.Fprintln(os.Stderr, "Error: session expired — run: vault login")
+		} else {
+			fmt.Fprintln(os.Stderr, "Error:", err)
+		}
 		os.Exit(1)
 	}
 }

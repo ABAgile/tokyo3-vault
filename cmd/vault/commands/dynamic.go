@@ -133,7 +133,7 @@ func newDynBackendSetCmd() *cobra.Command {
 				"default_ttl": defaultTTL,
 				"max_ttl":     maxTTL,
 			}
-			c := client.New(g.ServerURL, g.Token)
+			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, []byte(g.CACert))
 			var resp dynamicBackendResp
 			if err := c.Put(dynPath(project, envSlug, args[0]), body, &resp); err != nil {
 				return err
@@ -170,7 +170,7 @@ func newDynBackendGetCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			c := client.New(g.ServerURL, g.Token)
+			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, []byte(g.CACert))
 			var resp dynamicBackendResp
 			if err := c.Get(dynPath(project, envSlug, args[0]), &resp); err != nil {
 				return err
@@ -207,7 +207,7 @@ func newDynBackendDeleteCmd() *cobra.Command {
 			if err2 != nil {
 				return err2
 			}
-			c := client.New(g.ServerURL, g.Token)
+			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, []byte(g.CACert))
 			if err := c.Delete(dynPath(project, envSlug, args[0])); err != nil {
 				return err
 			}
@@ -261,7 +261,7 @@ func newDynRoleSetCmd() *cobra.Command {
 			if ttl > 0 {
 				body["ttl"] = ttl
 			}
-			c := client.New(g.ServerURL, g.Token)
+			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, []byte(g.CACert))
 			var resp dynamicRoleResp
 			if err := c.Put(dynRolePath(project, envSlug, args[0], args[1]), body, &resp); err != nil {
 				return err
@@ -293,7 +293,7 @@ func newDynRoleListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			c := client.New(g.ServerURL, g.Token)
+			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, []byte(g.CACert))
 			var roles []dynamicRoleResp
 			if err := c.Get(dynPath(project, envSlug, args[0])+"/roles", &roles); err != nil {
 				return err
@@ -334,7 +334,7 @@ func newDynRoleDeleteCmd() *cobra.Command {
 			if err2 != nil {
 				return err2
 			}
-			c := client.New(g.ServerURL, g.Token)
+			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, []byte(g.CACert))
 			if err := c.Delete(dynRolePath(project, envSlug, args[0], args[1])); err != nil {
 				return err
 			}
@@ -366,7 +366,7 @@ func newDynIssueCmd() *cobra.Command {
 				return err
 			}
 			body := map[string]any{"ttl": ttl}
-			c := client.New(g.ServerURL, g.Token)
+			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, []byte(g.CACert))
 			var resp issuedCredsResp
 			if err := c.Post(dynCredsPath(project, envSlug, args[0], args[1]), body, &resp); err != nil {
 				return err
@@ -412,7 +412,7 @@ func newDynLeasesListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			c := client.New(g.ServerURL, g.Token)
+			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, []byte(g.CACert))
 			var leases []leaseResp
 			if err := c.Get(dynLeasesPath(project, envSlug), &leases); err != nil {
 				return err
@@ -454,7 +454,7 @@ func newDynLeaseRevokeCmd() *cobra.Command {
 			if err2 != nil {
 				return err2
 			}
-			c := client.New(g.ServerURL, g.Token)
+			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, []byte(g.CACert))
 			if err := c.Delete(dynLeasesPath(project, envSlug) + "/" + args[0]); err != nil {
 				return err
 			}

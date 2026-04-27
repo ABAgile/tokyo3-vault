@@ -3,13 +3,20 @@ package client
 
 import (
 	"bytes"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"time"
 )
+
+// ErrUnauthorized is returned when the server responds with HTTP 401.
+// Callers can use errors.Is to detect an expired or revoked session.
+var ErrUnauthorized = errors.New("session expired")
 
 // Client wraps http.Client with base URL and auth token.
 type Client struct {
@@ -19,11 +26,25 @@ type Client struct {
 }
 
 // New returns a Client pointed at serverURL with the given bearer token.
-func New(serverURL, token string) *Client {
+// skipVerify disables TLS verification (dev only); caCert is a PEM-encoded CA
+// certificate to trust in place of the system pool. skipVerify takes precedence.
+func New(serverURL, token string, skipVerify bool, caCert []byte) *Client {
+	transport := http.DefaultTransport
+	if skipVerify || len(caCert) > 0 {
+		tlsCfg := &tls.Config{}
+		if skipVerify {
+			tlsCfg.InsecureSkipVerify = true //nolint:gosec
+		} else {
+			pool := x509.NewCertPool()
+			pool.AppendCertsFromPEM(caCert)
+			tlsCfg.RootCAs = pool
+		}
+		transport = &http.Transport{TLSClientConfig: tlsCfg}
+	}
 	return &Client{
 		base:  strings.TrimRight(serverURL, "/"),
 		token: token,
-		http:  &http.Client{Timeout: 15 * time.Second},
+		http:  &http.Client{Timeout: 15 * time.Second, Transport: transport},
 	}
 }
 
@@ -64,6 +85,9 @@ func (c *Client) Do(method, path string, body, out any) error {
 			Error string `json:"error"`
 		}
 		_ = json.Unmarshal(respBody, &e)
+		if resp.StatusCode == http.StatusUnauthorized {
+			return ErrUnauthorized
+		}
 		if e.Error != "" {
 			return fmt.Errorf("%s", e.Error)
 		}
@@ -122,6 +146,9 @@ func (c *Client) PostText(path, text string, out any) error {
 			Error string `json:"error"`
 		}
 		_ = json.Unmarshal(respBody, &e)
+		if resp.StatusCode == http.StatusUnauthorized {
+			return ErrUnauthorized
+		}
 		if e.Error != "" {
 			return fmt.Errorf("%s", e.Error)
 		}
@@ -158,6 +185,9 @@ func (c *Client) GetText(path string) (string, error) {
 			Error string `json:"error"`
 		}
 		_ = json.Unmarshal(body, &e)
+		if resp.StatusCode == http.StatusUnauthorized {
+			return "", ErrUnauthorized
+		}
 		if e.Error != "" {
 			return "", fmt.Errorf("%s", e.Error)
 		}
@@ -167,10 +197,7 @@ func (c *Client) GetText(path string) (string, error) {
 }
 
 // NoAuth performs a request without an Authorization header (for login/signup).
-func NoAuth(serverURL, method, path string, body, out any) error {
-	c := &Client{
-		base: strings.TrimRight(serverURL, "/"),
-		http: &http.Client{Timeout: 15 * time.Second},
-	}
-	return c.Do(method, path, body, out)
+// skipVerify and caCert have the same meaning as in New.
+func NoAuth(serverURL, method, path string, body, out any, skipVerify bool, caCert []byte) error {
+	return New(serverURL, "", skipVerify, caCert).Do(method, path, body, out)
 }

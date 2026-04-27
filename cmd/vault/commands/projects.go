@@ -39,7 +39,7 @@ func newProjectsListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			c := client.New(g.ServerURL, g.Token)
+			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, []byte(g.CACert))
 			var projects []projectItem
 			if err := c.Get("/api/v1/projects", &projects); err != nil {
 				return err
@@ -68,7 +68,7 @@ func newProjectsCreateCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			c := client.New(g.ServerURL, g.Token)
+			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, []byte(g.CACert))
 			body := map[string]string{"name": args[0], "slug": slug}
 			var p projectItem
 			if err := c.Post("/api/v1/projects", body, &p); err != nil {
@@ -98,7 +98,7 @@ func newProjectsDeleteCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			c := client.New(g.ServerURL, g.Token)
+			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, []byte(g.CACert))
 			if err := c.Delete("/api/v1/projects/" + slug); err != nil {
 				return err
 			}

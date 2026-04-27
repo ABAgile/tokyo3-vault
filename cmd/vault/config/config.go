@@ -14,8 +14,10 @@ import (
 
 // Global holds the user-level config stored in ~/.vault/config.
 type Global struct {
-	ServerURL string `toml:"server_url"`
-	Token     string `toml:"token"`
+	ServerURL     string `toml:"server_url"`
+	Token         string `toml:"token"`
+	TLSSkipVerify bool   `toml:"tls_skip_verify"`
+	CACert        string `toml:"ca_cert"` // PEM content of the CA cert; set via vault login --ca-cert
 }
 
 // DynamicRun declares a dynamic backend credential to issue during vault run.
@@ -131,13 +133,22 @@ func SaveRepo(r Repo) error {
 // MustToken returns auth config, preferring VAULT_TOKEN+VAULT_SERVER_URL env vars
 // over ~/.vault/config. The env var path is intended for machine/CI contexts where
 // the token is injected at runtime and must never be written to disk.
+// VAULT_CA_CERT (path to a PEM file) is also honoured in the env var path.
 func MustToken() (Global, error) {
 	if tok := os.Getenv("VAULT_TOKEN"); tok != "" {
 		serverURL := os.Getenv("VAULT_SERVER_URL")
 		if serverURL == "" {
 			return Global{}, errors.New("VAULT_SERVER_URL is required when VAULT_TOKEN is set")
 		}
-		return Global{Token: tok, ServerURL: serverURL}, nil
+		g := Global{Token: tok, ServerURL: serverURL}
+		if caFile := os.Getenv("VAULT_CA_CERT"); caFile != "" {
+			pem, err := os.ReadFile(caFile)
+			if err != nil {
+				return Global{}, fmt.Errorf("read VAULT_CA_CERT: %w", err)
+			}
+			g.CACert = string(pem)
+		}
+		return g, nil
 	}
 	g, err := LoadGlobal()
 	if err != nil {

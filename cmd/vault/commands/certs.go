@@ -78,7 +78,7 @@ func newPrincipalsRegisterCmd() *cobra.Command {
 				return fmt.Errorf("only one of --spiffe-id or --email-san may be set")
 			}
 			body := buildCertPrincipalBody(args[0], spiffeID, emailSAN, project, env, expiresIn, readOnly)
-			c := client.New(g.ServerURL, g.Token)
+			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, []byte(g.CACert))
 			var resp certPrincipalResp
 			if err := c.Post("/api/v1/cert-principals", body, &resp); err != nil {
 				return err
@@ -149,7 +149,7 @@ func newPrincipalsListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			c := client.New(g.ServerURL, g.Token)
+			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, []byte(g.CACert))
 			var principals []certPrincipalResp
 			if err := c.Get("/api/v1/cert-principals", &principals); err != nil {
 				return err
@@ -185,7 +185,7 @@ func newPrincipalsRevokeCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			c := client.New(g.ServerURL, g.Token)
+			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, []byte(g.CACert))
 			if err := c.Delete("/api/v1/cert-principals/" + args[0]); err != nil {
 				return err
 			}

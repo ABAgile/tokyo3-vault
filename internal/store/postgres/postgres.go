@@ -37,6 +37,9 @@ func Migrate(dsn string, tlsCfg *tls.Config) error {
 		if err != nil {
 			return fmt.Errorf("parse admin postgres dsn: %w", err)
 		}
+		if tlsCfg.ServerName == "" {
+			tlsCfg.ServerName = connCfg.Host
+		}
 		connCfg.TLSConfig = tlsCfg
 		db = pgxstdlib.OpenDB(*connCfg)
 	} else {
@@ -69,6 +72,9 @@ func OpenWithTLS(dsn string, tlsCfg *tls.Config) (*DB, error) {
 		connCfg, err := pgx.ParseConfig(dsn)
 		if err != nil {
 			return nil, fmt.Errorf("parse postgres dsn: %w", err)
+		}
+		if tlsCfg.ServerName == "" {
+			tlsCfg.ServerName = connCfg.Host
 		}
 		connCfg.TLSConfig = tlsCfg
 		db = pgxstdlib.OpenDB(*connCfg)

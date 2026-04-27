@@ -43,7 +43,7 @@ func newTokensListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			c := client.New(g.ServerURL, g.Token)
+			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, []byte(g.CACert))
 			var tokens []tokenListItem
 			if err := c.Get("/api/v1/tokens", &tokens); err != nil {
 				return err
@@ -77,7 +77,7 @@ func newTokensCreateCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			c := client.New(g.ServerURL, g.Token)
+			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, []byte(g.CACert))
 			body := map[string]any{
 				"name":       args[0],
 				"project":    project,
@@ -114,7 +114,7 @@ func newTokensDeleteCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			c := client.New(g.ServerURL, g.Token)
+			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, []byte(g.CACert))
 			if err := c.Delete("/api/v1/tokens/" + args[0]); err != nil {
 				return err
 			}

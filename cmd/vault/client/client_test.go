@@ -2,6 +2,7 @@ package client
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -17,7 +18,7 @@ func makeTestServer(t *testing.T, handler http.HandlerFunc) *httptest.Server {
 
 // TestNew tests that New constructs a client correctly.
 func TestNew(t *testing.T) {
-	c := New("https://vault.example.com/", "my-token")
+	c := New("https://vault.example.com/", "my-token", false, nil)
 	if c == nil {
 		t.Fatal("New returned nil")
 	}
@@ -39,7 +40,7 @@ func TestDo_Success(t *testing.T) {
 		json.NewEncoder(w).Encode(map[string]string{"key": "value"})
 	})
 
-	c := New(srv.URL, "test-token")
+	c := New(srv.URL, "test-token", false, nil)
 	var out map[string]string
 	if err := c.Do(http.MethodGet, "/test", nil, &out); err != nil {
 		t.Fatalf("Do: %v", err)
@@ -53,17 +54,29 @@ func TestDo_Success(t *testing.T) {
 func TestDo_HTTP4xxWithErrorJSON(t *testing.T) {
 	srv := makeTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusUnauthorized)
-		json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(map[string]string{"error": "access denied"})
 	})
 
-	c := New(srv.URL, "bad-token")
+	c := New(srv.URL, "bad-token", false, nil)
 	err := c.Do(http.MethodGet, "/test", nil, nil)
 	if err == nil {
-		t.Fatal("expected error for 401")
+		t.Fatal("expected error for 403")
 	}
-	if err.Error() != "unauthorized" {
-		t.Errorf("error = %q, want 'unauthorized'", err.Error())
+	if err.Error() != "access denied" {
+		t.Errorf("error = %q, want 'access denied'", err.Error())
+	}
+}
+
+// TestDo_HTTP401IsErrUnauthorized tests that 401 returns ErrUnauthorized regardless of body.
+func TestDo_HTTP401IsErrUnauthorized(t *testing.T) {
+	srv := makeTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	})
+
+	c := New(srv.URL, "expired-token", false, nil)
+	if err := c.Do(http.MethodGet, "/test", nil, nil); !errors.Is(err, ErrUnauthorized) {
+		t.Errorf("expected ErrUnauthorized, got %v", err)
 	}
 }
 
@@ -73,7 +86,7 @@ func TestDo_HTTP4xxWithoutJSON(t *testing.T) {
 		w.WriteHeader(http.StatusForbidden)
 	})
 
-	c := New(srv.URL, "tok")
+	c := New(srv.URL, "tok", false, nil)
 	err := c.Do(http.MethodGet, "/test", nil, nil)
 	if err == nil {
 		t.Fatal("expected error for 403")
@@ -92,7 +105,7 @@ func TestGet(t *testing.T) {
 		json.NewEncoder(w).Encode(map[string]int{"count": 42})
 	})
 
-	c := New(srv.URL, "tok")
+	c := New(srv.URL, "tok", false, nil)
 	var out map[string]int
 	if err := c.Get("/items", &out); err != nil {
 		t.Fatalf("Get: %v", err)
@@ -115,7 +128,7 @@ func TestPost(t *testing.T) {
 		json.NewEncoder(w).Encode(map[string]string{"id": "new-1"})
 	})
 
-	c := New(srv.URL, "tok")
+	c := New(srv.URL, "tok", false, nil)
 	var out map[string]string
 	if err := c.Post("/items", map[string]string{"name": "item"}, &out); err != nil {
 		t.Fatalf("Post: %v", err)
@@ -134,7 +147,7 @@ func TestPut(t *testing.T) {
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	})
 
-	c := New(srv.URL, "tok")
+	c := New(srv.URL, "tok", false, nil)
 	var out map[string]string
 	if err := c.Put("/items/1", map[string]string{"name": "updated"}, &out); err != nil {
 		t.Fatalf("Put: %v", err)
@@ -150,7 +163,7 @@ func TestDelete(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	})
 
-	c := New(srv.URL, "tok")
+	c := New(srv.URL, "tok", false, nil)
 	if err := c.Delete("/items/1"); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
@@ -165,7 +178,7 @@ func TestPostText_Success(t *testing.T) {
 		json.NewEncoder(w).Encode(map[string]int{"imported": 3})
 	})
 
-	c := New(srv.URL, "tok")
+	c := New(srv.URL, "tok", false, nil)
 	var out map[string]int
 	if err := c.PostText("/upload", "KEY=value\n", &out); err != nil {
 		t.Fatalf("PostText: %v", err)
@@ -182,7 +195,7 @@ func TestPostText_Error(t *testing.T) {
 		json.NewEncoder(w).Encode(map[string]string{"error": "bad input"})
 	})
 
-	c := New(srv.URL, "tok")
+	c := New(srv.URL, "tok", false, nil)
 	err := c.PostText("/upload", "bad", nil)
 	if err == nil {
 		t.Fatal("expected error for 400")
@@ -195,7 +208,7 @@ func TestGetText_Success(t *testing.T) {
 		w.Write([]byte("KEY=value\nOTHER=x\n"))
 	})
 
-	c := New(srv.URL, "tok")
+	c := New(srv.URL, "tok", false, nil)
 	body, err := c.GetText("/envfile")
 	if err != nil {
 		t.Fatalf("GetText: %v", err)
@@ -212,7 +225,7 @@ func TestGetText_Error(t *testing.T) {
 		json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
 	})
 
-	c := New(srv.URL, "tok")
+	c := New(srv.URL, "tok", false, nil)
 	_, err := c.GetText("/envfile")
 	if err == nil {
 		t.Fatal("expected error for 404")
@@ -228,7 +241,7 @@ func TestNoAuth(t *testing.T) {
 	})
 
 	var out map[string]string
-	if err := NoAuth(srv.URL, http.MethodPost, "/auth/login", map[string]string{"email": "a@b.com"}, &out); err != nil {
+	if err := NoAuth(srv.URL, http.MethodPost, "/auth/login", map[string]string{"email": "a@b.com"}, &out, false, nil); err != nil {
 		t.Fatalf("NoAuth: %v", err)
 	}
 	if out["token"] != "sess-tok" {
