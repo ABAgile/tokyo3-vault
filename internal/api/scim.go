@@ -149,6 +149,15 @@ func (s *Server) handleSCIMSchemas(w http.ResponseWriter, r *http.Request) {
 // ── SCIM Users ────────────────────────────────────────────────────────────────
 
 func (s *Server) handleSCIMListUsers(w http.ResponseWriter, r *http.Request) {
+	filter, err := parseSCIMFilter(r.URL.Query().Get("filter"), scimResourceUser)
+	if err != nil {
+		writeSCIMInvalidFilter(w, err.Error())
+		return
+	}
+	if filter != nil {
+		s.scimListUsersFiltered(w, r, filter)
+		return
+	}
 	users, err := s.store.ListUsers(r.Context())
 	if err != nil {
 		s.log.Error("scim list users", "err", err)
@@ -166,6 +175,48 @@ func (s *Server) handleSCIMListUsers(w http.ResponseWriter, r *http.Request) {
 		"startIndex":   1,
 		"itemsPerPage": len(users),
 		"Resources":    resources,
+	})
+}
+
+// scimListUsersFiltered resolves a single-attribute eq filter against the user
+// store and returns a SCIM ListResponse with 0 or 1 Resources.
+func (s *Server) scimListUsersFiltered(w http.ResponseWriter, r *http.Request, filter *scimFilter) {
+	var (
+		user *model.User
+		err  error
+	)
+	switch filter.Attribute {
+	case "userName":
+		user, err = s.store.GetUserByEmail(r.Context(), filter.Value)
+	case "externalId":
+		user, err = s.store.GetUserBySCIMExternalID(r.Context(), filter.Value)
+	case "id":
+		user, err = s.store.GetUserByID(r.Context(), filter.Value)
+	default:
+		writeSCIMInvalidFilter(w, "unsupported attribute: "+filter.Attribute)
+		return
+	}
+	if errors.Is(err, store.ErrNotFound) {
+		writeSCIMJSON(w, http.StatusOK, map[string]any{
+			"schemas":      []string{scimListSchema},
+			"totalResults": 0,
+			"startIndex":   1,
+			"itemsPerPage": 0,
+			"Resources":    []any{},
+		})
+		return
+	}
+	if err != nil {
+		s.log.Error("scim list users — filter lookup", "attr", filter.Attribute, "err", err)
+		writeSCIMError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeSCIMJSON(w, http.StatusOK, map[string]any{
+		"schemas":      []string{scimListSchema},
+		"totalResults": 1,
+		"startIndex":   1,
+		"itemsPerPage": 1,
+		"Resources":    []any{scimUserResource(user, requestBaseURL(r))},
 	})
 }
 
@@ -233,6 +284,11 @@ func (s *Server) handleSCIMCreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.ExternalID != "" {
+		if err := s.store.SetUserSCIMExternalID(r.Context(), user.ID, req.ExternalID); err != nil {
+			s.log.Error("scim create user — set externalId", "err", err)
+			writeSCIMError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
 		extID := req.ExternalID
 		user.SCIMExternalID = &extID
 	}
@@ -288,6 +344,15 @@ func (s *Server) handleSCIMReplaceUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user.Active = active
+	if req.ExternalID != "" {
+		if err := s.store.SetUserSCIMExternalID(r.Context(), user.ID, req.ExternalID); err != nil {
+			s.log.Error("scim replace user — set externalId", "err", err)
+			writeSCIMError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		extID := req.ExternalID
+		user.SCIMExternalID = &extID
+	}
 	writeSCIMJSON(w, http.StatusOK, scimUserResource(user, requestBaseURL(r)))
 }
 
@@ -433,6 +498,11 @@ func scimGroupResource(id, displayName, externalID, baseURL string, memberIDs []
 }
 
 func (s *Server) handleSCIMListGroups(w http.ResponseWriter, r *http.Request) {
+	filter, err := parseSCIMFilter(r.URL.Query().Get("filter"), scimResourceGroup)
+	if err != nil {
+		writeSCIMInvalidFilter(w, err.Error())
+		return
+	}
 	roles, err := s.store.ListSCIMGroupRoles(r.Context())
 	if err != nil {
 		s.log.Error("scim list groups", "err", err)
@@ -442,15 +512,28 @@ func (s *Server) handleSCIMListGroups(w http.ResponseWriter, r *http.Request) {
 	base := requestBaseURL(r)
 	resources := make([]any, 0, len(roles))
 	for _, gr := range roles {
+		if filter != nil && !groupMatchesFilter(gr, filter) {
+			continue
+		}
 		resources = append(resources, scimGroupResource(gr.ID, gr.DisplayName, "", base, nil))
 	}
 	writeSCIMJSON(w, http.StatusOK, map[string]any{
 		"schemas":      []string{scimListSchema},
-		"totalResults": len(roles),
+		"totalResults": len(resources),
 		"startIndex":   1,
-		"itemsPerPage": len(roles),
+		"itemsPerPage": len(resources),
 		"Resources":    resources,
 	})
+}
+
+func groupMatchesFilter(gr *model.SCIMGroupRole, f *scimFilter) bool {
+	switch f.Attribute {
+	case "id":
+		return gr.ID == f.Value
+	case "displayName":
+		return gr.DisplayName == f.Value
+	}
+	return false
 }
 
 func (s *Server) handleSCIMCreateGroup(w http.ResponseWriter, r *http.Request) {

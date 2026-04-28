@@ -21,6 +21,8 @@ type mockStore struct {
 	createUser                   func(ctx context.Context, email, hash, role string) (*model.User, error)
 	getUserByEmail               func(ctx context.Context, email string) (*model.User, error)
 	getUserByID                  func(ctx context.Context, id string) (*model.User, error)
+	getUserBySCIMExternalID      func(ctx context.Context, externalID string) (*model.User, error)
+	setUserSCIMExternalID        func(ctx context.Context, userID, externalID string) error
 	listUsers                    func(ctx context.Context) ([]*model.User, error)
 	hasAdminUser                 func(ctx context.Context) (bool, error)
 	updateUserPassword           func(ctx context.Context, userID, hash string) error
@@ -109,6 +111,18 @@ func (m *mockStore) GetUserByID(ctx context.Context, id string) (*model.User, er
 		return m.getUserByID(ctx, id)
 	}
 	return nil, store.ErrNotFound
+}
+func (m *mockStore) GetUserBySCIMExternalID(ctx context.Context, externalID string) (*model.User, error) {
+	if m.getUserBySCIMExternalID != nil {
+		return m.getUserBySCIMExternalID(ctx, externalID)
+	}
+	return nil, store.ErrNotFound
+}
+func (m *mockStore) SetUserSCIMExternalID(ctx context.Context, userID, externalID string) error {
+	if m.setUserSCIMExternalID != nil {
+		return m.setUserSCIMExternalID(ctx, userID, externalID)
+	}
+	return nil
 }
 func (m *mockStore) ListUsers(ctx context.Context) ([]*model.User, error) {
 	if m.listUsers != nil {

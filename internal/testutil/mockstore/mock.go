@@ -34,6 +34,10 @@ func (Stub) GetUserByID(_ context.Context, _ string) (*model.User, error) {
 func (Stub) GetUserByOIDCSubject(_ context.Context, _, _ string) (*model.User, error) {
 	return nil, store.ErrNotFound
 }
+func (Stub) GetUserBySCIMExternalID(_ context.Context, _ string) (*model.User, error) {
+	return nil, store.ErrNotFound
+}
+func (Stub) SetUserSCIMExternalID(_ context.Context, _, _ string) error  { return nil }
 func (Stub) ListUsers(_ context.Context) ([]*model.User, error)          { return nil, nil }
 func (Stub) HasAdminUser(_ context.Context) (bool, error)                { return false, nil }
 func (Stub) UpdateUserPassword(_ context.Context, _, _ string) error     { return nil }

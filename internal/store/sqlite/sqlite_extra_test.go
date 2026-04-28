@@ -326,6 +326,50 @@ func TestOIDCUser(t *testing.T) {
 	}
 }
 
+// TestSCIMExternalID covers SetUserSCIMExternalID + GetUserBySCIMExternalID,
+// including the empty-string clear path and ErrNotFound for unknown IDs.
+func TestSCIMExternalID(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	u, err := db.CreateUser(ctx, "scim@example.com", "h", model.UserRoleMember)
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+
+	if _, err := db.GetUserBySCIMExternalID(ctx, "ext-1"); err != store.ErrNotFound {
+		t.Fatalf("before set: got %v, want ErrNotFound", err)
+	}
+
+	if err := db.SetUserSCIMExternalID(ctx, u.ID, "ext-1"); err != nil {
+		t.Fatalf("SetUserSCIMExternalID: %v", err)
+	}
+
+	got, err := db.GetUserBySCIMExternalID(ctx, "ext-1")
+	if err != nil {
+		t.Fatalf("after set: %v", err)
+	}
+	if got.ID != u.ID {
+		t.Errorf("ID = %q, want %q", got.ID, u.ID)
+	}
+	if got.SCIMExternalID == nil || *got.SCIMExternalID != "ext-1" {
+		t.Errorf("SCIMExternalID = %v, want \"ext-1\"", got.SCIMExternalID)
+	}
+
+	// Clearing should make it unfindable again.
+	if err := db.SetUserSCIMExternalID(ctx, u.ID, ""); err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	if _, err := db.GetUserBySCIMExternalID(ctx, "ext-1"); err != store.ErrNotFound {
+		t.Errorf("after clear: got %v, want ErrNotFound", err)
+	}
+
+	// Setting on a non-existent user should return ErrNotFound.
+	if err := db.SetUserSCIMExternalID(ctx, "no-such-user", "ext-x"); err != store.ErrNotFound {
+		t.Errorf("unknown user: got %v, want ErrNotFound", err)
+	}
+}
+
 // TestSetUserOIDCIdentity tests SetUserOIDCIdentity.
 func TestSetUserOIDCIdentity(t *testing.T) {
 	db := openTestDB(t)

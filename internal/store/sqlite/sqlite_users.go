@@ -100,6 +100,35 @@ func (s *DB) GetUserByID(ctx context.Context, id string) (*model.User, error) {
 	return u, err
 }
 
+func (s *DB) GetUserBySCIMExternalID(ctx context.Context, externalID string) (*model.User, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT `+userCols+` FROM users WHERE scim_external_id = ?`, externalID)
+	u, err := scanUser(row)
+	if err == sql.ErrNoRows {
+		return nil, store.ErrNotFound
+	}
+	return u, err
+}
+
+func (s *DB) SetUserSCIMExternalID(ctx context.Context, userID, externalID string) error {
+	var arg any
+	if externalID == "" {
+		arg = nil
+	} else {
+		arg = externalID
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE users SET scim_external_id = ? WHERE id = ?`, arg, userID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
 func (s *DB) GetUserByOIDCSubject(ctx context.Context, issuer, subject string) (*model.User, error) {
 	row := s.db.QueryRowContext(ctx,
 		`SELECT `+userCols+` FROM users WHERE oidc_issuer = ? AND oidc_subject = ?`, issuer, subject)

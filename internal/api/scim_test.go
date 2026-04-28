@@ -265,6 +265,126 @@ func TestHandleSCIMListUsers(t *testing.T) {
 	})
 }
 
+// ── handleSCIMListUsers — filter ──────────────────────────────────────────────
+
+func TestHandleSCIMListUsers_Filter(t *testing.T) {
+	user := &model.User{ID: "u1", Email: "alice@example.com", Active: true, CreatedAt: time.Now().UTC()}
+
+	t.Run("userName eq match", func(t *testing.T) {
+		st := &mockStore{
+			getUserByEmail: func(_ context.Context, email string) (*model.User, error) {
+				if email != "alice@example.com" {
+					t.Fatalf("unexpected email: %q", email)
+				}
+				return user, nil
+			},
+		}
+		srv := newTestServer(t, st)
+		w := scimCall(t, srv, srv.handleSCIMListUsers, http.MethodGet,
+			`/scim/v2/Users?filter=userName%20eq%20%22alice%40example.com%22`, "", "")
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, body=%s", w.Code, w.Body)
+		}
+		var body map[string]any
+		_ = json.NewDecoder(w.Body).Decode(&body)
+		if body["totalResults"].(float64) != 1 {
+			t.Errorf("totalResults = %v, want 1", body["totalResults"])
+		}
+	})
+
+	t.Run("externalId eq routes to store method", func(t *testing.T) {
+		called := false
+		st := &mockStore{
+			getUserBySCIMExternalID: func(_ context.Context, ext string) (*model.User, error) {
+				called = true
+				if ext != "ext-42" {
+					t.Fatalf("unexpected externalId: %q", ext)
+				}
+				return user, nil
+			},
+		}
+		srv := newTestServer(t, st)
+		w := scimCall(t, srv, srv.handleSCIMListUsers, http.MethodGet,
+			`/scim/v2/Users?filter=externalId%20eq%20%22ext-42%22`, "", "")
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, body=%s", w.Code, w.Body)
+		}
+		if !called {
+			t.Errorf("GetUserBySCIMExternalID was not called")
+		}
+	})
+
+	t.Run("no match returns empty list", func(t *testing.T) {
+		st := &mockStore{
+			getUserBySCIMExternalID: func(_ context.Context, _ string) (*model.User, error) {
+				return nil, store.ErrNotFound
+			},
+		}
+		srv := newTestServer(t, st)
+		w := scimCall(t, srv, srv.handleSCIMListUsers, http.MethodGet,
+			`/scim/v2/Users?filter=externalId%20eq%20%22nope%22`, "", "")
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d", w.Code)
+		}
+		var body map[string]any
+		_ = json.NewDecoder(w.Body).Decode(&body)
+		if body["totalResults"].(float64) != 0 {
+			t.Errorf("totalResults = %v, want 0", body["totalResults"])
+		}
+	})
+
+	t.Run("invalid filter returns 400 invalidFilter", func(t *testing.T) {
+		st := &mockStore{}
+		srv := newTestServer(t, st)
+		w := scimCall(t, srv, srv.handleSCIMListUsers, http.MethodGet,
+			`/scim/v2/Users?filter=email%20co%20%22%40example.com%22`, "", "")
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400; body=%s", w.Code, w.Body)
+		}
+		var body map[string]any
+		_ = json.NewDecoder(w.Body).Decode(&body)
+		if body["scimType"] != "invalidFilter" {
+			t.Errorf("scimType = %v, want invalidFilter", body["scimType"])
+		}
+	})
+}
+
+// ── handleSCIMListGroups — filter ─────────────────────────────────────────────
+
+func TestHandleSCIMListGroups_Filter(t *testing.T) {
+	groups := []*model.SCIMGroupRole{
+		{ID: "g1", DisplayName: "Engineering"},
+		{ID: "g2", DisplayName: "Marketing"},
+	}
+
+	t.Run("displayName narrows result", func(t *testing.T) {
+		st := &mockStore{
+			listSCIMGroupRoles: func(_ context.Context) ([]*model.SCIMGroupRole, error) { return groups, nil },
+		}
+		srv := newTestServer(t, st)
+		w := scimCall(t, srv, srv.handleSCIMListGroups, http.MethodGet,
+			`/scim/v2/Groups?filter=displayName%20eq%20%22Engineering%22`, "", "")
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d", w.Code)
+		}
+		var body map[string]any
+		_ = json.NewDecoder(w.Body).Decode(&body)
+		if body["totalResults"].(float64) != 1 {
+			t.Errorf("totalResults = %v, want 1", body["totalResults"])
+		}
+	})
+
+	t.Run("invalid filter returns 400", func(t *testing.T) {
+		st := &mockStore{}
+		srv := newTestServer(t, st)
+		w := scimCall(t, srv, srv.handleSCIMListGroups, http.MethodGet,
+			`/scim/v2/Groups?filter=userName%20eq%20%22x%22`, "", "")
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400", w.Code)
+		}
+	})
+}
+
 // ── scimUserRequest.email() ───────────────────────────────────────────────────
 
 func TestScimUserRequestEmail(t *testing.T) {
@@ -312,6 +432,29 @@ func TestScimUserRequestEmail(t *testing.T) {
 				t.Errorf("email() = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// ── handleSCIMCreateUser — externalId persistence ─────────────────────────────
+
+func TestHandleSCIMCreateUser_PersistsExternalID(t *testing.T) {
+	var seenUserID, seenExtID string
+	st := adminStore()
+	st.createUser = func(_ context.Context, email, _, _ string) (*model.User, error) {
+		return &model.User{ID: "u-new", Email: email, Active: true, CreatedAt: time.Now().UTC()}, nil
+	}
+	st.setUserSCIMExternalID = func(_ context.Context, userID, ext string) error {
+		seenUserID, seenExtID = userID, ext
+		return nil
+	}
+	srv := newTestServer(t, st)
+	w := scimCall(t, srv, srv.handleSCIMCreateUser, http.MethodPost, "/scim/v2/Users",
+		`{"userName":"ext@example.com","externalId":"abc-123"}`, "")
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body)
+	}
+	if seenUserID != "u-new" || seenExtID != "abc-123" {
+		t.Errorf("SetUserSCIMExternalID(%q,%q), want (\"u-new\",\"abc-123\")", seenUserID, seenExtID)
 	}
 }
 

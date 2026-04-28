@@ -327,9 +327,33 @@ Vault has no native "group" concept. Groups are mapped to project roles via `sci
 
 | Path | Description |
 |------|-------------|
-| `GET /scim/v2/ServiceProviderConfig` | Reports SCIM capabilities (PATCH: supported, bulk: not supported) |
+| `GET /scim/v2/ServiceProviderConfig` | Reports SCIM capabilities (PATCH: supported, filter: supported subset, bulk: not supported) |
 | `GET /scim/v2/ResourceTypes` | Lists User and Group resource types |
 | `GET /scim/v2/Schemas` | Returns empty schema list |
+
+### Supported SCIM filter subset
+
+`GET /scim/v2/Users` and `GET /scim/v2/Groups` accept the `filter` query parameter for a deliberately small subset of RFC 7644 §3.4.2.2:
+
+```
+filter=<attribute> eq "<value>"
+```
+
+| Resource | Allowed attributes |
+|----------|--------------------|
+| Users    | `userName`, `externalId`, `id` |
+| Groups   | `displayName`, `id` |
+
+Anything outside this whitelist — other operators (`co`, `sw`, `ew`, `ne`, `gt`, `ge`, `lt`, `le`, `pr`), conjunctions (`and`, `or`), grouped expressions (`(...)`), `not`, or off-whitelist attributes — returns `400 Bad Request` with `scimType: "invalidFilter"`.
+
+This subset is sufficient for Okta and Azure AD (which only emit equality filters in practice) and lets outbound SCIM clients re-resolve users by externalId after a stale-cache 404. Implemented in `internal/api/scim_filter.go`. Persistence of `externalId` is wired through `SetUserSCIMExternalID` so filtered lookups round-trip correctly across IdP re-syncs.
+
+Examples:
+```
+GET /scim/v2/Users?filter=userName eq "alice@example.com"
+GET /scim/v2/Users?filter=externalId eq "abc-123"
+GET /scim/v2/Groups?filter=displayName eq "Engineering"
+```
 
 ### SCIM Token Management (Admin API)
 

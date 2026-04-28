@@ -37,6 +37,13 @@ type UserStore interface {
 	GetUserByID(ctx context.Context, id string) (*model.User, error)
 	// GetUserByOIDCSubject looks up a user by their OIDC issuer+subject pair.
 	GetUserByOIDCSubject(ctx context.Context, issuer, subject string) (*model.User, error)
+	// GetUserBySCIMExternalID looks up a user by their IdP-side externalId,
+	// used by SCIM list filters and for outbound-SCIM cache reconciliation.
+	GetUserBySCIMExternalID(ctx context.Context, externalID string) (*model.User, error)
+	// SetUserSCIMExternalID persists an IdP-side externalId for the user.
+	// Pass empty string to clear. SCIM create/replace handlers call this so the
+	// externalId is queryable via filter and stable across IdP re-syncs.
+	SetUserSCIMExternalID(ctx context.Context, userID, externalID string) error
 	ListUsers(ctx context.Context) ([]*model.User, error)
 	HasAdminUser(ctx context.Context) (bool, error)
 	UpdateUserPassword(ctx context.Context, userID, passwordHash string) error
