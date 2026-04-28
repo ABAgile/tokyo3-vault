@@ -13,6 +13,23 @@ import (
 	"golang.org/x/term"
 )
 
+// resolveCACert resolves path to an absolute path and reads the PEM contents.
+// Returns empty absPath and nil pem when path is empty.
+func resolveCACert(path string) (absPath string, pem []byte, err error) {
+	if path == "" {
+		return "", nil, nil
+	}
+	absPath, err = filepath.Abs(path)
+	if err != nil {
+		return "", nil, fmt.Errorf("resolve --cacert path: %w", err)
+	}
+	pem, err = os.ReadFile(absPath)
+	if err != nil {
+		return "", nil, fmt.Errorf("read --cacert: %w", err)
+	}
+	return absPath, pem, nil
+}
+
 func loginSessionName() string {
 	if h, err := os.Hostname(); err == nil && h != "" {
 		return h
@@ -55,16 +72,10 @@ The certificate must have been registered server-side via:
 			serverURL = strings.TrimRight(serverURL, "/")
 
 			var caCert []byte
-			if caCertFile != "" {
-				abs, err := filepath.Abs(caCertFile)
-				if err != nil {
-					return fmt.Errorf("resolve --cacert path: %w", err)
-				}
-				caCertFile = abs
-				caCert, err = os.ReadFile(caCertFile)
-				if err != nil {
-					return fmt.Errorf("read --cacert: %w", err)
-				}
+			var err error
+			caCertFile, caCert, err = resolveCACert(caCertFile)
+			if err != nil {
+				return err
 			}
 
 			// Cert-based login: save paths and exit — no password needed.
@@ -146,21 +157,18 @@ func NewSignupCmd() *cobra.Command {
 			}
 			serverURL = strings.TrimRight(serverURL, "/")
 
-			var caCert []byte
-			if caCertFile != "" {
-				abs, err := filepath.Abs(caCertFile)
-				if err != nil {
-					return fmt.Errorf("resolve --cacert path: %w", err)
-				}
-				caCertFile = abs
-				caCert, err = os.ReadFile(caCertFile)
-				if err != nil {
-					return fmt.Errorf("read --cacert: %w", err)
-				}
+			var (
+				caCert []byte
+				err    error
+			)
+			caCertFile, caCert, err = resolveCACert(caCertFile)
+			if err != nil {
+				return err
 			}
 
 			email := promptLine("Email: ")
-			password, err := promptPassword("Password: ")
+			var password string
+			password, err = promptPassword("Password: ")
 			if err != nil {
 				return err
 			}

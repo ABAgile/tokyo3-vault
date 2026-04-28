@@ -93,7 +93,7 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rawToken, _, err := auth.IssueUserToken(r.Context(), s.store, user.ID, sessionName(""))
+	rawToken, _, err := auth.IssueUserToken(r.Context(), s.store, user.ID, "login")
 	if err != nil {
 		s.log.Error("issue oidc token", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")

@@ -52,7 +52,7 @@ Getting started:
 		if errors.Is(err, client.ErrUnauthorized) {
 			// Session was revoked (e.g. password change). Wipe the stale token so
 			// subsequent commands give "not logged in" instead of repeated 401s.
-			if g, loadErr := config.LoadGlobal(); loadErr == nil && g.Token != "" {
+			if g, loadErr := config.LoadGlobal(); loadErr == nil {
 				_ = config.SaveGlobal(config.Global{
 					ServerURL:      g.ServerURL,
 					CACertPath:     g.CACertPath,

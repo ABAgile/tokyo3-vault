@@ -42,6 +42,8 @@ type accessResponse struct {
 	Principals []accessPrincipalEntry `json:"principals"`
 }
 
+const emDash = "—"
+
 func NewAccessCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "access",
@@ -102,7 +104,7 @@ The SCOPE column shows how the token or principal was scoped:
 					scope = "project"
 				}
 				fmt.Printf("%-12s  %-42s  %-10s  %-12s  %-24s  %s\n",
-					"user", m.Email, scope, access, "—", "—")
+					"user", m.Email, scope, access, emDash, emDash)
 			}
 
 			for _, t := range resp.Tokens {
@@ -110,7 +112,7 @@ The SCOPE column shows how the token or principal was scoped:
 				if t.ReadOnly {
 					access = "read-only"
 				}
-				expires := "—"
+				expires := emDash
 				if t.ExpiresAt != nil {
 					expires = fmtTime(*t.ExpiresAt)
 				}
@@ -123,7 +125,7 @@ The SCOPE column shows how the token or principal was scoped:
 				if p.ReadOnly {
 					access = "read-only"
 				}
-				expires := "—"
+				expires := emDash
 				if p.ExpiresAt != nil {
 					expires = fmtTime(*p.ExpiresAt)
 				}
@@ -141,7 +143,7 @@ The SCOPE column shows how the token or principal was scoped:
 				}
 				registeredBy := p.OwnerEmail
 				if registeredBy == "" {
-					registeredBy = "—"
+					registeredBy = emDash
 				}
 				fmt.Printf("%-12s  %-42s  %-10s  %-12s  %-24s  %s\n",
 					"principal", truncate(identity, 42), p.Scope, access, registeredBy, expires)

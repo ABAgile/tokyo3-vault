@@ -11,6 +11,11 @@ import (
 	"github.com/abagile/tokyo3-vault/internal/store"
 )
 
+const (
+	tokenKindSession = "session"
+	tokenKindMachine = "machine"
+)
+
 type createTokenRequest struct {
 	Name      string `json:"name"`
 	Project   string `json:"project"` // project slug (resolved to ID server-side)
@@ -167,9 +172,9 @@ func (s *Server) resolveTokenScope(w http.ResponseWriter, r *http.Request, proje
 }
 
 func tokenToItem(t *model.Token) tokenListItem {
-	kind := "machine"
+	kind := tokenKindMachine
 	if t.IsSession {
-		kind = "session"
+		kind = tokenKindSession
 	}
 	return tokenListItem{
 		ID:        t.ID,

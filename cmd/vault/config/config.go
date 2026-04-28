@@ -56,6 +56,15 @@ func GlobalPath() (string, error) {
 	return filepath.Join(home, ".vault", "config"), nil
 }
 
+// loadCACert reads a PEM file from path and returns its contents.
+func loadCACert(path string) ([]byte, error) {
+	pem, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read ca cert %s: %w", path, err)
+	}
+	return pem, nil
+}
+
 // LoadGlobal reads ~/.vault/config. Returns zero-value Global if the file does not exist.
 // If CACertPath is set, the certificate is read from disk so callers always get a fresh copy.
 func LoadGlobal() (Global, error) {
@@ -71,11 +80,10 @@ func LoadGlobal() (Global, error) {
 		return Global{}, fmt.Errorf("read %s: %w", path, err)
 	}
 	if cfg.CACertPath != "" {
-		pem, err := os.ReadFile(cfg.CACertPath)
+		cfg.caCert, err = loadCACert(cfg.CACertPath)
 		if err != nil {
-			return Global{}, fmt.Errorf("read ca_cert_path %s: %w", cfg.CACertPath, err)
+			return Global{}, err
 		}
-		cfg.caCert = pem
 	}
 	if cfg.ClientCertPath != "" && cfg.ClientKeyPath != "" {
 		cert, err := tls.LoadX509KeyPair(cfg.ClientCertPath, cfg.ClientKeyPath)
@@ -175,9 +183,9 @@ func MustToken() (Global, error) {
 		}
 		g := Global{Token: tok, ServerURL: serverURL}
 		if caFile := os.Getenv("VAULT_CA_CERT"); caFile != "" {
-			pem, err := os.ReadFile(caFile)
+			pem, err := loadCACert(caFile)
 			if err != nil {
-				return Global{}, fmt.Errorf("read VAULT_CA_CERT: %w", err)
+				return Global{}, fmt.Errorf("VAULT_CA_CERT: %w", err)
 			}
 			g.CACertPath = caFile
 			g.caCert = pem
