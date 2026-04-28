@@ -22,8 +22,11 @@ type createTokenRequest struct {
 type tokenListItem struct {
 	ID        string  `json:"id"`
 	Name      string  `json:"name"`
+	Kind      string  `json:"kind"` // "session" or "machine"
 	ProjectID *string `json:"project_id,omitempty"`
 	EnvID     *string `json:"env_id,omitempty"`
+	ReadOnly  bool    `json:"read_only"`
+	ExpiresAt *string `json:"expires_at,omitempty"`
 	CreatedAt string  `json:"created_at"`
 }
 
@@ -164,11 +167,18 @@ func (s *Server) resolveTokenScope(w http.ResponseWriter, r *http.Request, proje
 }
 
 func tokenToItem(t *model.Token) tokenListItem {
+	kind := "machine"
+	if t.IsSession {
+		kind = "session"
+	}
 	return tokenListItem{
 		ID:        t.ID,
 		Name:      t.Name,
+		Kind:      kind,
 		ProjectID: t.ProjectID,
 		EnvID:     t.EnvID,
+		ReadOnly:  t.ReadOnly,
+		ExpiresAt: fmtOptionalTime(t.ExpiresAt),
 		CreatedAt: fmtAPITime(t.CreatedAt),
 	}
 }

@@ -62,6 +62,9 @@ type TokenStore interface {
 	// ExtendTokenExpiry slides the expiry of a session token forward.
 	// Only rows with is_session=true are updated; machine tokens are unaffected.
 	ExtendTokenExpiry(ctx context.Context, tokenHash string, newExpiry time.Time) error
+	// DeleteExpiredTokens removes all tokens whose expires_at is in the past.
+	// Returns the number of rows deleted.
+	DeleteExpiredTokens(ctx context.Context) (int64, error)
 }
 
 // ProjectStore covers projects, memberships, environments, and envelope key management.

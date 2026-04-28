@@ -27,7 +27,8 @@ type accessTokenEntry struct {
 
 type accessPrincipalEntry struct {
 	ID          string  `json:"id"`
-	SPIFFEID    string  `json:"spiffe_id"`
+	SPIFFEID    *string `json:"spiffe_id"`
+	EmailSAN    *string `json:"email_san"`
 	Description string  `json:"description"`
 	OwnerEmail  string  `json:"owner_email"`
 	Scope       string  `json:"scope"`
@@ -92,7 +93,7 @@ The SCOPE column shows how the token or principal was scoped:
 			}
 
 			fmt.Printf("%-12s  %-42s  %-10s  %-12s  %-24s  %s\n",
-				"TYPE", "IDENTITY", "SCOPE", "ACCESS", "OWNER", "EXPIRES")
+				"TYPE", "IDENTITY", "SCOPE", "ACCESS", "OWNER/REGISTERED BY", "EXPIRES")
 
 			for _, m := range resp.Members {
 				access := roleAccess(m.Role)
@@ -126,12 +127,24 @@ The SCOPE column shows how the token or principal was scoped:
 				if p.ExpiresAt != nil {
 					expires = fmtTime(*p.ExpiresAt)
 				}
-				identity := p.SPIFFEID
-				if p.Description != "" {
-					identity = fmt.Sprintf("%s (%s)", p.SPIFFEID, p.Description)
+				san := ""
+				if p.SPIFFEID != nil {
+					san = *p.SPIFFEID
+				} else if p.EmailSAN != nil {
+					san = *p.EmailSAN
+				}
+				identity := p.Description
+				if identity == "" {
+					identity = san
+				} else if san != "" {
+					identity = fmt.Sprintf("%s (%s)", p.Description, truncate(san, 20))
+				}
+				registeredBy := p.OwnerEmail
+				if registeredBy == "" {
+					registeredBy = "—"
 				}
 				fmt.Printf("%-12s  %-42s  %-10s  %-12s  %-24s  %s\n",
-					"principal", identity, p.Scope, access, p.OwnerEmail, expires)
+					"principal", truncate(identity, 42), p.Scope, access, registeredBy, expires)
 			}
 
 			return nil

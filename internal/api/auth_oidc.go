@@ -93,7 +93,7 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rawToken, _, err := auth.IssueUserToken(r.Context(), s.store, user.ID, "session")
+	rawToken, _, err := auth.IssueUserToken(r.Context(), s.store, user.ID, sessionName(""))
 	if err != nil {
 		s.log.Error("issue oidc token", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -109,7 +109,7 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, cliCallback+"?token="+rawToken, http.StatusFound)
 		return
 	}
-	writeJSON(w, http.StatusOK, tokenResponse{Token: rawToken, Name: "session"})
+	writeJSON(w, http.StatusOK, tokenResponse{Token: rawToken, Name: "login"})
 }
 
 // jitProvision looks up or creates a vault user from OIDC identity claims.

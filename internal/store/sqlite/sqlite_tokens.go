@@ -98,3 +98,14 @@ func (s *DB) ExtendTokenExpiry(ctx context.Context, tokenHash string, newExpiry 
 	)
 	return err
 }
+
+func (s *DB) DeleteExpiredTokens(ctx context.Context) (int64, error) {
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM tokens WHERE expires_at IS NOT NULL AND expires_at < datetime('now')`,
+	)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}

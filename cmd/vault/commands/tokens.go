@@ -11,8 +11,11 @@ import (
 type tokenListItem struct {
 	ID        string  `json:"id"`
 	Name      string  `json:"name"`
+	Kind      string  `json:"kind"`
 	ProjectID *string `json:"project_id,omitempty"`
 	EnvID     *string `json:"env_id,omitempty"`
+	ReadOnly  bool    `json:"read_only"`
+	ExpiresAt *string `json:"expires_at,omitempty"`
 	CreatedAt string  `json:"created_at"`
 }
 
@@ -52,13 +55,17 @@ func newTokensListCmd() *cobra.Command {
 				fmt.Println("No tokens found.")
 				return nil
 			}
-			fmt.Printf("%-36s  %-20s  %-20s  %s\n", "ID", "NAME", "PROJECT", "CREATED")
+			fmt.Printf("%-36s  %-7s  %-20s  %-5s  %-25s  %s\n", "ID", "KIND", "NAME", "R/O", "EXPIRES", "CREATED")
 			for _, t := range tokens {
-				proj := "-"
-				if t.ProjectID != nil {
-					proj = *t.ProjectID
+				ro := "no"
+				if t.ReadOnly {
+					ro = "yes"
 				}
-				fmt.Printf("%-36s  %-20s  %-20s  %s\n", t.ID, t.Name, proj, fmtTime(t.CreatedAt))
+				expires := "-"
+				if t.ExpiresAt != nil {
+					expires = fmtTime(*t.ExpiresAt)
+				}
+				fmt.Printf("%-36s  %-7s  %-20s  %-5s  %-25s  %s\n", t.ID, t.Kind, t.Name, ro, expires, fmtTime(t.CreatedAt))
 			}
 			return nil
 		},

@@ -13,6 +13,13 @@ import (
 	"golang.org/x/term"
 )
 
+func loginSessionName() string {
+	if h, err := os.Hostname(); err == nil && h != "" {
+		return h
+	}
+	return "login"
+}
+
 func NewLoginCmd() *cobra.Command {
 	var serverURL string
 	var insecure bool
@@ -96,7 +103,7 @@ The certificate must have been registered server-side via:
 				Token string `json:"token"`
 			}
 			err = client.NoAuth(serverURL, "POST", "/api/v1/auth/login",
-				map[string]string{"email": email, "password": password},
+				map[string]any{"email": email, "password": password, "name": loginSessionName()},
 				&resp,
 				insecure,
 				caCert,
@@ -162,7 +169,7 @@ func NewSignupCmd() *cobra.Command {
 				Token string `json:"token"`
 			}
 			err = client.NoAuth(serverURL, "POST", "/api/v1/auth/signup",
-				map[string]string{"email": email, "password": password},
+				map[string]any{"email": email, "password": password, "name": loginSessionName()},
 				&resp,
 				insecure,
 				caCert,

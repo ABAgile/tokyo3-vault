@@ -204,6 +204,7 @@ func main() {
 	pruneMinAge := time.Duration(pruneMinDays) * 24 * time.Hour
 
 	go newVersionPruner(st, log, pruneMinCount, pruneMinAge).Run(ctx)
+	go newTokenPruner(st, log).Run(ctx)
 
 	rotationPeriod := 90 * 24 * time.Hour
 	if v := os.Getenv("VAULT_PEK_ROTATION_PERIOD"); v != "" {

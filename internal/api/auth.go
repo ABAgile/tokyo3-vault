@@ -14,11 +14,13 @@ import (
 type signupRequest struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
+	Name     string `json:"name"` // optional session label (e.g. hostname)
 }
 
 type loginRequest struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
+	Name     string `json:"name"` // optional session label (e.g. hostname)
 }
 
 type tokenResponse struct {
@@ -77,7 +79,7 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rawToken, _, err := auth.IssueUserToken(r.Context(), s.store, user.ID, "session")
+	rawToken, _, err := auth.IssueUserToken(r.Context(), s.store, user.ID, sessionName(req.Name))
 	if err != nil {
 		s.log.Error("issue token", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -87,7 +89,7 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "audit unavailable")
 		return
 	}
-	writeJSON(w, http.StatusCreated, tokenResponse{Token: rawToken, Name: "session"})
+	writeJSON(w, http.StatusCreated, tokenResponse{Token: rawToken, Name: sessionName(req.Name)})
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -121,7 +123,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rawToken, _, err := auth.IssueUserToken(r.Context(), s.store, user.ID, "session")
+	rawToken, _, err := auth.IssueUserToken(r.Context(), s.store, user.ID, sessionName(req.Name))
 	if err != nil {
 		s.log.Error("issue token", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -205,4 +207,13 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// sessionName returns name if non-empty, otherwise "login".
+func sessionName(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "login"
+	}
+	return name
 }
