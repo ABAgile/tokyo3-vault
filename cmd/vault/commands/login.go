@@ -43,13 +43,15 @@ func NewLoginCmd() *cobra.Command {
 	var caCertFile string
 	var clientCertFile string
 	var clientKeyFile string
+	var oidc bool
+	var manual bool
 
 	cmd := &cobra.Command{
 		Use:   "login",
 		Short: "Authenticate with the Vault server",
 		Long: `Authenticate with the Vault server.
 
-Two authentication modes:
+Three authentication modes:
 
   Email/password (default):
     vault login --server https://vault.example.com
@@ -58,6 +60,10 @@ Two authentication modes:
     vault login --server https://vault.example.com \
                 --cert /path/to/client.crt \
                 --key  /path/to/client.key
+
+  OIDC SSO via the configured external IdP:
+    vault login --oidc --server https://vault.example.com
+    vault login --oidc --manual               # SSH/headless: paste URL after browsing
 
 The certificate must have been registered server-side via:
     vault principals register --spiffe-id <URI> --project <slug>`,
@@ -76,6 +82,11 @@ The certificate must have been registered server-side via:
 			caCertFile, caCert, err = resolveCACert(caCertFile)
 			if err != nil {
 				return err
+			}
+
+			// OIDC SSO login: opens browser via loopback redirect (or --manual paste).
+			if oidc {
+				return loginViaOIDC(serverURL, manual, insecure, caCert, caCertFile)
 			}
 
 			// Cert-based login: save paths and exit — no password needed.
@@ -140,6 +151,8 @@ The certificate must have been registered server-side via:
 	cmd.Flags().StringVar(&caCertFile, "cacert", "", "Path to CA certificate PEM for TLS verification")
 	cmd.Flags().StringVar(&clientCertFile, "cert", "", "Path to client certificate PEM for principal auth")
 	cmd.Flags().StringVar(&clientKeyFile, "key", "", "Path to client key PEM for principal auth")
+	cmd.Flags().BoolVar(&oidc, "oidc", false, "Authenticate via OIDC SSO (loopback browser flow)")
+	cmd.Flags().BoolVar(&manual, "manual", false, "With --oidc: print URL and accept pasted redirect (no loopback listener)")
 	return cmd
 }
 

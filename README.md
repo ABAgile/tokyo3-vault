@@ -104,10 +104,20 @@ Subsequent `vault signup` calls create regular member accounts.
 ### 4. Log in from the CLI
 
 ```sh
+# Email/password
 vault login --server https://localhost:8443
-# prompts for email and password
-# saves credentials to ~/.vault/config
+
+# Or via SSO if VAULT_OIDC_* is configured (auth, Authentik, Okta, ...):
+vault login --oidc --server https://localhost:8443
+# Opens the system browser, captures the session token via a loopback
+# listener on 127.0.0.1, persists to ~/.vault/config
+
+# Headless / SSH:
+vault login --oidc --manual --server https://localhost:8443
+# Prints the authorization URL; paste the redirected URL back when prompted.
 ```
+
+See [`docs/oidc-sso-design.md`](docs/oidc-sso-design.md) for the full SSO design and the "tokyo3-auth as IdP" appendix covering the closed-loop integration with the sibling `auth` service.
 
 ---
 
@@ -364,10 +374,18 @@ If `VAULT_NATS_URL` is unset, audit events are discarded (development only). In 
 Authenticate and save credentials locally.
 
 ```sh
+# Email/password (default)
 vault login [--server <url>]
+
+# Principal certificate (mTLS)
+vault login --cert client.pem --key client.key [--server <url>]
+
+# OIDC SSO via the configured external IdP
+vault login --oidc [--server <url>]
+vault login --oidc --manual [--server <url>]   # SSH/headless: paste URL after browsing
 ```
 
-Prompts for email and password. Saves the server URL and session token to `~/.vault/config`.
+The OIDC flow uses the OAuth 2.0 loopback-redirect pattern (same as `gh auth login` / `gcloud auth login`): the CLI opens the system browser at the IdP, captures the session token via a one-shot listener on `127.0.0.1:RAND`, and writes it to `~/.vault/config`. Requires `VAULT_OIDC_*` to be configured server-side. With `--manual`, no listener is started — the CLI prints the URL and accepts the resulting redirect URL pasted back.
 
 #### `vault signup`
 

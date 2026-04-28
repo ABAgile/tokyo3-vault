@@ -427,12 +427,91 @@ DELETE /api/v1/scim/group-roles/{id}   — remove mapping
 | IdP | OIDC | SCIM | Notes |
 |-----|------|------|-------|
 | Authentik | ✓ | ✓ | Primary target |
+| **tokyo3-auth** | ✓ | ✓ | Sibling project; see "tokyo3-auth as IdP" below for the closed-loop setup |
 | Okta | ✓ | ✓ | PATCH uses `{"op":"Replace","path":"active","value":false}` |
 | Azure AD / Entra | ✓ | ✓ | PATCH uses object-form active |
 | Keycloak | ✓ | Partial | SCIM via extension plugin |
 | Dex | ✓ | ✗ | OIDC only |
 | Auth0 | ✓ | ✓ | |
 | Google Workspace | ✓ | ✗ | OIDC only |
+
+---
+
+## tokyo3-auth as IdP
+
+`tokyo3-auth` (sibling project at `/auth/`) is a self-hosted OIDC provider with built-in outbound SCIM provisioning to vault. The integration closes the loop: auth owns identity, vault owns secrets, and membership flows automatically.
+
+### Wiring
+
+```
+   ┌────────┐  user logs in via /auth        ┌──────────────┐
+   │ vault  │ ──────────────────────────────▶│ tokyo3-auth  │
+   │  CLI   │ (loopback redirect for token)  │   (OIDC)     │
+   └────────┘                                │              │
+       ▲                                     │              │
+       │  /scim/v2/Users + Groups            │              │
+       │ ◀───────────────────────────────────│ (SCIM client)│
+       │                                     └──────────────┘
+       └─ users/groups arrive in vault before they need access
+```
+
+- **OIDC**: vault is registered as an OAuth2 client in auth (`POST /admin/clients`); claims `sub`+`email`+`name` are read by vault's `jitProvision` to upsert users.
+- **SCIM**: auth's `provision.Set` fans out user/group lifecycle events from every authoritative path (inbound SCIM, admin API, self-registration, portal admin) to vault's `/scim/v2`. Auth uses Phase 2's `filter=externalId eq` for stale-cache 404 self-heal.
+- **Group → role**: vault's `scim_group_roles` table (operator-managed) maps `displayName` → `(project, env, role)`. When auth pushes a group with members, vault's `syncGroupMembers` binds each member to the correct project membership automatically.
+
+### Setup
+
+**On auth**:
+```bash
+# Register vault as a client (returns client_id + client_secret; secret shown once)
+curl -X POST -H "Authorization: Bearer <auth-admin-token>" $AUTH/admin/clients \
+  -d '{"name":"vault","redirect_uris":["https://vault.example.com/api/v1/auth/oidc/callback"],
+       "scopes":["openid","email","profile","offline_access"],"public":false}'
+
+# Set env on auth
+AUTH_VAULT_SCIM_ENABLED=true
+AUTH_VAULT_SCIM_URL=https://vault.example.com/scim/v2
+AUTH_VAULT_SCIM_TOKEN=<minted on vault, see below>
+```
+
+**On vault**:
+```bash
+# 1. Mint a SCIM token for auth's outbound client
+curl -X POST -H "Authorization: Bearer <vault-admin-token>" \
+  $VAULT/api/v1/scim/tokens \
+  -d '{"description":"tokyo3-auth -> vault"}'
+
+# 2. Configure vault to use auth as the OIDC IdP
+VAULT_OIDC_ISSUER=https://auth.example.com
+VAULT_OIDC_CLIENT_ID=<from auth>
+VAULT_OIDC_CLIENT_SECRET=<from auth>
+VAULT_OIDC_REDIRECT_URI=https://vault.example.com/api/v1/auth/oidc/callback
+VAULT_OIDC_ENFORCE=true   # disable local /auth/login + /auth/signup
+```
+
+**One-time backfill** (recommended order: provision before first SSO login to avoid the JIT-vs-SCIM email race):
+```bash
+authd admin sync --target=vault
+```
+
+### Verification
+
+```bash
+# OIDC config visible to vault CLI
+curl -i $VAULT/api/v1/auth/oidc/config        # → enabled:true, enforce:true
+
+# Login from CLI (Phase 1)
+vault auth login --oidc                       # opens browser, captures token
+vault whoami                                   # shows the auth-managed user
+
+# SCIM provisioning round-trip (after creating a user in auth)
+curl -H "Authorization: Bearer $SCIM_TOKEN" \
+  "$VAULT/scim/v2/Users?filter=externalId%20eq%20%22<auth-user-uuid>%22" \
+  | jq '.totalResults'                         # → 1
+
+# Deactivation revokes vault tokens
+# (PATCH active=false on auth → vault SetUserActive(false) + DeleteAllTokensForUser)
+```
 
 ---
 
