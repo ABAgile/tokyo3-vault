@@ -119,7 +119,8 @@ func TestSaveGlobal_LoadGlobal_RoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadGlobal: %v", err)
 	}
-	if got != want {
+	if got.ServerURL != want.ServerURL || got.Token != want.Token ||
+		got.TLSSkipVerify != want.TLSSkipVerify || got.CACertPath != want.CACertPath {
 		t.Errorf("LoadGlobal = %+v, want %+v", got, want)
 	}
 }

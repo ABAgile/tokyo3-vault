@@ -108,10 +108,13 @@ func (s *Server) checkPrincipalUserActive(r *http.Request, p *model.CertPrincipa
 // certPrincipalToToken constructs an ephemeral *model.Token from a cert principal
 // so all existing authorization helpers work unchanged. TokenHash is empty —
 // this token is never stored.
+//
+// UserID is intentionally omitted: p.UserID is the registering owner, not a
+// user to impersonate. Carrying it over would grant the registering admin's
+// privileges to the cert. Access is determined solely by ProjectID/EnvID/ReadOnly.
 func certPrincipalToToken(p *model.CertPrincipal) *model.Token {
 	return &model.Token{
 		ID:        p.ID,
-		UserID:    p.UserID,
 		Name:      p.Description,
 		ProjectID: p.ProjectID,
 		EnvID:     p.EnvID,
@@ -188,9 +191,11 @@ func (s *Server) handleRegisterCertPrincipal(w http.ResponseWriter, r *http.Requ
 	if httpErr {
 		return
 	}
-	if projectID != "" {
-		p.ProjectID = &projectID
+	if projectID == "" {
+		writeError(w, http.StatusBadRequest, "project is required — cert principals must be scoped to a project")
+		return
 	}
+	p.ProjectID = &projectID
 	if envID != "" {
 		p.EnvID = &envID
 	}

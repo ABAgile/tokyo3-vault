@@ -54,8 +54,10 @@ Getting started:
 			// subsequent commands give "not logged in" instead of repeated 401s.
 			if g, loadErr := config.LoadGlobal(); loadErr == nil && g.Token != "" {
 				_ = config.SaveGlobal(config.Global{
-					ServerURL: g.ServerURL,
-					CACert:    g.CACert,
+					ServerURL:      g.ServerURL,
+					CACertPath:     g.CACertPath,
+					ClientCertPath: g.ClientCertPath,
+					ClientKeyPath:  g.ClientKeyPath,
 				})
 			}
 			fmt.Fprintln(os.Stderr, "Error: session expired — run: vault login")

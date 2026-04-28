@@ -76,7 +76,7 @@ The SCOPE column shows how the token or principal was scoped:
 				return err
 			}
 
-			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, []byte(g.CACert))
+			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, g.CACertPEM(), g.ClientCert())
 			path := fmt.Sprintf("/api/v1/projects/%s/envs/%s/access",
 				url.PathEscape(project), url.PathEscape(env))
 

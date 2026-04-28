@@ -47,7 +47,7 @@ func newMembersListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, []byte(g.CACert))
+			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, g.CACertPEM(), g.ClientCert())
 			var members []memberItem
 			if err := c.Get("/api/v1/projects/"+args[0]+"/members", &members); err != nil {
 				return err
@@ -80,7 +80,7 @@ func newMembersAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, []byte(g.CACert))
+			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, g.CACertPEM(), g.ClientCert())
 
 			// Resolve email → user ID.
 			var u userLookup
@@ -121,7 +121,7 @@ func newMembersUpdateCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, []byte(g.CACert))
+			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, g.CACertPEM(), g.ClientCert())
 			body := map[string]any{"role": role}
 			if envID != "" {
 				body["env_id"] = envID
@@ -151,7 +151,7 @@ func newMembersRemoveCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, []byte(g.CACert))
+			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, g.CACertPEM(), g.ClientCert())
 			path := "/api/v1/projects/" + args[0] + "/members/" + args[1]
 			if envID != "" {
 				path += "?env_id=" + url.QueryEscape(envID)

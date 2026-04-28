@@ -94,15 +94,21 @@ func TestHandleRegisterCertPrincipal(t *testing.T) {
 	}{
 		{
 			name:       "valid spiffe",
-			body:       `{"description":"workload","spiffe_id":"spiffe://cluster.local/ns/app/sa/svc"}`,
+			body:       `{"description":"workload","spiffe_id":"spiffe://cluster.local/ns/app/sa/svc","project":"myapp"}`,
 			tok:        ownerTok(),
 			wantStatus: http.StatusCreated,
 		},
 		{
 			name:       "valid email",
-			body:       `{"description":"alice","email_san":"alice@example.com"}`,
+			body:       `{"description":"alice","email_san":"alice@example.com","project":"myapp"}`,
 			tok:        ownerTok(),
 			wantStatus: http.StatusCreated,
+		},
+		{
+			name:       "missing project",
+			body:       `{"description":"workload","spiffe_id":"spiffe://cluster.local/ns/app/sa/svc"}`,
+			tok:        ownerTok(),
+			wantStatus: http.StatusBadRequest,
 		},
 		{
 			name:       "missing description",
@@ -136,7 +142,7 @@ func TestHandleRegisterCertPrincipal(t *testing.T) {
 		},
 		{
 			name: "conflict",
-			body: `{"description":"d","spiffe_id":"spiffe://cluster.local/ns/dup/sa/svc"}`,
+			body: `{"description":"d","spiffe_id":"spiffe://cluster.local/ns/dup/sa/svc","project":"myapp"}`,
 			tok:  ownerTok(),
 			setup: func(m *mockStore) {
 				m.createCertPrincipal = func(_ context.Context, _ *model.CertPrincipal) error { return store.ErrConflict }
@@ -154,7 +160,7 @@ func TestHandleRegisterCertPrincipal(t *testing.T) {
 		},
 		{
 			name:       "with expires_in",
-			body:       `{"description":"expiring","spiffe_id":"spiffe://cluster.local/ns/exp/sa/svc","expires_in":"24h"}`,
+			body:       `{"description":"expiring","spiffe_id":"spiffe://cluster.local/ns/exp/sa/svc","project":"myapp","expires_in":"24h"}`,
 			tok:        ownerTok(),
 			wantStatus: http.StatusCreated,
 		},
@@ -308,8 +314,8 @@ func TestCertPrincipalToToken(t *testing.T) {
 	if tok.ID != "cp-1" {
 		t.Errorf("ID = %q, want cp-1", tok.ID)
 	}
-	if tok.UserID != &uid {
-		t.Errorf("UserID mismatch")
+	if tok.UserID != nil {
+		t.Errorf("UserID should be nil — cert tokens must not inherit registering user's privileges")
 	}
 	if tok.Name != "workload cert" {
 		t.Errorf("Name = %q, want 'workload cert'", tok.Name)

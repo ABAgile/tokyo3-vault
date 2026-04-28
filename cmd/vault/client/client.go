@@ -25,19 +25,23 @@ type Client struct {
 	http  *http.Client
 }
 
-// New returns a Client pointed at serverURL with the given bearer token.
+// New returns a Client pointed at serverURL.
 // skipVerify disables TLS verification (dev only); caCert is a PEM-encoded CA
-// certificate to trust in place of the system pool. skipVerify takes precedence.
-func New(serverURL, token string, skipVerify bool, caCert []byte) *Client {
+// to trust in place of the system pool; clientCert is a TLS client certificate
+// for principal (cert) auth — when set, bearer token is omitted from requests.
+func New(serverURL, token string, skipVerify bool, caCert []byte, clientCert *tls.Certificate) *Client {
 	transport := http.DefaultTransport
-	if skipVerify || len(caCert) > 0 {
+	if skipVerify || len(caCert) > 0 || clientCert != nil {
 		tlsCfg := &tls.Config{}
 		if skipVerify {
 			tlsCfg.InsecureSkipVerify = true //nolint:gosec
-		} else {
+		} else if len(caCert) > 0 {
 			pool := x509.NewCertPool()
 			pool.AppendCertsFromPEM(caCert)
 			tlsCfg.RootCAs = pool
+		}
+		if clientCert != nil {
+			tlsCfg.Certificates = []tls.Certificate{*clientCert}
 		}
 		transport = &http.Transport{TLSClientConfig: tlsCfg}
 	}
@@ -64,7 +68,9 @@ func (c *Client) Do(method, path string, body, out any) error {
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -128,7 +134,9 @@ func (c *Client) PostText(path, text string, out any) error {
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
 	req.Header.Set("Content-Type", "text/plain; charset=utf-8")
 
 	resp, err := c.http.Do(req)
@@ -168,7 +176,9 @@ func (c *Client) GetText(path string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("build request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
 
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -199,5 +209,5 @@ func (c *Client) GetText(path string) (string, error) {
 // NoAuth performs a request without an Authorization header (for login/signup).
 // skipVerify and caCert have the same meaning as in New.
 func NoAuth(serverURL, method, path string, body, out any, skipVerify bool, caCert []byte) error {
-	return New(serverURL, "", skipVerify, caCert).Do(method, path, body, out)
+	return New(serverURL, "", skipVerify, caCert, nil).Do(method, path, body, out)
 }

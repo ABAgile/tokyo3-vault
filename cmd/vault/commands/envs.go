@@ -43,7 +43,7 @@ func newEnvsListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, []byte(g.CACert))
+			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, g.CACertPEM(), g.ClientCert())
 			var envs []envItem
 			if err := c.Get("/api/v1/projects/"+project+"/envs", &envs); err != nil {
 				return err
@@ -78,7 +78,7 @@ func newEnvsCreateCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, []byte(g.CACert))
+			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, g.CACertPEM(), g.ClientCert())
 			body := map[string]string{"name": args[0], "slug": slug}
 			var e envItem
 			if err := c.Post("/api/v1/projects/"+project+"/envs", body, &e); err != nil {
@@ -114,7 +114,7 @@ func newEnvsDeleteCmd() *cobra.Command {
 			if confirm != envSlug {
 				return fmt.Errorf("confirmation did not match — aborted")
 			}
-			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, []byte(g.CACert))
+			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, g.CACertPEM(), g.ClientCert())
 			if err := c.Delete("/api/v1/projects/" + project + "/envs/" + envSlug); err != nil {
 				return err
 			}

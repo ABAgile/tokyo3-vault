@@ -4,6 +4,7 @@
 package config
 
 import (
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"os"
@@ -14,11 +15,22 @@ import (
 
 // Global holds the user-level config stored in ~/.vault/config.
 type Global struct {
-	ServerURL     string `toml:"server_url"`
-	Token         string `toml:"token"`
-	TLSSkipVerify bool   `toml:"tls_skip_verify"`
-	CACert        string `toml:"ca_cert"` // PEM content of the CA cert; set via vault login --ca-cert
+	ServerURL      string `toml:"server_url"`
+	Token          string `toml:"token"`
+	TLSSkipVerify  bool   `toml:"tls_skip_verify"`
+	CACertPath     string `toml:"ca_cert_path"`     // path to CA PEM; read fresh on every use
+	ClientCertPath string `toml:"client_cert_path"` // path to client cert PEM for principal auth
+	ClientKeyPath  string `toml:"client_key_path"`  // path to client key PEM for principal auth
+
+	caCert     []byte           // loaded from CACertPath at runtime; never serialised
+	clientCert *tls.Certificate // loaded from ClientCertPath+ClientKeyPath; never serialised
 }
+
+// CACertPEM returns the CA certificate PEM loaded from CACertPath.
+func (g Global) CACertPEM() []byte { return g.caCert }
+
+// ClientCert returns the TLS client certificate loaded from ClientCertPath/ClientKeyPath.
+func (g Global) ClientCert() *tls.Certificate { return g.clientCert }
 
 // DynamicRun declares a dynamic backend credential to issue during vault run.
 // Slug is the backend slug; Role is the role name. TTL overrides the role default (0 = use default).
@@ -45,6 +57,7 @@ func GlobalPath() (string, error) {
 }
 
 // LoadGlobal reads ~/.vault/config. Returns zero-value Global if the file does not exist.
+// If CACertPath is set, the certificate is read from disk so callers always get a fresh copy.
 func LoadGlobal() (Global, error) {
 	path, err := GlobalPath()
 	if err != nil {
@@ -56,6 +69,20 @@ func LoadGlobal() (Global, error) {
 			return Global{}, nil
 		}
 		return Global{}, fmt.Errorf("read %s: %w", path, err)
+	}
+	if cfg.CACertPath != "" {
+		pem, err := os.ReadFile(cfg.CACertPath)
+		if err != nil {
+			return Global{}, fmt.Errorf("read ca_cert_path %s: %w", cfg.CACertPath, err)
+		}
+		cfg.caCert = pem
+	}
+	if cfg.ClientCertPath != "" && cfg.ClientKeyPath != "" {
+		cert, err := tls.LoadX509KeyPair(cfg.ClientCertPath, cfg.ClientKeyPath)
+		if err != nil {
+			return Global{}, fmt.Errorf("load client cert: %w", err)
+		}
+		cfg.clientCert = &cert
 	}
 	return cfg, nil
 }
@@ -130,15 +157,21 @@ func SaveRepo(r Repo) error {
 	return toml.NewEncoder(f).Encode(r)
 }
 
-// MustToken returns auth config, preferring VAULT_TOKEN+VAULT_SERVER_URL env vars
-// over ~/.vault/config. The env var path is intended for machine/CI contexts where
-// the token is injected at runtime and must never be written to disk.
-// VAULT_CA_CERT (path to a PEM file) is also honoured in the env var path.
+// MustToken returns auth config, preferring env vars over ~/.vault/config.
+//
+// Env vars for machine/CI contexts (never written to disk):
+//   - VAULT_TOKEN + VAULT_SERVER_URL  — bearer token auth
+//   - VAULT_CLIENT_CERT + VAULT_CLIENT_KEY + VAULT_SERVER_URL — principal cert auth
+//   - VAULT_CA_CERT — path to CA PEM for server verification (optional in both modes)
 func MustToken() (Global, error) {
-	if tok := os.Getenv("VAULT_TOKEN"); tok != "" {
-		serverURL := os.Getenv("VAULT_SERVER_URL")
+	serverURL := os.Getenv("VAULT_SERVER_URL")
+	tok := os.Getenv("VAULT_TOKEN")
+	certFile := os.Getenv("VAULT_CLIENT_CERT")
+	keyFile := os.Getenv("VAULT_CLIENT_KEY")
+
+	if tok != "" || certFile != "" {
 		if serverURL == "" {
-			return Global{}, errors.New("VAULT_SERVER_URL is required when VAULT_TOKEN is set")
+			return Global{}, errors.New("VAULT_SERVER_URL is required")
 		}
 		g := Global{Token: tok, ServerURL: serverURL}
 		if caFile := os.Getenv("VAULT_CA_CERT"); caFile != "" {
@@ -146,19 +179,30 @@ func MustToken() (Global, error) {
 			if err != nil {
 				return Global{}, fmt.Errorf("read VAULT_CA_CERT: %w", err)
 			}
-			g.CACert = string(pem)
+			g.CACertPath = caFile
+			g.caCert = pem
+		}
+		if certFile != "" && keyFile != "" {
+			g.ClientCertPath = certFile
+			g.ClientKeyPath = keyFile
+			cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+			if err != nil {
+				return Global{}, fmt.Errorf("load VAULT_CLIENT_CERT: %w", err)
+			}
+			g.clientCert = &cert
 		}
 		return g, nil
 	}
+
 	g, err := LoadGlobal()
 	if err != nil {
 		return g, err
 	}
-	if g.Token == "" {
-		return g, errors.New("not logged in — run: vault login")
-	}
 	if g.ServerURL == "" {
 		return g, errors.New("server URL not set — run: vault login")
+	}
+	if g.Token == "" && g.ClientCertPath == "" {
+		return g, errors.New("not logged in — run: vault login")
 	}
 	return g, nil
 }

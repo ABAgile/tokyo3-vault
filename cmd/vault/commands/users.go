@@ -36,7 +36,7 @@ func newUsersListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, []byte(g.CACert))
+			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, g.CACertPEM(), g.ClientCert())
 			var users []userItem
 			if err := c.Get("/api/v1/users", &users); err != nil {
 				return err
@@ -72,7 +72,7 @@ func newUsersCreateCmd() *cobra.Command {
 			if len(password) < 8 {
 				return fmt.Errorf("password must be at least 8 characters")
 			}
-			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, []byte(g.CACert))
+			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, g.CACertPEM(), g.ClientCert())
 			body := map[string]string{
 				"email":    args[0],
 				"password": password,
@@ -100,7 +100,7 @@ func NewChangePasswordCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, []byte(g.CACert))
+			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, g.CACertPEM(), g.ClientCert())
 
 			if email != "" {
 				// Admin resetting another user's password — no current password needed.

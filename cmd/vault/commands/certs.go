@@ -71,6 +71,9 @@ func newPrincipalsRegisterCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if project == "" {
+				return fmt.Errorf("--project is required")
+			}
 			if spiffeID == "" && emailSAN == "" {
 				return fmt.Errorf("one of --spiffe-id or --email-san is required")
 			}
@@ -78,7 +81,7 @@ func newPrincipalsRegisterCmd() *cobra.Command {
 				return fmt.Errorf("only one of --spiffe-id or --email-san may be set")
 			}
 			body := buildCertPrincipalBody(args[0], spiffeID, emailSAN, project, env, expiresIn, readOnly)
-			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, []byte(g.CACert))
+			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, g.CACertPEM(), g.ClientCert())
 			var resp certPrincipalResp
 			if err := c.Post("/api/v1/cert-principals", body, &resp); err != nil {
 				return err
@@ -89,7 +92,7 @@ func newPrincipalsRegisterCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&spiffeID, "spiffe-id", "", "SPIFFE URI SAN, e.g. spiffe://cluster.local/ns/myapp/sa/server")
 	cmd.Flags().StringVar(&emailSAN, "email-san", "", "Email SAN (rfc822Name), e.g. alice@corp.example.com")
-	cmd.Flags().StringVar(&project, "project", "", "Scope to a project slug")
+	cmd.Flags().StringVar(&project, "project", "", "Project slug (required)")
 	cmd.Flags().StringVar(&env, "env", "", "Scope to an environment slug (requires --project)")
 	cmd.Flags().BoolVar(&readOnly, "read-only", false, "Restrict to read-only operations")
 	cmd.Flags().StringVar(&expiresIn, "expires-in", "", "Mapping expiry as a Go duration, e.g. 8760h (1 year)")
@@ -149,7 +152,7 @@ func newPrincipalsListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, []byte(g.CACert))
+			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, g.CACertPEM(), g.ClientCert())
 			var principals []certPrincipalResp
 			if err := c.Get("/api/v1/cert-principals", &principals); err != nil {
 				return err
@@ -185,7 +188,7 @@ func newPrincipalsRevokeCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, []byte(g.CACert))
+			c := client.New(g.ServerURL, g.Token, g.TLSSkipVerify, g.CACertPEM(), g.ClientCert())
 			if err := c.Delete("/api/v1/cert-principals/" + args[0]); err != nil {
 				return err
 			}
