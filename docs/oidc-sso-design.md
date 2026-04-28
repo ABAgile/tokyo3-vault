@@ -501,8 +501,8 @@ authd admin sync --target=vault
 curl -i $VAULT/api/v1/auth/oidc/config        # → enabled:true, enforce:true
 
 # Login from CLI (Phase 1)
-vault auth login --oidc                       # opens browser, captures token
-vault whoami                                   # shows the auth-managed user
+vault login --oidc                            # opens browser, captures token
+vault projects list                           # any authenticated call confirms the token works
 
 # SCIM provisioning round-trip (after creating a user in auth)
 curl -H "Authorization: Bearer $SCIM_TOKEN" \
