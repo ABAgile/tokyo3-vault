@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"time"
 
 	"github.com/abagile/tokyo3-vault/internal/model"
 	"github.com/abagile/tokyo3-vault/internal/store"
@@ -10,9 +11,9 @@ import (
 
 func (s *DB) CreateToken(ctx context.Context, t *model.Token) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO tokens (id, user_id, token_hash, name, project_id, env_id, read_only, expires_at, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		t.ID, t.UserID, t.TokenHash, t.Name, t.ProjectID, t.EnvID, t.ReadOnly, t.ExpiresAt, t.CreatedAt,
+		`INSERT INTO tokens (id, user_id, token_hash, name, project_id, env_id, read_only, is_session, expires_at, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		t.ID, t.UserID, t.TokenHash, t.Name, t.ProjectID, t.EnvID, t.ReadOnly, t.IsSession, t.ExpiresAt, t.CreatedAt,
 	)
 	return err
 }
@@ -20,9 +21,9 @@ func (s *DB) CreateToken(ctx context.Context, t *model.Token) error {
 func (s *DB) GetTokenByHash(ctx context.Context, hash string) (*model.Token, error) {
 	t := &model.Token{}
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, user_id, token_hash, name, project_id, env_id, read_only, expires_at, created_at
+		`SELECT id, user_id, token_hash, name, project_id, env_id, read_only, is_session, expires_at, created_at
 		 FROM tokens WHERE token_hash = ?`, hash,
-	).Scan(&t.ID, &t.UserID, &t.TokenHash, &t.Name, &t.ProjectID, &t.EnvID, &t.ReadOnly, &t.ExpiresAt, &t.CreatedAt)
+	).Scan(&t.ID, &t.UserID, &t.TokenHash, &t.Name, &t.ProjectID, &t.EnvID, &t.ReadOnly, &t.IsSession, &t.ExpiresAt, &t.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, store.ErrNotFound
 	}
@@ -31,7 +32,7 @@ func (s *DB) GetTokenByHash(ctx context.Context, hash string) (*model.Token, err
 
 func (s *DB) ListTokens(ctx context.Context, userID string) ([]*model.Token, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, user_id, token_hash, name, project_id, env_id, read_only, expires_at, created_at
+		`SELECT id, user_id, token_hash, name, project_id, env_id, read_only, is_session, expires_at, created_at
 		 FROM tokens WHERE user_id = ? ORDER BY created_at DESC`, userID,
 	)
 	if err != nil {
@@ -41,7 +42,7 @@ func (s *DB) ListTokens(ctx context.Context, userID string) ([]*model.Token, err
 	var tokens []*model.Token
 	for rows.Next() {
 		t := &model.Token{}
-		if err := rows.Scan(&t.ID, &t.UserID, &t.TokenHash, &t.Name, &t.ProjectID, &t.EnvID, &t.ReadOnly, &t.ExpiresAt, &t.CreatedAt); err != nil {
+		if err := rows.Scan(&t.ID, &t.UserID, &t.TokenHash, &t.Name, &t.ProjectID, &t.EnvID, &t.ReadOnly, &t.IsSession, &t.ExpiresAt, &t.CreatedAt); err != nil {
 			return nil, err
 		}
 		tokens = append(tokens, t)
@@ -51,7 +52,7 @@ func (s *DB) ListTokens(ctx context.Context, userID string) ([]*model.Token, err
 
 func (s *DB) ListTokensWithAccess(ctx context.Context, projectID, envID string) ([]*model.Token, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, user_id, token_hash, name, project_id, env_id, read_only, expires_at, created_at
+		`SELECT id, user_id, token_hash, name, project_id, env_id, read_only, is_session, expires_at, created_at
 		 FROM tokens
 		 WHERE
 		   (project_id = ? AND env_id = ?)
@@ -68,7 +69,7 @@ func (s *DB) ListTokensWithAccess(ctx context.Context, projectID, envID string) 
 	var tokens []*model.Token
 	for rows.Next() {
 		t := &model.Token{}
-		if err := rows.Scan(&t.ID, &t.UserID, &t.TokenHash, &t.Name, &t.ProjectID, &t.EnvID, &t.ReadOnly, &t.ExpiresAt, &t.CreatedAt); err != nil {
+		if err := rows.Scan(&t.ID, &t.UserID, &t.TokenHash, &t.Name, &t.ProjectID, &t.EnvID, &t.ReadOnly, &t.IsSession, &t.ExpiresAt, &t.CreatedAt); err != nil {
 			return nil, err
 		}
 		tokens = append(tokens, t)
@@ -88,4 +89,12 @@ func (s *DB) DeleteToken(ctx context.Context, id, userID string) error {
 		return store.ErrNotFound
 	}
 	return nil
+}
+
+func (s *DB) ExtendTokenExpiry(ctx context.Context, tokenHash string, newExpiry time.Time) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE tokens SET expires_at = ? WHERE token_hash = ? AND is_session = true`,
+		newExpiry, tokenHash,
+	)
+	return err
 }

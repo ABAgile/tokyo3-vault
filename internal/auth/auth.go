@@ -17,6 +17,13 @@ import (
 
 const bcryptCost = 12
 
+// Default expiry durations applied when the caller does not specify one.
+const (
+	DefaultSessionTTL       = 15 * time.Minute     // human login sessions (sliding — reset on every request)
+	DefaultMachineTokenTTL  = 90 * 24 * time.Hour  // machine / CI tokens
+	DefaultCertPrincipalTTL = 365 * 24 * time.Hour // cert principal mappings
+)
+
 // HashPassword returns a bcrypt hash of the password.
 func HashPassword(password string) (string, error) {
 	b, err := bcrypt.GenerateFromPassword([]byte(password), bcryptCost)
@@ -54,11 +61,14 @@ func IssueUserToken(ctx context.Context, st store.Store, userID, name string) (r
 	if err != nil {
 		return "", nil, fmt.Errorf("generate token: %w", err)
 	}
+	exp := time.Now().UTC().Add(DefaultSessionTTL)
 	t = &model.Token{
 		ID:        uuid.NewString(),
 		UserID:    &userID,
 		TokenHash: HashToken(rawToken),
 		Name:      name,
+		IsSession: true,
+		ExpiresAt: &exp,
 		CreatedAt: time.Now().UTC(),
 	}
 	if err := st.CreateToken(ctx, t); err != nil {
@@ -70,7 +80,7 @@ func IssueUserToken(ctx context.Context, st store.Store, userID, name string) (r
 // IssueMachineToken creates a scoped machine token (for CI / automation).
 // projectID and envID may be empty strings to indicate no scope restriction.
 // Set readOnly=true to prevent any write operations.
-// expiresIn of 0 means no expiry.
+// expiresIn of 0 applies DefaultMachineTokenTTL.
 func IssueMachineToken(ctx context.Context, st store.Store, userID, name, projectID, envID string, readOnly bool, expiresIn time.Duration) (rawToken string, t *model.Token, err error) {
 	rawToken, err = GenerateRawToken()
 	if err != nil {
@@ -90,10 +100,11 @@ func IssueMachineToken(ctx context.Context, st store.Store, userID, name, projec
 	if envID != "" {
 		tok.EnvID = &envID
 	}
-	if expiresIn > 0 {
-		exp := time.Now().UTC().Add(expiresIn)
-		tok.ExpiresAt = &exp
+	if expiresIn == 0 {
+		expiresIn = DefaultMachineTokenTTL
 	}
+	exp := time.Now().UTC().Add(expiresIn)
+	tok.ExpiresAt = &exp
 	if err := st.CreateToken(ctx, tok); err != nil {
 		return "", nil, fmt.Errorf("store token: %w", err)
 	}

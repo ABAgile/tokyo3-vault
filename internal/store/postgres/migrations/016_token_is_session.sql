@@ -1,0 +1,1 @@
+ALTER TABLE tokens ADD COLUMN is_session BOOLEAN NOT NULL DEFAULT false;

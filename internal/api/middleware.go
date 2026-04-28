@@ -96,6 +96,14 @@ func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 			writeError(w, http.StatusUnauthorized, "token expired")
 			return
 		}
+		if tok.IsSession {
+			newExpiry := time.Now().UTC().Add(auth.DefaultSessionTTL)
+			if err := s.store.ExtendTokenExpiry(r.Context(), tok.TokenHash, newExpiry); err != nil {
+				s.log.Error("extend session expiry", "err", err)
+			} else {
+				tok.ExpiresAt = &newExpiry
+			}
+		}
 		ctx := context.WithValue(r.Context(), tokenKey, tok)
 		next(w, r.WithContext(ctx))
 	}

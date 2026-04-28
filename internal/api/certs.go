@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/abagile/tokyo3-vault/internal/auth"
 	"github.com/abagile/tokyo3-vault/internal/model"
 	"github.com/abagile/tokyo3-vault/internal/store"
 )
@@ -48,6 +49,11 @@ var errCertUnregistered = errors.New("certificate not registered as a principal"
 func (s *Server) authFromClientCert(r *http.Request) (*model.Token, error) {
 	leaf := r.TLS.PeerCertificates[0]
 
+	now := time.Now().UTC()
+	if now.After(leaf.NotAfter) {
+		return nil, fmt.Errorf("client certificate expired")
+	}
+
 	// Try SPIFFE URI SAN first.
 	for _, u := range leaf.URIs {
 		if u.Scheme != "spiffe" {
@@ -60,7 +66,7 @@ func (s *Server) authFromClientCert(r *http.Request) (*model.Token, error) {
 		if err != nil {
 			return nil, fmt.Errorf("cert principal lookup: %w", err)
 		}
-		if p.ExpiresAt != nil && time.Now().UTC().After(*p.ExpiresAt) {
+		if p.ExpiresAt != nil && now.After(*p.ExpiresAt) {
 			return nil, fmt.Errorf("cert principal expired")
 		}
 		if err := s.checkPrincipalUserActive(r, p); err != nil {
@@ -78,7 +84,7 @@ func (s *Server) authFromClientCert(r *http.Request) (*model.Token, error) {
 		if err != nil {
 			return nil, fmt.Errorf("cert principal lookup: %w", err)
 		}
-		if p.ExpiresAt != nil && time.Now().UTC().After(*p.ExpiresAt) {
+		if p.ExpiresAt != nil && now.After(*p.ExpiresAt) {
 			return nil, fmt.Errorf("cert principal expired")
 		}
 		if err := s.checkPrincipalUserActive(r, p); err != nil {
@@ -199,15 +205,17 @@ func (s *Server) handleRegisterCertPrincipal(w http.ResponseWriter, r *http.Requ
 	if envID != "" {
 		p.EnvID = &envID
 	}
+	ttl := auth.DefaultCertPrincipalTTL
 	if req.ExpiresIn != "" {
 		d, err := time.ParseDuration(req.ExpiresIn)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid expires_in: use Go duration syntax e.g. 24h, 168h")
+			writeError(w, http.StatusBadRequest, "invalid expires_in: use Go duration syntax e.g. 24h, 8760h")
 			return
 		}
-		t := time.Now().UTC().Add(d)
-		p.ExpiresAt = &t
+		ttl = d
 	}
+	exp := time.Now().UTC().Add(ttl)
+	p.ExpiresAt = &exp
 
 	err := s.store.CreateCertPrincipal(r.Context(), p)
 	if errors.Is(err, store.ErrConflict) {

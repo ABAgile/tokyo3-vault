@@ -51,7 +51,8 @@ func (Stub) ListTokens(_ context.Context, _ string) ([]*model.Token, error) { re
 func (Stub) ListTokensWithAccess(_ context.Context, _, _ string) ([]*model.Token, error) {
 	return nil, nil
 }
-func (Stub) DeleteToken(_ context.Context, _, _ string) error { return nil }
+func (Stub) DeleteToken(_ context.Context, _, _ string) error                 { return nil }
+func (Stub) ExtendTokenExpiry(_ context.Context, _ string, _ time.Time) error { return nil }
 
 // ── Projects ──────────────────────────────────────────────────────────────────
 

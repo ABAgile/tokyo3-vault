@@ -59,6 +59,9 @@ type TokenStore interface {
 	DeleteToken(ctx context.Context, id, userID string) error
 	// DeleteAllTokensForUser removes every token owned by the given user (used during SCIM deactivation).
 	DeleteAllTokensForUser(ctx context.Context, userID string) error
+	// ExtendTokenExpiry slides the expiry of a session token forward.
+	// Only rows with is_session=true are updated; machine tokens are unaffected.
+	ExtendTokenExpiry(ctx context.Context, tokenHash string, newExpiry time.Time) error
 }
 
 // ProjectStore covers projects, memberships, environments, and envelope key management.

@@ -58,6 +58,7 @@ type Token struct {
 	ProjectID *string
 	EnvID     *string
 	ReadOnly  bool // if true, token cannot perform any write operation
+	IsSession bool // true only for interactive user sessions — enables sliding expiry
 	ExpiresAt *time.Time
 	CreatedAt time.Time
 }

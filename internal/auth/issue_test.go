@@ -63,6 +63,17 @@ func TestIssueUserToken(t *testing.T) {
 	if err != nil || found.ID != tok.ID {
 		t.Errorf("token not findable in store: %v", err)
 	}
+	// Session tokens always expire (sliding 15-min window).
+	if tok.ExpiresAt == nil {
+		t.Fatal("session token ExpiresAt must not be nil")
+	}
+	if !tok.IsSession {
+		t.Error("IsSession must be true for user session tokens")
+	}
+	remaining := time.Until(*tok.ExpiresAt)
+	if remaining < 14*time.Minute || remaining > 16*time.Minute {
+		t.Errorf("session token expiry out of range: remaining %v", remaining)
+	}
 }
 
 func TestIssueUserToken_TwoCallsProduceDifferentTokens(t *testing.T) {
@@ -88,8 +99,13 @@ func TestIssueMachineToken_Unscoped(t *testing.T) {
 	if tok.ProjectID != nil || tok.EnvID != nil {
 		t.Error("unscoped token should have nil ProjectID and EnvID")
 	}
-	if tok.ExpiresAt != nil {
-		t.Error("no-expiry token should have nil ExpiresAt")
+	// Zero expiresIn applies DefaultMachineTokenTTL.
+	if tok.ExpiresAt == nil {
+		t.Fatal("machine token ExpiresAt must not be nil")
+	}
+	remaining := time.Until(*tok.ExpiresAt)
+	if remaining < 89*24*time.Hour || remaining > 91*24*time.Hour {
+		t.Errorf("machine token expiry out of range: remaining %v", remaining)
 	}
 }
 
