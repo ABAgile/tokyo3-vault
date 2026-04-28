@@ -18,6 +18,10 @@ main()
  │                            then every 60 s
  ├─ newPEKRotator(...)       — background goroutine: sweep stale PEKs immediately,
  │                            then every 1 h; skipped if VAULT_PEK_ROTATION_PERIOD=0
+ ├─ newVersionPruner(...)    — background goroutine: prune old secret versions immediately,
+ │                            then every 24 h
+ ├─ newTokenPruner(...)      — background goroutine: DELETE expired token rows immediately,
+ │                            then every 1 h
  ├─ buildServerTLS()         — load cert files (hot-reload) or generate self-signed
  ├─ buildOIDCProvider()      — OIDC provider from VAULT_OIDC_* env vars; nil when unset
  └─ http.Server.ListenAndServeTLS()
@@ -43,19 +47,31 @@ runConsume()
 ```
 request arrives
  ├─ TLS connection has PeerCertificates?
- │   ├─ YES → extract spiffe:// URI SAN from leaf cert
- │   │         lookup cert_principals by spiffe_id
- │   │         ├─ not found   → fall through to bearer
- │   │         ├─ expired     → 401
- │   │         └─ found       → build ephemeral *model.Token, inject into ctx
+ │   ├─ YES → authFromClientCert(leaf)
+ │   │         ├─ leaf.NotAfter < now()  → 401 "client certificate expired"
+ │   │         ├─ try each spiffe:// URI SAN → GetCertPrincipalBySPIFFEID
+ │   │         │   ├─ not registered → break (fall through to email SAN)
+ │   │         │   ├─ p.ExpiresAt < now() → 401 "cert principal expired"
+ │   │         │   ├─ owner deprovisioned → 401
+ │   │         │   └─ found → build ephemeral *model.Token (never stored), inject into ctx
+ │   │         ├─ try each email SAN → GetCertPrincipalByEmailSAN
+ │   │         │   ├─ not found → continue next SAN
+ │   │         │   ├─ p.ExpiresAt < now() → 401 "cert principal expired"
+ │   │         │   └─ found → build ephemeral *model.Token, inject into ctx
+ │   │         └─ no SAN matched (errCertUnregistered) → fall through to bearer
  │   └─ NO  → proceed to bearer
  │
  └─ bearer: "Authorization: Bearer <raw>"
              SHA-256(raw) → lookup tokens table
              ├─ not found  → 401
-             ├─ expired    → 401
-             └─ valid      → inject *model.Token into ctx
+             ├─ expires_at < now() → 401 "token expired"
+             ├─ tok.IsSession == true →
+             │   ExtendTokenExpiry(tok.TokenHash, now()+15min)   ← sliding window
+             │   update tok.ExpiresAt in-memory
+             └─ inject *model.Token into ctx
 ```
+
+The ephemeral cert-principal token carries `ProjectID`, `EnvID`, and `ReadOnly` from the `cert_principals` row. `UserID` is intentionally omitted — the registering admin's identity must not propagate to the request's authorization context.
 
 ## Reading a secret
 

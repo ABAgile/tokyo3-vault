@@ -77,6 +77,7 @@ Two subcommands:
 6. Start background `Revoker` goroutine (sweeps expired dynamic leases every 60 s; also sweeps on startup)
 7. Start background `PEKRotator` goroutine (sweeps for stale PEKs every hour; also sweeps on startup; disabled when `VAULT_PEK_ROTATION_PERIOD=0`)
 8. Start background `VersionPruner` goroutine (prunes old secret versions once at startup then every 24 h; controlled by `VAULT_VERSION_MIN_KEEP` and `VAULT_VERSION_MIN_DAYS`)
+9. Start background `TokenPruner` goroutine (deletes expired token rows once at startup then every hour)
 9. Build TLS config — hot-reloading cert files if provided, else self-signed
 10. Build OIDC provider from `VAULT_OIDC_*` env vars; `nil` provider when unconfigured (local auth only)
 11. Start `http.Server` on `VAULT_ADDR` (default `:8443`)

@@ -14,25 +14,45 @@ Two credential types are accepted on every protected route. The middleware check
 
 Two token flavors:
 
-| Flavor | `user_id` | `project_id` | Typical use |
-|--------|-----------|--------------|-------------|
-| Session | set | nil | Human users after login |
-| Machine | nil or set | nil (unscoped) or set | CI/CD, workloads |
+| Flavor | `is_session` | `project_id` | Typical use |
+|--------|-------------|--------------|-------------|
+| Session | `true` | nil | Human users after login (`vault login`) |
+| Machine | `false` | nil (unscoped) or set | CI/CD, automation (`vault tokens create`) |
 
 Machine tokens can optionally carry an `env_id` to restrict access further to a single environment.
 
+### Token expiry policy
+
+All tokens carry an `expires_at` timestamp. The defaults are:
+
+| Token type | Default TTL | Behaviour |
+|------------|-------------|-----------|
+| Session | **15 minutes** (sliding) | Each authenticated request extends `expires_at` by 15 min. Inactivity for 15 min causes the next request to receive `401 token expired`. |
+| Machine | **90 days** (fixed) | Set at creation. Can be shortened with `expires_in`. `ExtendTokenExpiry` is never called for machine tokens. |
+| Cert principal | **1 year** (fixed) | Set at registration. Independent of the certificate's own `NotAfter`. Can be shortened with `expires_in`. |
+
+The `TokenPruner` background goroutine deletes expired rows from the `tokens` table hourly so they do not accumulate indefinitely. Cert principal rows are not pruned automatically — they must be deleted explicitly via `vault principals delete`.
+
+Session token names are set to the client hostname at login time (sent by the CLI via `vault login`). OIDC sessions use the label `"login"`. The name appears in `vault tokens list` under the NAME column alongside the `kind` field (`"session"` or `"machine"`).
+
+### Token invalidation on password change
+
+`PUT /auth/password` and `PUT /users/{user_id}/password` both call `DeleteAllTokensForUser` after updating the password hash. All existing session and machine tokens for the affected user are invalidated immediately.
+
 ### SPIFFE / mTLS
 
-When a client presents a TLS certificate, the `auth` middleware:
+When a client presents a TLS certificate, `authFromClientCert` runs before bearer-token auth:
 
-1. Extracts the `spiffe://` URI SAN from the leaf certificate
-2. Looks up the SPIFFE ID in `cert_principals`
-3. Checks the principal's `expires_at` (independent of the certificate's own validity window)
-4. If found and unexpired, constructs an ephemeral `*model.Token` (never persisted) — ID set to the principal's ID, scopes from the principal row
+1. **X.509 expiry check** — if `leaf.NotAfter` is in the past the connection is denied immediately, regardless of what is registered in `cert_principals`.
+2. **SPIFFE URI SAN** — each `spiffe://` URI SAN is looked up in `cert_principals`. If found and not expired (`p.ExpiresAt`), an ephemeral `*model.Token` is constructed from the principal row and injected into the request context (never persisted to `tokens`).
+3. **Email SAN fallback** — if no SPIFFE SAN matches, each `rfc822Name` SAN (email address) is tried against `cert_principals.email_san`.
+4. **Fall-through** — if no SAN matches any registered principal (`errCertUnregistered`), the middleware proceeds to bearer token auth. Any other error (expired principal, deprovisioned owner, store failure) returns 401 immediately.
 
-If the SPIFFE ID is not registered the middleware falls through to bearer token auth. Any other error (expired principal, store failure) returns 401 immediately.
+The ephemeral token carries the principal's `ProjectID`, `EnvID`, and `ReadOnly` fields. It intentionally omits `UserID` — the registering admin's identity is not carried over, so cert auth cannot escalate to admin privileges.
 
-Certificate verification itself is handled by Go's TLS stack. `VAULT_TLS_CLIENT_CA` must be set for the server to request and verify client certificates.
+`cert_principals.user_id` records who registered the mapping (the "registered by" user) but is not used for authorization decisions.
+
+Certificate chain verification is handled by Go's TLS stack. Set `VAULT_TLS_CLIENT_CA` to a CA PEM file to enable `tls.VerifyClientCertIfGiven`; without it, client certificates are not requested.
 
 ### Password security
 
@@ -60,9 +80,7 @@ The built-in trusted ranges are: `127.0.0.0/8`, `::1/128`, `10.0.0.0/8`, `172.16
 
 The extracted IP is used for both audit records and rate limiting.
 
-### Token invalidation on password change
-
-`PUT /auth/password` (change own password) and `PUT /users/{user_id}/password` (admin reset) both call `DeleteAllTokensForUser` after updating the password hash. All existing session and machine tokens for the affected user are invalidated immediately; any concurrent requests using those tokens will receive `401` on their next authenticated call.
+Any concurrent requests using invalidated tokens will receive `401` on their next authenticated call.
 
 ### First-user bootstrap
 
@@ -236,10 +254,38 @@ The audit consumer uses `INSERT ... ON CONFLICT (id) DO NOTHING` so JetStream at
 
 ## Transport Security
 
+### Server TLS
+
 - The server always uses HTTPS (`ListenAndServeTLS`).
 - If no cert files are configured, an ephemeral self-signed ECDSA P-256 certificate is generated — development only; a warning is logged.
 - When `VAULT_TLS_CERT` / `VAULT_TLS_KEY` are set, `CertLoader.GetCertificate` is used: the certificate is re-read from disk on each TLS handshake when the mtime changes. This supports cert rotation via `tbot` or any certificate manager without a server restart.
 - `VAULT_TLS_CLIENT_CA` enables `tls.VerifyClientCertIfGiven`: client certificates are optional but verified against the CA when present, enabling SPIFFE authentication for workloads that can present a cert.
+
+### CLI TLS configuration
+
+The `vault` CLI stores TLS settings in `~/.vault/config` (TOML). All paths are stored as absolute paths resolved at login time so they remain valid regardless of the working directory.
+
+| Config field | `vault login` flag | Environment variable | Purpose |
+|---|---|---|---|
+| `ca_cert_path` | `--cacert` | `VAULT_CA_CERT` | Path to a CA certificate PEM to verify the server's TLS certificate. Re-read from disk on every command, so certificate rotation is picked up automatically without re-login. |
+| `client_cert_path` | `--cert` | `VAULT_CLIENT_CERT` | Path to a client certificate PEM for mTLS principal auth. |
+| `client_key_path` | `--key` | `VAULT_CLIENT_KEY` | Path to the matching private key PEM. |
+| `tls_skip_verify` | `--insecure` / `-k` | — | Skip server certificate verification. **Development only** — never use in production. |
+
+When `--cert` and `--key` are both provided to `vault login`, no password is required. The cert paths are saved to config and the CLI presents the certificate on every subsequent HTTPS connection. If the server recognises a matching cert principal, bearer-token auth is skipped entirely.
+
+## Background Maintenance Jobs
+
+Three goroutines run continuously inside `vaultd serve`:
+
+| Goroutine | Interval | What it does |
+|-----------|----------|--------------|
+| `TokenPruner` | Every hour (also at startup) | Deletes rows from `tokens` where `expires_at < NOW()`. Prevents expired session and machine token rows accumulating indefinitely. |
+| `VersionPruner` | Every 24 h (also at startup) | Trims old secret versions outside the retention window (see Secret Version Retention below). |
+| `PEKRotator` | Every hour (also at startup) | Rotates project PEKs older than `VAULT_PEK_ROTATION_PERIOD` (see Encryption). |
+| `Revoker` | Every 60 s (also at startup) | Revokes expired dynamic credential leases against target databases. |
+
+All four run as goroutines tied to the server context; they exit cleanly on SIGINT / SIGTERM.
 
 ## Secret Version Retention
 
@@ -255,4 +301,5 @@ The current version is never pruned regardless of age or count. Both thresholds 
 ## Known Security Limitations
 
 - **Dynamic credential templates are user-provided SQL.** There is no parameterization framework; placeholders (`{{username}}`, `{{password}}`, `{{expiry}}`) are replaced by string substitution. This is safe for trusted admins configuring backends but would be a SQL injection vector if templates were user-controlled input from untrusted parties.
-- **Token expiry is checked at auth time, not stored as a DB-level constraint.** A very small window exists between a token expiring and the server detecting it on the next request. This is typical for bearer token systems and is generally acceptable.
+- **Session token expiry is a sliding window, not a wall-clock deadline.** Each authenticated request extends `expires_at` by 15 minutes. A stolen session token is valid as long as the attacker keeps using it; only a period of true inactivity causes expiry. Explicit logout (`vault logout`) immediately deletes the token row and is the reliable revocation path.
+- **Machine token expiry is checked at auth time, not enforced by the database.** A very small window exists between a token expiring and the server detecting it on the next request. The `TokenPruner` cleans up expired rows hourly; until then, they remain in the table but are rejected at the middleware expiry check.
