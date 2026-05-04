@@ -1,6 +1,7 @@
 package api
 
 import (
+	"crypto/rand"
 	"errors"
 	"net/http"
 	"strings"
@@ -389,6 +390,123 @@ func (s *Server) handlePortalAdminSCIMGroupRoleDelete(w http.ResponseWriter, r *
 }
 
 // ── Admin: Projects (envs + members) ──────────────────────────────────────────
+
+// handlePortalAdminProjectNew renders the new-project form on GET and creates
+// the project on POST. Server admins can create projects regardless of project
+// membership; the creating admin is auto-added as the project owner so they
+// retain access via project-level checks.
+func (s *Server) handlePortalAdminProjectNew(w http.ResponseWriter, r *http.Request) {
+	pc := portalFromCtx(r)
+	render := func(name, slug, errMsg string) {
+		s.portalTmpl.render(w, "portal_admin_project_new.html", struct {
+			portalBase
+			Name, Slug, Error string
+		}{newPortalBase(pc, "admin-projects"), name, slug, errMsg})
+	}
+	if r.Method == http.MethodGet {
+		render("", "", "")
+		return
+	}
+	_ = r.ParseForm()
+	name := strings.TrimSpace(r.FormValue("name"))
+	slug := strings.ToLower(strings.TrimSpace(r.FormValue("slug")))
+	if slug == "" {
+		slug = toSlug(name)
+	}
+	if name == "" {
+		render(name, slug, "Name is required.")
+		return
+	}
+	if !slugRe.MatchString(slug) {
+		render(name, slug, "Slug must be lowercase alphanumeric with hyphens (2–63 chars).")
+		return
+	}
+	p, err := s.store.CreateProject(r.Context(), name, slug)
+	if errors.Is(err, store.ErrConflict) {
+		render(name, slug, "A project with that name or slug already exists.")
+		return
+	}
+	if err != nil {
+		s.log.Error("portal admin create project", "err", err)
+		render(name, slug, "Create failed.")
+		return
+	}
+	// Generate and store a PEK; non-fatal if KMS is briefly unavailable
+	// (matches the JSON handler's behaviour).
+	pek := make([]byte, 32)
+	if _, randErr := rand.Read(pek); randErr == nil {
+		if encPEK, wrapErr := s.kp.WrapDEK(r.Context(), pek); wrapErr == nil {
+			if err := s.store.SetProjectKey(r.Context(), p.ID, encPEK, time.Now().UTC()); err != nil {
+				s.log.Warn("portal admin set project key", "project", p.ID, "err", err)
+			}
+		} else {
+			s.log.Warn("portal admin wrap project key", "project", p.ID, "err", wrapErr)
+		}
+	}
+	// Auto-add the creating admin as owner.
+	if pc.User != nil {
+		if err := s.store.AddProjectMember(r.Context(), p.ID, pc.User.ID, model.RoleOwner, nil); err != nil {
+			s.log.Error("portal admin add project owner", "err", err)
+		}
+	}
+	if err := s.logAudit(r, ActionProjectCreate, p.ID, p.Slug); err != nil {
+		http.Error(w, "audit unavailable", http.StatusInternalServerError)
+		return
+	}
+	flashRedirect(w, r, "/portal/admin/projects/"+p.Slug, "success", "Project created.")
+}
+
+func (s *Server) handlePortalAdminProjectDelete(w http.ResponseWriter, r *http.Request) {
+	slug := r.PathValue("project")
+	p, err := s.store.GetProject(r.Context(), slug)
+	if errors.Is(err, store.ErrNotFound) {
+		flashRedirect(w, r, "/portal/admin/projects", "error", "Project not found.")
+		return
+	}
+	if err != nil {
+		s.log.Error("portal admin delete project lookup", "err", err)
+		flashRedirect(w, r, "/portal/admin/projects", "error", "Lookup failed.")
+		return
+	}
+	if err := s.store.DeleteProject(r.Context(), slug); err != nil {
+		s.log.Error("portal admin delete project", "err", err)
+		flashRedirect(w, r, "/portal/admin/projects/"+slug, "error", "Delete failed.")
+		return
+	}
+	if err := s.logAudit(r, ActionProjectDelete, p.ID, slug); err != nil {
+		http.Error(w, "audit unavailable", http.StatusInternalServerError)
+		return
+	}
+	flashRedirect(w, r, "/portal/admin/projects", "success", "Project deleted.")
+}
+
+func (s *Server) handlePortalAdminProjectRotateKey(w http.ResponseWriter, r *http.Request) {
+	slug := r.PathValue("project")
+	p, err := s.store.GetProject(r.Context(), slug)
+	if errors.Is(err, store.ErrNotFound) {
+		flashRedirect(w, r, "/portal/admin/projects", "error", "Project not found.")
+		return
+	}
+	if err != nil {
+		s.log.Error("portal admin rotate key lookup", "err", err)
+		flashRedirect(w, r, "/portal/admin/projects", "error", "Lookup failed.")
+		return
+	}
+	if err := s.rotateProjectPEK(r.Context(), p); err != nil {
+		if errors.Is(err, errProjectMissingPEK) {
+			flashRedirect(w, r, "/portal/admin/projects/"+slug, "error", "Project has no envelope key. Run vaultd migrate-keys first.")
+			return
+		}
+		s.log.Error("portal admin rotate key", "project", slug, "err", err)
+		flashRedirect(w, r, "/portal/admin/projects/"+slug, "error", "Rotate failed.")
+		return
+	}
+	if err := s.logAudit(r, ActionProjectRotateKey, p.ID, slug); err != nil {
+		http.Error(w, "audit unavailable", http.StatusInternalServerError)
+		return
+	}
+	flashRedirect(w, r, "/portal/admin/projects/"+slug, "success", "Project key rotated. All secrets re-encrypted.")
+}
 
 func (s *Server) handlePortalAdminProjects(w http.ResponseWriter, r *http.Request) {
 	pc := portalFromCtx(r)

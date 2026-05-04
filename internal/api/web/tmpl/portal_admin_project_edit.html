@@ -89,6 +89,33 @@
   </div>
 </div>
 
+<div class="card mb-4">
+  <div class="card-header"><h2>Danger zone</h2></div>
+  <div class="card-body" style="display:flex;flex-direction:column;gap:12px">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap">
+      <div>
+        <strong>Rotate envelope key</strong>
+        <div class="text-muted" style="font-size:13px">Generates a new project envelope key (PEK) and re-encrypts every secret and dynamic backend config in this project. Safe but expensive on large projects.</div>
+      </div>
+      <form method="POST" action="/portal/admin/projects/{{.Project.Slug}}/rotate"
+            onsubmit="return confirm('Rotate the envelope key for {{.Project.Slug}}? Every secret in this project will be re-encrypted.')">
+        <button type="submit" class="btn btn-secondary btn-sm">Rotate key</button>
+      </form>
+    </div>
+    <hr style="border:0;border-top:1px solid var(--border);margin:0">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap">
+      <div>
+        <strong style="color:var(--danger,#c0392b)">Delete project</strong>
+        <div class="text-muted" style="font-size:13px">Permanently deletes the project, all environments, all secrets, and all member assignments. This cannot be undone.</div>
+      </div>
+      <form method="POST" action="/portal/admin/projects/{{.Project.Slug}}/delete"
+            onsubmit="return confirm('Delete project {{.Project.Slug}}? This permanently destroys every environment, secret, and membership.')">
+        <button type="submit" class="btn btn-secondary btn-sm">Delete project</button>
+      </form>
+    </div>
+  </div>
+</div>
+
 <div style="margin-top:8px">
   <a href="/portal/admin/projects" class="btn btn-secondary btn-sm">Back to projects</a>
 </div>

@@ -257,7 +257,11 @@ func (s *Server) Routes() http.Handler {
 		mux.HandleFunc("POST /portal/admin/users/{id}/password", s.portalAdminAuth(s.handlePortalAdminUserResetPassword))
 
 		mux.HandleFunc("GET /portal/admin/projects", s.portalAdminAuth(s.handlePortalAdminProjects))
+		mux.HandleFunc("GET /portal/admin/projects/new", s.portalAdminAuth(s.handlePortalAdminProjectNew))
+		mux.HandleFunc("POST /portal/admin/projects/new", s.portalAdminAuth(s.handlePortalAdminProjectNew))
 		mux.HandleFunc("GET /portal/admin/projects/{project}", s.portalAdminAuth(s.handlePortalAdminProjectEdit))
+		mux.HandleFunc("POST /portal/admin/projects/{project}/delete", s.portalAdminAuth(s.handlePortalAdminProjectDelete))
+		mux.HandleFunc("POST /portal/admin/projects/{project}/rotate", s.portalAdminAuth(s.handlePortalAdminProjectRotateKey))
 		mux.HandleFunc("POST /portal/admin/projects/{project}/envs/new", s.portalAdminAuth(s.handlePortalAdminProjectEnvNew))
 		mux.HandleFunc("POST /portal/admin/projects/{project}/envs/{env}/delete", s.portalAdminAuth(s.handlePortalAdminProjectEnvDelete))
 		mux.HandleFunc("POST /portal/admin/projects/{project}/members/new", s.portalAdminAuth(s.handlePortalAdminProjectMemberNew))

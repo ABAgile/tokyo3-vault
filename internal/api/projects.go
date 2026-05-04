@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/json"
 	"errors"
@@ -190,53 +191,62 @@ func (s *Server) handleRotateProjectKey(w http.ResponseWriter, r *http.Request) 
 	if !s.requireOwner(w, r, tok, p.ID) {
 		return
 	}
-	if p.EncryptedPEK == nil {
-		writeError(w, http.StatusConflict, "project has no envelope key; run vaultd migrate-keys first")
-		return
-	}
-
-	oldPEK, err := s.kp.UnwrapDEK(r.Context(), p.EncryptedPEK)
-	if err != nil {
-		s.log.Error("rotate project key: unwrap old PEK", "project", slug, "err", err)
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	oldProjectKP := crypto.NewProjectKeyProvider(oldPEK)
-
-	newPEK := make([]byte, 32)
-	if _, err := rand.Read(newPEK); err != nil {
-		s.log.Error("rotate project key: generate PEK", "err", err)
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	newEncPEK, err := s.kp.WrapDEK(r.Context(), newPEK)
-	if err != nil {
-		s.log.Error("rotate project key: wrap new PEK", "project", slug, "err", err)
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	newProjectKP := crypto.NewProjectKeyProvider(newPEK)
-
-	rotatedAt := time.Now().UTC()
-	err = s.store.RotateProjectPEK(r.Context(), p.ID, newEncPEK, rotatedAt, func(encDEK []byte) ([]byte, error) {
-		dek, err := oldProjectKP.UnwrapDEK(r.Context(), encDEK)
-		if err != nil {
-			return nil, fmt.Errorf("unwrap DEK: %w", err)
+	if err := s.rotateProjectPEK(r.Context(), p); err != nil {
+		if errors.Is(err, errProjectMissingPEK) {
+			writeError(w, http.StatusConflict, "project has no envelope key; run vaultd migrate-keys first")
+			return
 		}
-		return newProjectKP.WrapDEK(r.Context(), dek)
-	})
-	if err != nil {
-		s.log.Error("rotate project key: rotate", "project", slug, "err", err)
+		s.log.Error("rotate project key", "project", slug, "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	s.projectKP.Invalidate(p.ID)
-
 	if err := s.logAudit(r, ActionProjectRotateKey, p.ID, slug); err != nil {
 		writeError(w, http.StatusInternalServerError, "audit unavailable")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// errProjectMissingPEK signals a project predates `vaultd migrate-keys` and
+// has no PEK to rotate. Callers convert it into a user-facing message.
+var errProjectMissingPEK = errors.New("project has no envelope key")
+
+// rotateProjectPEK generates a fresh PEK, atomically re-wraps every DEK in the
+// project, and invalidates the in-memory cache. Caller is responsible for
+// authorization and audit logging.
+func (s *Server) rotateProjectPEK(ctx context.Context, p *model.Project) error {
+	if p.EncryptedPEK == nil {
+		return errProjectMissingPEK
+	}
+	oldPEK, err := s.kp.UnwrapDEK(ctx, p.EncryptedPEK)
+	if err != nil {
+		return fmt.Errorf("unwrap old PEK: %w", err)
+	}
+	oldProjectKP := crypto.NewProjectKeyProvider(oldPEK)
+
+	newPEK := make([]byte, 32)
+	if _, err := rand.Read(newPEK); err != nil {
+		return fmt.Errorf("generate PEK: %w", err)
+	}
+	newEncPEK, err := s.kp.WrapDEK(ctx, newPEK)
+	if err != nil {
+		return fmt.Errorf("wrap new PEK: %w", err)
+	}
+	newProjectKP := crypto.NewProjectKeyProvider(newPEK)
+
+	rotatedAt := time.Now().UTC()
+	err = s.store.RotateProjectPEK(ctx, p.ID, newEncPEK, rotatedAt, func(encDEK []byte) ([]byte, error) {
+		dek, err := oldProjectKP.UnwrapDEK(ctx, encDEK)
+		if err != nil {
+			return nil, fmt.Errorf("unwrap DEK: %w", err)
+		}
+		return newProjectKP.WrapDEK(ctx, dek)
+	})
+	if err != nil {
+		return fmt.Errorf("rotate: %w", err)
+	}
+	s.projectKP.Invalidate(p.ID)
+	return nil
 }
 
 // toSlug converts a name to a URL-safe slug.
