@@ -28,7 +28,7 @@
         {{range .Projects}}
         <tr>
           <td>{{.Name}}</td>
-          <td class="mono">{{.Slug}}</td>
+          <td class="mono"><a href="/portal/admin/projects/{{.Slug}}">{{.Slug}}</a></td>
           <td class="text-muted">{{.CreatedAt.Format "Jan 2, 2006"}}</td>
           <td style="white-space:nowrap">
             <a href="/portal/admin/projects/{{.Slug}}" class="btn btn-secondary btn-sm">Open</a>

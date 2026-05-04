@@ -474,18 +474,33 @@ func TestSecrets_Versions(t *testing.T) {
 		t.Errorf("unexpected order: v[0]=%d v[2]=%d", versions[0].Version, versions[2].Version)
 	}
 
-	// RollbackSecret to version 1.
-	if err := db.RollbackSecret(ctx, sec.ID, versions[2].ID); err != nil {
-		t.Errorf("RollbackSecret: %v", err)
+	// RollbackSecret to version 1 — forward-only: must create v4 with v1's
+	// content, and current_version_id must point at the new v4.
+	newSV, err := db.RollbackSecret(ctx, sec.ID, versions[2].ID, nil)
+	if err != nil {
+		t.Fatalf("RollbackSecret: %v", err)
+	}
+	if newSV.Version != 4 {
+		t.Errorf("rollback should create v4, got v%d", newSV.Version)
+	}
+	if string(newSV.EncryptedValue) != string(versions[2].EncryptedValue) {
+		t.Errorf("rollback ciphertext should equal the source version's")
 	}
 	_, curSV, _ := db.GetSecret(ctx, pID, eID, "MY_KEY")
-	if curSV.Version != 1 {
-		t.Errorf("after rollback current version = %d, want 1", curSV.Version)
+	if curSV.Version != 4 {
+		t.Errorf("after rollback current version = %d, want 4 (forward-only)", curSV.Version)
+	}
+	if curSV.ID != newSV.ID {
+		t.Errorf("current_version_id should point at the new version, got %q want %q", curSV.ID, newSV.ID)
 	}
 
-	// RollbackSecret — nonexistent secret ID.
-	if err := db.RollbackSecret(ctx, "no-such-id", "v-id"); err != store.ErrNotFound {
-		t.Errorf("RollbackSecret missing: err = %v, want ErrNotFound", err)
+	// RollbackSecret — nonexistent version ID.
+	if _, err := db.RollbackSecret(ctx, sec.ID, "no-such-version", nil); err != store.ErrNotFound {
+		t.Errorf("RollbackSecret missing version: err = %v, want ErrNotFound", err)
+	}
+	// RollbackSecret — version belongs to a different secret.
+	if _, err := db.RollbackSecret(ctx, "no-such-secret", versions[0].ID, nil); err != store.ErrNotFound {
+		t.Errorf("RollbackSecret cross-secret: err = %v, want ErrNotFound", err)
 	}
 }
 

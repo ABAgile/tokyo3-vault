@@ -135,7 +135,9 @@ func (Stub) ListSecretVersions(_ context.Context, _ string) ([]*model.SecretVers
 func (Stub) GetSecretVersion(_ context.Context, _, _ string) (*model.SecretVersion, error) {
 	return nil, store.ErrNotFound
 }
-func (Stub) RollbackSecret(_ context.Context, _, _ string) error { return nil }
+func (Stub) RollbackSecret(_ context.Context, _, _ string, _ *string) (*model.SecretVersion, error) {
+	return nil, nil
+}
 func (Stub) PruneSecretVersions(_ context.Context, _, _ string, _ int, _ time.Time) error {
 	return nil
 }

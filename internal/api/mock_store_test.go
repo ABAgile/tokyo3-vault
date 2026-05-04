@@ -53,7 +53,7 @@ type mockStore struct {
 	deleteSecret                 func(ctx context.Context, projectID, envID, key string) error
 	listSecretVersions           func(ctx context.Context, secretID string) ([]*model.SecretVersion, error)
 	getSecretVersion             func(ctx context.Context, secretID, versionID string) (*model.SecretVersion, error)
-	rollbackSecret               func(ctx context.Context, secretID, versionID string) error
+	rollbackSecret               func(ctx context.Context, secretID, versionID string, createdBy *string) (*model.SecretVersion, error)
 	pruneSecretVersions          func(ctx context.Context, secretID, currentVersionID string, maxCount int, cutoff time.Time) error
 
 	// Cert principals
@@ -305,11 +305,11 @@ func (m *mockStore) GetSecretVersion(ctx context.Context, secretID, versionID st
 	}
 	return nil, store.ErrNotFound
 }
-func (m *mockStore) RollbackSecret(ctx context.Context, secretID, versionID string) error {
+func (m *mockStore) RollbackSecret(ctx context.Context, secretID, versionID string, createdBy *string) (*model.SecretVersion, error) {
 	if m.rollbackSecret != nil {
-		return m.rollbackSecret(ctx, secretID, versionID)
+		return m.rollbackSecret(ctx, secretID, versionID, createdBy)
 	}
-	return nil
+	return nil, nil
 }
 func (m *mockStore) PruneSecretVersions(ctx context.Context, secretID, currentVersionID string, maxCount int, cutoff time.Time) error {
 	if m.pruneSecretVersions != nil {

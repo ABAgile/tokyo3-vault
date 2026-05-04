@@ -232,29 +232,10 @@ func (s *Server) writeSetSecret(w http.ResponseWriter, r *http.Request, project 
 	if !s.requireWrite(w, r, tok, project.ID) {
 		return
 	}
-	createdBy := tokenCreatedBy(tok)
-
-	projectKP, err := s.projectKP.ForProject(r.Context(), project.ID, project.EncryptedPEK)
+	sv, err := s.upsertSecret(r, project, envID, key, nil, value, tokenCreatedBy(tok), "")
 	if err != nil {
-		s.log.Error("load project key", "err", err)
+		s.log.Error("upsert secret", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	encVal, encDEK, err := crypto.EncryptSecret(r.Context(), projectKP, []byte(value))
-	if err != nil {
-		s.log.Error("encrypt secret", "err", err)
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	sv, err := s.store.SetSecret(r.Context(), project.ID, envID, key, nil, encVal, encDEK, createdBy)
-	if err != nil {
-		s.log.Error("set secret", "err", err)
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	s.pruneVersions(r.Context(), sv)
-	if err := s.logAuditEnv(r, ActionSecretSet, project.ID, envID, key, ""); err != nil {
-		writeError(w, http.StatusInternalServerError, "audit unavailable")
 		return
 	}
 	writeJSON(w, http.StatusOK, versionResponse{
@@ -360,19 +341,22 @@ func (s *Server) handleRollbackSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.store.RollbackSecret(r.Context(), sec.ID, body.VersionID); err != nil {
+	newSV, err := s.store.RollbackSecret(r.Context(), sec.ID, body.VersionID, tokenCreatedBy(tokenFromCtx(r)))
+	if err != nil {
 		s.log.Error("rollback secret", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	if err := s.logAuditEnv(r, ActionSecretRollback, project.ID, envID, key, ""); err != nil {
+	s.pruneVersions(r.Context(), newSV)
+	if err := s.logAuditEnv(r, ActionSecretRollback, project.ID, envID, key, fmt.Sprintf(`{"from_version":%d}`, sv.Version)); err != nil {
 		writeError(w, http.StatusInternalServerError, "audit unavailable")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"key":        key,
-		"version_id": body.VersionID,
-		"version":    sv.Version,
+		"key":          key,
+		"version_id":   newSV.ID,
+		"version":      newSV.Version,
+		"from_version": sv.Version,
 	})
 }
 
@@ -474,10 +458,17 @@ func (s *Server) importSecretsList(r *http.Request, srcSecrets []*model.Secret, 
 	return imported, skipped, nil
 }
 
-// tokenCreatedBy returns a pointer to the token's ID, or nil if tok is nil.
+// tokenCreatedBy returns the best identifier of who issued tok: the user ID
+// for user session tokens (portal sign-ins, `vault login`), or the token ID
+// for machine tokens (no UserID set). Returns nil when tok is nil. Used as
+// the created_by stamp on secret versions and dynamic leases — the display
+// layer resolves user IDs to emails via GetUserByID.
 func tokenCreatedBy(tok *model.Token) *string {
 	if tok == nil {
 		return nil
+	}
+	if tok.UserID != nil {
+		return tok.UserID
 	}
 	return &tok.ID
 }
@@ -611,6 +602,31 @@ var (
 	errInvalidEnvfile = errors.New("invalid .env file")
 	errInvalidKey     = errors.New("invalid key")
 )
+
+// upsertSecret encrypts value, creates a new version via SetSecret, prunes old
+// versions, and audits as secret.set. Caller handles authorization and the
+// HTTP response. auditMeta is passed verbatim to logAuditEnv — pass "" for the
+// JSON path's existing no-meta behaviour, or secretAuditMeta(maskValue(value))
+// to record a masked preview (matches the envfile-upload audit shape).
+func (s *Server) upsertSecret(r *http.Request, project *model.Project, envID, key string, comment *string, value string, createdBy *string, auditMeta string) (*model.SecretVersion, error) {
+	projectKP, err := s.projectKP.ForProject(r.Context(), project.ID, project.EncryptedPEK)
+	if err != nil {
+		return nil, fmt.Errorf("load project key: %w", err)
+	}
+	encVal, encDEK, err := crypto.EncryptSecret(r.Context(), projectKP, []byte(value))
+	if err != nil {
+		return nil, fmt.Errorf("encrypt: %w", err)
+	}
+	sv, err := s.store.SetSecret(r.Context(), project.ID, envID, key, comment, encVal, encDEK, createdBy)
+	if err != nil {
+		return nil, fmt.Errorf("set secret: %w", err)
+	}
+	s.pruneVersions(r.Context(), sv)
+	if err := s.logAuditEnv(r, ActionSecretSet, project.ID, envID, key, auditMeta); err != nil {
+		return nil, fmt.Errorf("audit: %w", err)
+	}
+	return sv, nil
+}
 
 // decryptSecretVersion loads the project's PEK and decrypts a specific secret
 // version's value. Caller is responsible for authorization and audit logging.

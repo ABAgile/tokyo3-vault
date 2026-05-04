@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/json"
 	"errors"
@@ -483,11 +484,27 @@ func (s *Server) handlePortalAdminSecretDelete(w http.ResponseWriter, r *http.Re
 }
 
 type versionRow struct {
-	ID        string
-	Version   int
-	CreatedAt time.Time
-	CreatedBy *string
-	IsCurrent bool
+	ID             string
+	Version        int
+	CreatedAt      time.Time
+	CreatedBy      *string // raw user/token UUID
+	CreatedByEmail string  // empty when CreatedBy doesn't resolve to a known user
+	IsCurrent      bool
+}
+
+// resolveUserEmail returns u.Email when id is a known user UUID, "" otherwise.
+// Used to render created_by columns as emails on the admin portal pages — the
+// raw UUID stays available for tooltips. Caller can dedup multiple lookups
+// with a local cache when iterating.
+func (s *Server) resolveUserEmail(ctx context.Context, id *string) string {
+	if id == nil || *id == "" {
+		return ""
+	}
+	u, err := s.store.GetUserByID(ctx, *id)
+	if err != nil || u == nil {
+		return ""
+	}
+	return u.Email
 }
 
 func (s *Server) handlePortalAdminSecretVersions(w http.ResponseWriter, r *http.Request) {
@@ -526,10 +543,22 @@ func (s *Server) handlePortalAdminSecretVersions(w http.ResponseWriter, r *http.
 	if currentVer != nil {
 		currentID = currentVer.ID
 	}
+	emailCache := map[string]string{}
 	rows := make([]versionRow, 0, len(versions))
 	for _, v := range versions {
+		var email string
+		if v.CreatedBy != nil {
+			id := *v.CreatedBy
+			if cached, ok := emailCache[id]; ok {
+				email = cached
+			} else {
+				email = s.resolveUserEmail(r.Context(), v.CreatedBy)
+				emailCache[id] = email
+			}
+		}
 		rows = append(rows, versionRow{
-			ID: v.ID, Version: v.Version, CreatedAt: v.CreatedAt, CreatedBy: v.CreatedBy,
+			ID: v.ID, Version: v.Version, CreatedAt: v.CreatedAt,
+			CreatedBy: v.CreatedBy, CreatedByEmail: email,
 			IsCurrent: v.ID == currentID,
 		})
 	}
@@ -569,20 +598,153 @@ func (s *Server) handlePortalAdminSecretRollback(w http.ResponseWriter, r *http.
 		flashRedirect(w, r, back, "error", "Secret not found.")
 		return
 	}
-	if _, err := s.store.GetSecretVersion(r.Context(), sec.ID, versionID); err != nil {
+	srcSV, err := s.store.GetSecretVersion(r.Context(), sec.ID, versionID)
+	if err != nil {
 		flashRedirect(w, r, back, "error", "Version not found for this secret.")
 		return
 	}
-	if err := s.store.RollbackSecret(r.Context(), sec.ID, versionID); err != nil {
+	newSV, err := s.store.RollbackSecret(r.Context(), sec.ID, versionID, tokenCreatedBy(tokenFromCtx(r)))
+	if err != nil {
 		s.log.Error("portal admin rollback secret", "err", err)
 		flashRedirect(w, r, back, "error", "Rollback failed.")
 		return
 	}
-	if err := s.logAuditEnv(r, ActionSecretRollback, p.ID, env.ID, key, `{"via":"portal"}`); err != nil {
+	s.pruneVersions(r.Context(), newSV)
+	if err := s.logAuditEnv(r, ActionSecretRollback, p.ID, env.ID, key, fmt.Sprintf(`{"via":"portal","from_version":%d}`, srcSV.Version)); err != nil {
 		http.Error(w, "audit unavailable", http.StatusInternalServerError)
 		return
 	}
-	flashRedirect(w, r, back, "success", "Rolled back to version "+versionID+".")
+	flashRedirect(w, r, back, "success", fmt.Sprintf("Rolled back to v%d. New version v%d is now current.", srcSV.Version, newSV.Version))
+}
+
+// secretEditPage is the data envelope for portal_admin_secret_edit.html
+// (used for both new and edit modes; IsNew toggles the form behaviour).
+type secretEditPage struct {
+	portalBase
+	Project       *model.Project
+	Env           *model.Environment
+	IsNew         bool
+	Key           string // editable on new, fixed on edit
+	Comment       string
+	Error         string
+	BackToSecrets string
+}
+
+func (s *Server) renderSecretEditForm(w http.ResponseWriter, pc *portalCtx, p *model.Project, env *model.Environment, isNew bool, key, comment, errMsg string) {
+	s.portalTmpl.render(w, "portal_admin_secret_edit.html", secretEditPage{
+		portalBase: newPortalBase(pc, "admin-projects"),
+		Project:    p, Env: env, IsNew: isNew,
+		Key: key, Comment: comment, Error: errMsg,
+		BackToSecrets: "/portal/admin/projects/" + p.Slug + "/envs/" + env.Slug + "/secrets",
+	})
+}
+
+func (s *Server) handlePortalAdminSecretNew(w http.ResponseWriter, r *http.Request) {
+	pc := portalFromCtx(r)
+	projectSlug := r.PathValue("project")
+	envSlug := r.PathValue("env")
+	back := "/portal/admin/projects/" + projectSlug + "/envs/" + envSlug + "/secrets"
+
+	p, err := s.store.GetProject(r.Context(), projectSlug)
+	if err != nil {
+		flashRedirect(w, r, back, "error", "Project not found.")
+		return
+	}
+	env, err := s.store.GetEnvironment(r.Context(), p.ID, envSlug)
+	if err != nil {
+		flashRedirect(w, r, back, "error", "Environment not found.")
+		return
+	}
+
+	if r.Method == http.MethodGet {
+		s.renderSecretEditForm(w, pc, p, env, true, "", "", "")
+		return
+	}
+
+	_ = r.ParseForm()
+	key := strings.ToUpper(strings.TrimSpace(r.FormValue("key")))
+	value := r.FormValue("value")
+	comment := strings.TrimSpace(r.FormValue("comment"))
+
+	if !keyRe.MatchString(key) {
+		s.renderSecretEditForm(w, pc, p, env, true, key, comment, "Key must start with a letter, then letters / digits / underscore only (auto-uppercased: "+key+").")
+		return
+	}
+	if value == "" {
+		s.renderSecretEditForm(w, pc, p, env, true, key, comment, "Value is required.")
+		return
+	}
+	// Disallow create over an existing key — force the operator to use Edit.
+	if _, _, lookupErr := s.store.GetSecret(r.Context(), p.ID, env.ID, key); lookupErr == nil {
+		s.renderSecretEditForm(w, pc, p, env, true, key, comment,
+			"A secret with key "+key+" already exists. Open it from the list and use Edit to set a new version.")
+		return
+	}
+
+	var commentPtr *string
+	if comment != "" {
+		commentPtr = &comment
+	}
+	if _, err := s.upsertSecret(r, p, env.ID, key, commentPtr, value, tokenCreatedBy(tokenFromCtx(r)), secretAuditMeta(maskValue(value))); err != nil {
+		s.log.Error("portal admin new secret", "err", err)
+		s.renderSecretEditForm(w, pc, p, env, true, key, comment, "Save failed.")
+		return
+	}
+	flashRedirect(w, r, back, "success", "Secret "+key+" created.")
+}
+
+func (s *Server) handlePortalAdminSecretEdit(w http.ResponseWriter, r *http.Request) {
+	pc := portalFromCtx(r)
+	projectSlug := r.PathValue("project")
+	envSlug := r.PathValue("env")
+	key := strings.ToUpper(r.PathValue("key"))
+	back := "/portal/admin/projects/" + projectSlug + "/envs/" + envSlug + "/secrets"
+
+	p, err := s.store.GetProject(r.Context(), projectSlug)
+	if err != nil {
+		flashRedirect(w, r, back, "error", "Project not found.")
+		return
+	}
+	env, err := s.store.GetEnvironment(r.Context(), p.ID, envSlug)
+	if err != nil {
+		flashRedirect(w, r, back, "error", "Environment not found.")
+		return
+	}
+	sec, _, err := s.store.GetSecret(r.Context(), p.ID, env.ID, key)
+	if errors.Is(err, store.ErrNotFound) {
+		flashRedirect(w, r, back, "error", "Secret not found.")
+		return
+	}
+	if err != nil {
+		s.log.Error("portal admin edit lookup", "err", err)
+		flashRedirect(w, r, back, "error", "Lookup failed.")
+		return
+	}
+
+	if r.Method == http.MethodGet {
+		s.renderSecretEditForm(w, pc, p, env, false, key, sec.Comment, "")
+		return
+	}
+
+	_ = r.ParseForm()
+	value := r.FormValue("value")
+	comment := strings.TrimSpace(r.FormValue("comment"))
+
+	if value == "" {
+		s.renderSecretEditForm(w, pc, p, env, false, key, comment, "Value is required.")
+		return
+	}
+
+	var commentPtr *string
+	if comment != "" {
+		commentPtr = &comment
+	}
+	if _, err := s.upsertSecret(r, p, env.ID, key, commentPtr, value, tokenCreatedBy(tokenFromCtx(r)), secretAuditMeta(maskValue(value))); err != nil {
+		s.log.Error("portal admin edit secret", "err", err)
+		s.renderSecretEditForm(w, pc, p, env, false, key, comment, "Save failed.")
+		return
+	}
+	flashRedirect(w, r, back, "success", "Secret "+key+" saved.")
 }
 
 // secretValuePage is the data envelope for portal_admin_secret_value.html.
@@ -592,9 +754,11 @@ type secretValuePage struct {
 	Env            *model.Environment
 	Key            string
 	Version        int
+	VersionID      string // version UUID — used by the rollback form when !IsCurrent
 	IsCurrent      bool
 	CreatedAt      time.Time
-	CreatedBy      *string
+	CreatedBy      *string // raw user/token UUID
+	CreatedByEmail string  // empty when CreatedBy doesn't resolve to a known user
 	Value          string
 	BackToVersions bool // when revealed from the version history page, link "Back" goes there
 }
@@ -646,13 +810,19 @@ func (s *Server) handlePortalAdminSecretReveal(w http.ResponseWriter, r *http.Re
 		http.Error(w, "audit unavailable", http.StatusInternalServerError)
 		return
 	}
-	s.portalTmpl.render(w, "portal_admin_secret_value.html", secretValuePage{
+	page := secretValuePage{
 		portalBase: newPortalBase(pc, "admin-projects"),
 		Project:    p, Env: env, Key: key,
-		Version: sv.Version, IsCurrent: true,
+		Version: sv.Version, VersionID: sv.ID, IsCurrent: true,
 		CreatedAt: sv.CreatedAt, CreatedBy: sv.CreatedBy,
-		Value: string(plaintext),
-	})
+		CreatedByEmail: s.resolveUserEmail(r.Context(), sv.CreatedBy),
+		Value:          string(plaintext),
+	}
+	if r.Header.Get("X-Reveal-Fragment") == "1" {
+		s.portalTmpl.renderFragment(w, "portal_admin_secret_value_fragment.html", "secret_value_fragment", page)
+		return
+	}
+	s.portalTmpl.render(w, "portal_admin_secret_value.html", page)
 }
 
 // handlePortalAdminSecretVersionReveal decrypts a specific (possibly historical)
@@ -706,17 +876,22 @@ func (s *Server) handlePortalAdminSecretVersionReveal(w http.ResponseWriter, r *
 		return
 	}
 	isCurrent := currentVer != nil && currentVer.ID == sv.ID
-	s.portalTmpl.render(w, "portal_admin_secret_value.html", secretValuePage{
+	page := secretValuePage{
 		portalBase: newPortalBase(pc, "admin-projects"),
 		Project:    p, Env: env, Key: key,
-		Version: sv.Version, IsCurrent: isCurrent,
+		Version: sv.Version, VersionID: sv.ID, IsCurrent: isCurrent,
 		CreatedAt: sv.CreatedAt, CreatedBy: sv.CreatedBy,
-		Value: string(plaintext), BackToVersions: true,
-	})
+		CreatedByEmail: s.resolveUserEmail(r.Context(), sv.CreatedBy),
+		Value:          string(plaintext), BackToVersions: true,
+	}
+	if r.Header.Get("X-Reveal-Fragment") == "1" {
+		s.portalTmpl.renderFragment(w, "portal_admin_secret_value_fragment.html", "secret_value_fragment", page)
+		return
+	}
+	s.portalTmpl.render(w, "portal_admin_secret_value.html", page)
 }
 
 func (s *Server) handlePortalAdminSecretsImport(w http.ResponseWriter, r *http.Request) {
-	pc := portalFromCtx(r)
 	projectSlug := r.PathValue("project")
 	envSlug := r.PathValue("env")
 	back := "/portal/admin/projects/" + projectSlug + "/envs/" + envSlug + "/secrets"
@@ -748,12 +923,7 @@ func (s *Server) handlePortalAdminSecretsImport(w http.ResponseWriter, r *http.R
 		return
 	}
 	overwrite := r.FormValue("overwrite") == "true"
-	var createdBy *string
-	if pc != nil && pc.User != nil {
-		uid := pc.User.ID
-		createdBy = &uid
-	}
-	uploaded, skipped, err := s.uploadEnvfileBytes(r, p, env.ID, body, overwrite, createdBy)
+	uploaded, skipped, err := s.uploadEnvfileBytes(r, p, env.ID, body, overwrite, tokenCreatedBy(tokenFromCtx(r)))
 	if err != nil {
 		switch {
 		case errors.Is(err, errInvalidEnvfile):

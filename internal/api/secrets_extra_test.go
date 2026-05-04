@@ -70,9 +70,9 @@ func TestHandleRollbackSecret_OK(t *testing.T) {
 		return nil, store.ErrNotFound
 	}
 	rolled := false
-	st.rollbackSecret = func(_ context.Context, secID, verID string) error {
+	st.rollbackSecret = func(_ context.Context, secID, verID string, _ *string) (*model.SecretVersion, error) {
 		rolled = true
-		return nil
+		return &model.SecretVersion{ID: "v2-uuid", Version: 2, CreatedAt: now}, nil
 	}
 
 	srv := newTestServer(t, st)
@@ -88,8 +88,13 @@ func TestHandleRollbackSecret_OK(t *testing.T) {
 	}
 	var resp map[string]any
 	json.NewDecoder(w.Body).Decode(&resp)
-	if resp["version"] != float64(1) {
-		t.Errorf("version = %v, want 1", resp["version"])
+	// Forward-only: response carries the NEW version number, plus from_version
+	// for the source. Version must increase, never reset to the old number.
+	if resp["version"] != float64(2) {
+		t.Errorf("version = %v, want 2 (the new version, not the source)", resp["version"])
+	}
+	if resp["from_version"] != float64(1) {
+		t.Errorf("from_version = %v, want 1", resp["from_version"])
 	}
 }
 

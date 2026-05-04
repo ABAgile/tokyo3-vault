@@ -206,19 +206,62 @@ func (s *DB) GetSecretVersion(ctx context.Context, secretID, versionID string) (
 	return sv, err
 }
 
-func (s *DB) RollbackSecret(ctx context.Context, secretID, versionID string) error {
-	res, err := s.db.ExecContext(ctx,
-		`UPDATE secrets SET current_version_id = $1, updated_at = $2 WHERE id = $3`,
-		versionID, time.Now().UTC(), secretID,
+func (s *DB) RollbackSecret(ctx context.Context, secretID, versionID string, createdBy *string) (*model.SecretVersion, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	var encVal, encDEK []byte
+	err = tx.QueryRowContext(ctx,
+		`SELECT encrypted_value, encrypted_dek FROM secret_versions WHERE id = $1 AND secret_id = $2`,
+		versionID, secretID,
+	).Scan(&encVal, &encDEK)
+	if err == sql.ErrNoRows {
+		return nil, store.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	var nextVersion int
+	err = tx.QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(version), 0) + 1 FROM secret_versions WHERE secret_id = $1`, secretID,
+	).Scan(&nextVersion)
+	if err != nil {
+		return nil, fmt.Errorf("compute version: %w", err)
+	}
+
+	now := time.Now().UTC()
+	sv := &model.SecretVersion{
+		ID:             uuid.NewString(),
+		SecretID:       secretID,
+		EncryptedValue: encVal,
+		EncryptedDEK:   encDEK,
+		Version:        nextVersion,
+		CreatedAt:      now,
+		CreatedBy:      createdBy,
+	}
+	_, err = tx.ExecContext(ctx,
+		`INSERT INTO secret_versions (id, secret_id, encrypted_value, encrypted_dek, version, created_at, created_by)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		sv.ID, sv.SecretID, sv.EncryptedValue, sv.EncryptedDEK, sv.Version, sv.CreatedAt, sv.CreatedBy,
 	)
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("insert secret_version: %w", err)
 	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return store.ErrNotFound
+	_, err = tx.ExecContext(ctx,
+		`UPDATE secrets SET current_version_id = $1, updated_at = $2 WHERE id = $3`,
+		sv.ID, now, secretID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("update secrets: %w", err)
 	}
-	return nil
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return sv, nil
 }
 
 func (s *DB) ListSecretsForPrune(ctx context.Context) ([][2]string, error) {

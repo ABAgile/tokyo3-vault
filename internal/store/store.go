@@ -134,8 +134,14 @@ type SecretStore interface {
 	// GetSecretVersion returns a specific version belonging to secretID.
 	// Returns ErrNotFound if the version does not exist or belongs to a different secret.
 	GetSecretVersion(ctx context.Context, secretID, versionID string) (*model.SecretVersion, error)
-	// RollbackSecret points current_version_id at a previous version.
-	RollbackSecret(ctx context.Context, secretID, versionID string) error
+	// RollbackSecret creates a NEW version that copies the encrypted value of
+	// the source versionID, then sets current_version_id to that new version.
+	// Forward-only: the current_version_id pointer never moves backward, so
+	// version history stays monotonic. createdBy is the operator who triggered
+	// the rollback (not the original author of versionID). Returns the new
+	// version, or ErrNotFound if versionID does not exist or doesn't belong to
+	// secretID.
+	RollbackSecret(ctx context.Context, secretID, versionID string, createdBy *string) (*model.SecretVersion, error)
 	// PruneSecretVersions deletes old versions of a secret that fall outside the
 	// retention window. A version is pruned only when BOTH conditions are met:
 	// its rank by version DESC exceeds maxCount AND its created_at is before cutoff.

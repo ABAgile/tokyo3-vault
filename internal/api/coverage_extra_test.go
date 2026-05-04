@@ -851,7 +851,9 @@ func TestHandleRollbackSecret_RollbackDBError(t *testing.T) {
 	st.getSecretVersion = func(_ context.Context, _, _ string) (*model.SecretVersion, error) {
 		return &model.SecretVersion{ID: "v1", Version: 1, CreatedAt: time.Now().UTC()}, nil
 	}
-	st.rollbackSecret = func(_ context.Context, _, _ string) error { return errDB }
+	st.rollbackSecret = func(_ context.Context, _, _ string, _ *string) (*model.SecretVersion, error) {
+		return nil, errDB
+	}
 	srv := newTestServer(t, st)
 	w := call(t, srv.handleRollbackSecret, http.MethodPost, "/",
 		`{"version_id":"v1"}`, ownerTok(), secretPV("key", "MY_KEY")...)
@@ -926,24 +928,25 @@ func TestHandleDownloadEnvfile_ListSecretsDBError(t *testing.T) {
 // ── tokenCreatedBy ────────────────────────────────────────────────────────────
 
 func TestTokenCreatedBy(t *testing.T) {
-	// Any non-nil token → returns &tok.ID.
+	// User session token → returns &tok.UserID so the display layer can
+	// resolve it to an email via GetUserByID.
 	uid := testUserID
 	tok := &model.Token{ID: "t1", UserID: &uid}
 	got := tokenCreatedBy(tok)
 	if got == nil {
 		t.Error("expected non-nil for user token")
-	} else if *got != "t1" {
-		t.Errorf("got %q, want %q", *got, "t1")
+	} else if *got != uid {
+		t.Errorf("got %q, want user ID %q", *got, uid)
 	}
 
-	// Machine token also returns &tok.ID.
+	// Machine token (no UserID) → falls back to &tok.ID.
 	pID := testProjID
 	machTok := &model.Token{ID: "t2", ProjectID: &pID}
 	got2 := tokenCreatedBy(machTok)
 	if got2 == nil {
 		t.Error("expected non-nil for machine token")
 	} else if *got2 != "t2" {
-		t.Errorf("got %q, want %q", *got2, "t2")
+		t.Errorf("got %q, want token ID %q", *got2, "t2")
 	}
 
 	// nil token → nil.

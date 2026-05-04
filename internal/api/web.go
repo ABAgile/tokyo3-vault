@@ -44,6 +44,22 @@ func (m *tmplManager) render(w http.ResponseWriter, pageFile string, data any) {
 	}
 }
 
+// renderFragment executes a top-level (no-base) named template from pageFile.
+// Used for AJAX responses where the body is inserted directly into an existing
+// DOM and shouldn't carry the portal chrome.
+func (m *tmplManager) renderFragment(w http.ResponseWriter, pageFile, defineName string, data any) {
+	t, err := template.New("").ParseFS(webFS, "web/tmpl/"+pageFile)
+	if err != nil {
+		http.Error(w, "template parse error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := t.ExecuteTemplate(w, defineName, data); err != nil {
+		// Headers already sent; log only.
+		_ = err
+	}
+}
+
 // staticHandler serves embedded files under web/static/ at /static/.
 func staticHandler() http.Handler {
 	sub, err := fs.Sub(webFS, "web/static")

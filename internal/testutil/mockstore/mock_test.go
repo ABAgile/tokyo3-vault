@@ -67,7 +67,7 @@ func TestStub_AllMethods(t *testing.T) {
 	s.DeleteSecret(ctx, "", "", "")
 	s.ListSecretVersions(ctx, "")
 	s.GetSecretVersion(ctx, "", "")
-	s.RollbackSecret(ctx, "", "")
+	s.RollbackSecret(ctx, "", "", nil)
 	s.PruneSecretVersions(ctx, "", "", 0, time.Now())
 	s.ListSecretsForPrune(ctx)
 
