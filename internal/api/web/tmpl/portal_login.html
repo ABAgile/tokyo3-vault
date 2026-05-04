@@ -1,0 +1,48 @@
+{{define "base"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in — tokyo3-vault</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="sso-body">
+<div class="sso-card">
+  <div class="brand">
+    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+      <path d="M12 1l9 4v6c0 5.55-3.84 10.74-9 12-5.16-1.26-9-6.45-9-12V5l9-4zm-1 13.59L7.41 11 6 12.41 11 17.41 18.41 10 17 8.59 11 14.59z"/>
+    </svg>
+    <span>tokyo3-vault</span>
+  </div>
+  <h1>Sign in</h1>
+  <p class="subtitle">Use your vault account or your IdP single sign-on.</p>
+
+  {{if .Error}}<div class="alert alert-error">{{.Error}}</div>{{end}}
+
+  {{if .OIDCEnabled}}
+  <a href="/portal/login/oidc" class="btn btn-primary btn-block">Sign in with auth (SSO)</a>
+  {{if not .LocalDisabled}}<div class="mfa-divider">or</div>{{end}}
+  {{end}}
+
+  {{if not .LocalDisabled}}
+  <form method="POST" action="/portal/login">
+    <div class="form-group">
+      <label for="email">Email</label>
+      <input type="email" id="email" name="email" value="{{.Email}}" required autofocus autocomplete="email">
+    </div>
+    <div class="form-group">
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password" required autocomplete="current-password">
+    </div>
+    <button type="submit" class="btn btn-primary btn-block">Sign in</button>
+  </form>
+  {{if .AllowRegister}}
+  <p class="form-footer" style="text-align:center;margin-top:16px"><a href="/portal/register">No account? Create one</a></p>
+  {{end}}
+  {{else}}
+  <p class="text-muted text-center" style="text-align:center;margin-top:12px">Local login is disabled by policy.</p>
+  {{end}}
+</div>
+</body>
+</html>
+{{end}}

@@ -34,7 +34,8 @@ const (
 	ActionTokenCreate = "token.create"
 	ActionTokenDelete = "token.delete"
 
-	ActionUserCreate = "user.create"
+	ActionUserCreate    = "user.create"
+	ActionUserSetActive = "user.set_active"
 
 	ActionMemberAdd    = "member.add"
 	ActionMemberUpdate = "member.update"

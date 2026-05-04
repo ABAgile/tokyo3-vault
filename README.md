@@ -14,6 +14,7 @@ A minimal self-hosted secret manager with versioning, audit logging, and `.env` 
 - [Bootstrap](#bootstrap)
 - [Encryption Architecture](#encryption-architecture)
 - [Identity and Authorization](#identity-and-authorization)
+- [Admin Portal](#admin-portal)
 - [Configuration](#configuration)
 - [Command Reference](#command-reference)
   - [Authentication](#authentication)
@@ -247,6 +248,38 @@ These restrictions narrow access — they cannot grant more than the owning user
 
 ---
 
+## Admin Portal
+
+vaultd serves a server-rendered admin portal at `/portal/*` on the same TLS listener as the API. It is **admin-only**: secrets, dynamic credentials, and lease management remain CLI-only — you cannot reveal a secret value through the browser.
+
+**What it covers**
+
+- **Self-service** — sign in (local password or OIDC SSO via auth), change password, list/revoke your own machine tokens.
+- **Admin → Users** — create users, deactivate (revokes all the user's tokens, matching SCIM deprovision semantics), reset password. Role changes remain CLI-only.
+- **Admin → Projects** — list projects, manage environments and members per project (add/remove, role select). Project creation, secret CRUD, and dynamic-credential management still go through the CLI.
+- **Admin → SCIM Tokens** — issue/delete the bearer tokens auth uses to push users and groups to vault.
+- **Admin → Group → Role** — UI for the SCIM group→role mappings table (translates IdP groups into vault project memberships when a SCIM group syncs).
+
+Audit events are still emitted to NATS JetStream by every mutating handler; query them with the `vault-audit query` CLI. vaultd itself does not connect to the audit database.
+
+**Sign in**
+
+`https://vault.example.com/portal` (TLS only; cookies are HttpOnly + Secure + SameSite=Lax). The portal session reuses the regular `tokens` table — `auth.IssueUserToken` issues a session token, the raw value is sealed with AES-256-GCM and stored in the `vault_portal` cookie. Sliding session expiry mirrors the bearer-token flow on `/api/v1/*`.
+
+**Register vault as an OAuth2 client in auth** for SSO, with the redirect URI:
+
+```
+https://vault.example.com/api/v1/auth/oidc/callback
+```
+
+Click **Sign in with auth** on the portal login page; vault calls `oidc.BeginAuth("vault://portal")` and the shared OIDC callback recognises the sentinel, sets the portal cookie, and redirects to `/portal`. The CLI's `vault login --oidc` flow is untouched.
+
+**Cookie key**
+
+In local-key mode (`VAULT_MASTER_KEY` set), the master KEK doubles as the portal cookie key — sessions survive vaultd restart. In KMS-mode (`VAULT_KMS_KEY_ID` set), vaultd mints a random 32-byte key at startup; restarting vaultd invalidates outstanding portal sessions, which is acceptable for an admin portal.
+
+---
+
 ## Configuration
 
 ### Server environment variables
@@ -312,6 +345,7 @@ All four base vars (`VAULT_OIDC_ISSUER`, `VAULT_OIDC_CLIENT_ID`, `VAULT_OIDC_CLI
 | `VAULT_OIDC_CLIENT_SECRET` | — | OAuth2 client secret |
 | `VAULT_OIDC_REDIRECT_URI` | — | Callback URL registered with the IdP (e.g. `https://vault.example.com/auth/oidc/callback`) |
 | `VAULT_OIDC_ENFORCE` | `false` | Set to `"true"` to disable local `/auth/login` and `/auth/signup`, making OIDC the only login path |
+| `VAULT_ALLOW_REGISTRATION` | `false` | Set to `"true"` to enable self-service signup at `/portal/register` and a "Create one" link on `/portal/login`. The first registrant is promoted to admin if no admin exists yet. Ignored when `VAULT_OIDC_ENFORCE=true`. |
 
 **Audit — NATS JetStream sink (`vaultd serve`):**
 

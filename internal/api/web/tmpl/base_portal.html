@@ -1,0 +1,50 @@
+{{define "base"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{block "title" .}}Portal{{end}} — tokyo3-vault</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<div class="portal-layout">
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <path d="M12 1l9 4v6c0 5.55-3.84 10.74-9 12-5.16-1.26-9-6.45-9-12V5l9-4zm-1 13.59L7.41 11 6 12.41 11 17.41 18.41 10 17 8.59 11 14.59z"/>
+      </svg>
+      tokyo3-vault
+    </div>
+    <nav>
+      <span class="nav-section">Account</span>
+      <a href="/portal" {{if eq .ActivePage "home"}}class="active"{{end}}>Overview</a>
+      <a href="/portal/account" {{if eq .ActivePage "account"}}class="active"{{end}}>Settings</a>
+      <a href="/portal/tokens" {{if eq .ActivePage "tokens"}}class="active"{{end}}>Machine tokens</a>
+      {{if .IsAdmin}}
+      <span class="nav-section">Admin</span>
+      <a href="/portal/admin/users" {{if eq .ActivePage "admin-users"}}class="active"{{end}}>Users</a>
+      <a href="/portal/admin/projects" {{if eq .ActivePage "admin-projects"}}class="active"{{end}}>Projects</a>
+      <a href="/portal/admin/scim-tokens" {{if eq .ActivePage "admin-scim-tokens"}}class="active"{{end}}>SCIM Tokens</a>
+      <a href="/portal/admin/scim-group-roles" {{if eq .ActivePage "admin-scim-group-roles"}}class="active"{{end}}>Group → Role</a>
+      {{end}}
+    </nav>
+    <div class="sidebar-footer">
+      <div class="text-muted" style="margin-bottom:6px">{{.UserEmail}}</div>
+      <form method="POST" action="/portal/logout" style="margin:0">
+        <button type="submit" class="btn-link">Sign out</button>
+      </form>
+    </div>
+  </aside>
+  <div class="portal-main">
+    <div class="portal-topbar">
+      <h1>{{block "pagetitle" .}}Portal{{end}}</h1>
+      <div>{{block "topbar-right" .}}{{end}}</div>
+    </div>
+    <div class="portal-content">
+      {{block "content" .}}{{end}}
+    </div>
+  </div>
+</div>
+</body>
+</html>
+{{end}}

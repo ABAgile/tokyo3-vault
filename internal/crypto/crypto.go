@@ -109,6 +109,13 @@ func DecryptSecret(ctx context.Context, kp KeyProvider, encryptedDEK, encryptedV
 	return plaintext, nil
 }
 
+// SealBytes encrypts plaintext directly with key using AES-256-GCM.
+// Use for short-lived values (cookies, session tokens) where DEK wrapping is unnecessary.
+func SealBytes(key, plaintext []byte) ([]byte, error) { return seal(key, plaintext) }
+
+// OpenBytes decrypts ciphertext produced by SealBytes.
+func OpenBytes(key, ciphertext []byte) ([]byte, error) { return open(key, ciphertext) }
+
 // RewrapDEK unwraps a DEK under oldKP and re-wraps it under newKP.
 // Use this when rotating the master key without re-encrypting secret values.
 func RewrapDEK(ctx context.Context, oldKP, newKP KeyProvider, encryptedDEK []byte) ([]byte, error) {

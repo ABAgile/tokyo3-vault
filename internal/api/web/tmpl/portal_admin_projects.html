@@ -1,0 +1,40 @@
+{{template "base" .}}
+
+{{define "title"}}Projects{{end}}
+{{define "pagetitle"}}Projects{{end}}
+
+{{define "content"}}
+{{if .Success}}<div class="alert alert-success">{{.Success}}</div>{{end}}
+{{if .Error}}<div class="alert alert-error">{{.Error}}</div>{{end}}
+
+<p class="text-muted" style="margin-bottom:16px">Project creation, secret management, and dynamic credentials remain CLI-only. The portal lets admins manage memberships and environments.</p>
+
+<div class="card">
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Slug</th>
+          <th>Created</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Projects}}
+        <tr>
+          <td>{{.Name}}</td>
+          <td class="mono">{{.Slug}}</td>
+          <td class="text-muted">{{.CreatedAt.Format "Jan 2, 2006"}}</td>
+          <td style="white-space:nowrap">
+            <a href="/portal/admin/projects/{{.Slug}}" class="btn btn-secondary btn-sm">Open</a>
+          </td>
+        </tr>
+        {{else}}
+        <tr><td colspan="4" class="text-muted" style="text-align:center;padding:28px">No projects yet. Create one with <span class="mono">vault project create</span>.</td></tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+</div>
+{{end}}

@@ -1,0 +1,46 @@
+{{template "base" .}}
+
+{{define "title"}}Overview{{end}}
+{{define "pagetitle"}}Overview{{end}}
+
+{{define "content"}}
+<div class="card mb-4">
+  <div class="card-header"><h2>Your account</h2></div>
+  <div class="card-body">
+    <table style="max-width:520px">
+      <tbody>
+        <tr><td class="text-muted" style="width:160px">Email</td><td>{{.User.Email}}</td></tr>
+        <tr><td class="text-muted">Role</td><td>
+          {{if eq .User.Role "admin"}}<span class="badge badge-blue">Server admin</span>
+          {{else}}<span class="badge badge-gray">Member</span>{{end}}
+        </td></tr>
+        <tr><td class="text-muted">Active</td><td>
+          {{if .User.Active}}<span class="badge badge-green">Yes</span>{{else}}<span class="badge badge-red">No</span>{{end}}
+        </td></tr>
+        <tr><td class="text-muted">SSO linked</td><td>
+          {{if .OIDCLinked}}<span class="badge badge-blue">Yes</span>{{else}}<span class="badge badge-gray">No</span>{{end}}
+        </td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div style="display:flex;gap:12px;flex-wrap:wrap">
+  <a href="/portal/account" class="btn btn-secondary">Change password</a>
+  <a href="/portal/tokens" class="btn btn-secondary">Manage machine tokens</a>
+</div>
+
+{{if .IsAdmin}}
+<div class="card mt-6">
+  <div class="card-header"><h2>Admin shortcuts</h2></div>
+  <div class="card-body">
+    <div style="display:flex;gap:12px;flex-wrap:wrap">
+      <a href="/portal/admin/users" class="btn btn-secondary">Users</a>
+      <a href="/portal/admin/projects" class="btn btn-secondary">Projects</a>
+      <a href="/portal/admin/scim-tokens" class="btn btn-secondary">SCIM Tokens</a>
+      <a href="/portal/admin/scim-group-roles" class="btn btn-secondary">Group → Role</a>
+    </div>
+  </div>
+</div>
+{{end}}
+{{end}}

@@ -1,0 +1,46 @@
+{{template "base" .}}
+
+{{define "title"}}Users{{end}}
+{{define "pagetitle"}}Users{{end}}
+
+{{define "topbar-right"}}
+<a href="/portal/admin/users/new" class="btn btn-primary btn-sm">+ New user</a>
+{{end}}
+
+{{define "content"}}
+{{if .Success}}<div class="alert alert-success">{{.Success}}</div>{{end}}
+{{if .Error}}<div class="alert alert-error">{{.Error}}</div>{{end}}
+
+<div class="card">
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Email</th>
+          <th>Role</th>
+          <th>Identity</th>
+          <th>Status</th>
+          <th>Created</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Users}}
+        <tr>
+          <td>{{.Email}}</td>
+          <td>{{if eq .Role "admin"}}<span class="badge badge-blue">Admin</span>{{else}}<span class="badge badge-gray">Member</span>{{end}}</td>
+          <td class="text-muted">{{if .OIDCSubject}}OIDC{{else}}Local{{end}}{{if .SCIMExternalID}} + SCIM{{end}}</td>
+          <td>{{if .Active}}<span class="badge badge-green">Active</span>{{else}}<span class="badge badge-red">Disabled</span>{{end}}</td>
+          <td class="text-muted">{{.CreatedAt.Format "Jan 2, 2006"}}</td>
+          <td style="white-space:nowrap">
+            <a href="/portal/admin/users/{{.ID}}/edit" class="btn btn-secondary btn-sm">Edit</a>
+          </td>
+        </tr>
+        {{else}}
+        <tr><td colspan="6" class="text-muted" style="text-align:center;padding:28px">No users found.</td></tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+</div>
+{{end}}

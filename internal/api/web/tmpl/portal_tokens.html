@@ -1,0 +1,59 @@
+{{template "base" .}}
+
+{{define "title"}}Machine tokens{{end}}
+{{define "pagetitle"}}Machine tokens{{end}}
+
+{{define "content"}}
+{{if .Success}}<div class="alert alert-success">{{.Success}}</div>{{end}}
+{{if .Error}}<div class="alert alert-error">{{.Error}}</div>{{end}}
+{{if .NewToken}}<div class="alert alert-info">New token (save now, shown only once): <span class="mono">{{.NewToken}}</span></div>{{end}}
+
+<div class="card mb-4" style="max-width:560px">
+  <div class="card-header"><h2>Issue token</h2></div>
+  <div class="card-body">
+    <form method="POST" action="/portal/tokens/new">
+      <div class="form-group">
+        <label for="name">Token label</label>
+        <input type="text" id="name" name="name" placeholder="ci-deploy" required>
+      </div>
+      <button type="submit" class="btn btn-primary">Generate token</button>
+    </form>
+    <div class="text-muted" style="font-size:12px;margin-top:6px">Tokens are unscoped (read+write to any project the user can access). Use the CLI for scoped or read-only tokens.</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header"><h2>Existing tokens</h2></div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Label</th>
+          <th>Type</th>
+          <th>Issued</th>
+          <th>Expires</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Tokens}}
+        <tr>
+          <td>{{.Name}}</td>
+          <td>{{if .IsSession}}<span class="badge badge-blue">Session</span>{{else}}<span class="badge badge-gray">Machine</span>{{end}}{{if .ReadOnly}} <span class="badge badge-gray">Read-only</span>{{end}}</td>
+          <td class="text-muted">{{.CreatedAt.Format "Jan 2, 2006"}}</td>
+          <td class="text-muted">{{if .ExpiresAt}}{{.ExpiresAt.Format "Jan 2, 2006 15:04"}}{{else}}—{{end}}</td>
+          <td style="white-space:nowrap">
+            <form method="POST" action="/portal/tokens/{{.ID}}/delete" style="display:inline"
+                  onsubmit="return confirm('Revoke this token? Any process using it will fail authentication.')">
+              <button type="submit" class="btn btn-secondary btn-sm">Revoke</button>
+            </form>
+          </td>
+        </tr>
+        {{else}}
+        <tr><td colspan="5" class="text-muted" style="text-align:center;padding:28px">No tokens yet.</td></tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+</div>
+{{end}}

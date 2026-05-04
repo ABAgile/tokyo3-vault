@@ -45,7 +45,7 @@ services:
       - db-data:/var/lib/postgresql/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${VAULT_ADMIN_DB_USERNAME:-vault_admin}"]
+      test: ["CMD-SHELL", "pg_isready -U ${VAULT_ADMIN_DB_USERNAME:-vault_admin} -d vault"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -66,7 +66,7 @@ services:
       - audit-db-data:/var/lib/postgresql/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${VAULT_AUDIT_USERNAME:-vault_audit}"]
+      test: ["CMD-SHELL", "pg_isready -U ${VAULT_AUDIT_USERNAME:-vault_audit} -d vault_audit"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -87,6 +87,9 @@ services:
       retries: 5
 
   # ── API server ────────────────────────────────────────────────────────────
+  # Exposes HTTPS on ${VAULT_PORT:-8443}. Browse https://localhost:8443; the
+  # CLI uses --server https://localhost:8443. Use mkcert (via certs/gen.sh)
+  # to issue a browser-trusted server cert.
   vaultd:
     build: .
     image: abagile/vault:${VERSION:-latest}

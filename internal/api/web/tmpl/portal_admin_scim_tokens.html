@@ -1,0 +1,55 @@
+{{template "base" .}}
+
+{{define "title"}}SCIM tokens{{end}}
+{{define "pagetitle"}}SCIM tokens{{end}}
+
+{{define "content"}}
+{{if .Success}}<div class="alert alert-success">{{.Success}}</div>{{end}}
+{{if .Error}}<div class="alert alert-error">{{.Error}}</div>{{end}}
+{{if .NewToken}}<div class="alert alert-info">New SCIM token (save now, shown only once): <span class="mono">{{.NewToken}}</span></div>{{end}}
+
+<div class="card mb-4" style="max-width:560px">
+  <div class="card-header"><h2>Issue token</h2></div>
+  <div class="card-body">
+    <form method="POST" action="/portal/admin/scim-tokens/new">
+      <div class="form-group">
+        <label for="description">Description</label>
+        <input type="text" id="description" name="description" placeholder="auth → vault provisioner" required>
+      </div>
+      <button type="submit" class="btn btn-primary">Generate token</button>
+    </form>
+    <div class="text-muted" style="font-size:12px;margin-top:6px">Hand this token to the IdP (auth) so it can authenticate to <span class="mono">/scim/v2/*</span>.</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header"><h2>Existing tokens</h2></div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Description</th>
+          <th>Created</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Tokens}}
+        <tr>
+          <td>{{.Description}}</td>
+          <td class="text-muted">{{.CreatedAt.Format "Jan 2, 2006"}}</td>
+          <td style="white-space:nowrap">
+            <form method="POST" action="/portal/admin/scim-tokens/{{.ID}}/delete" style="display:inline"
+                  onsubmit="return confirm('Delete this SCIM token? The IdP will lose access until a new token is issued.')">
+              <button type="submit" class="btn btn-secondary btn-sm">Delete</button>
+            </form>
+          </td>
+        </tr>
+        {{else}}
+        <tr><td colspan="3" class="text-muted" style="text-align:center;padding:28px">No SCIM tokens.</td></tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+</div>
+{{end}}

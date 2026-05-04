@@ -1,0 +1,95 @@
+{{template "base" .}}
+
+{{define "title"}}{{.Project.Name}}{{end}}
+{{define "pagetitle"}}{{.Project.Name}} <span class="text-muted mono" style="font-size:14px;font-weight:400">{{.Project.Slug}}</span>{{end}}
+
+{{define "content"}}
+{{if .Success}}<div class="alert alert-success">{{.Success}}</div>{{end}}
+{{if .Error}}<div class="alert alert-error">{{.Error}}</div>{{end}}
+
+<div class="card mb-4">
+  <div class="card-header"><h2>Environments</h2></div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Name</th><th>Slug</th><th></th></tr></thead>
+      <tbody>
+        {{range .Envs}}
+        <tr>
+          <td>{{.Name}}</td>
+          <td class="mono">{{.Slug}}</td>
+          <td style="white-space:nowrap">
+            <form method="POST" action="/portal/admin/projects/{{$.Project.Slug}}/envs/{{.Slug}}/delete" style="display:inline"
+                  onsubmit="return confirm('Delete environment {{.Slug}}? Secrets in this env are also deleted.')">
+              <button type="submit" class="btn btn-secondary btn-sm">Delete</button>
+            </form>
+          </td>
+        </tr>
+        {{else}}
+        <tr><td colspan="3" class="text-muted" style="text-align:center;padding:14px">No environments.</td></tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  <div class="card-body">
+    <form method="POST" action="/portal/admin/projects/{{.Project.Slug}}/envs/new" style="display:flex;gap:8px;align-items:end">
+      <div style="flex:1">
+        <label for="env_name" style="font-size:13px">New environment name</label>
+        <input type="text" id="env_name" name="name" placeholder="prod" required>
+      </div>
+      <button type="submit" class="btn btn-primary btn-sm">Add env</button>
+    </form>
+  </div>
+</div>
+
+<div class="card mb-4">
+  <div class="card-header"><h2>Members</h2></div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Email</th><th>Role</th><th>Scope</th><th></th></tr></thead>
+      <tbody>
+        {{range .Members}}
+        <tr>
+          <td>{{.Email}}</td>
+          <td>{{.Role}}</td>
+          <td class="text-muted">{{if .EnvSlug}}env: {{.EnvSlug}}{{else}}project{{end}}</td>
+          <td style="white-space:nowrap">
+            <form method="POST" action="/portal/admin/projects/{{$.Project.Slug}}/members/{{.UserID}}/delete" style="display:inline"
+                  onsubmit="return confirm('Remove this member?')">
+              {{if .EnvSlug}}<input type="hidden" name="env_slug" value="{{.EnvSlug}}">{{end}}
+              <button type="submit" class="btn btn-secondary btn-sm">Remove</button>
+            </form>
+          </td>
+        </tr>
+        {{else}}
+        <tr><td colspan="4" class="text-muted" style="text-align:center;padding:14px">No members.</td></tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  <div class="card-body">
+    <form method="POST" action="/portal/admin/projects/{{.Project.Slug}}/members/new" style="display:flex;gap:8px;align-items:end;flex-wrap:wrap">
+      <div style="flex:2;min-width:220px">
+        <label for="email" style="font-size:13px">Email</label>
+        <input type="email" id="email" name="email" required>
+      </div>
+      <div style="flex:1;min-width:120px">
+        <label for="role" style="font-size:13px">Role</label>
+        <select id="role" name="role">
+          <option value="viewer">Viewer</option>
+          <option value="editor">Editor</option>
+          <option value="owner">Owner</option>
+        </select>
+      </div>
+      <div style="flex:1;min-width:120px">
+        <label for="env_slug" style="font-size:13px">Env (blank = project)</label>
+        <input type="text" id="env_slug" name="env_slug" placeholder="prod">
+      </div>
+      <button type="submit" class="btn btn-primary btn-sm">Add member</button>
+    </form>
+  </div>
+</div>
+
+<div style="margin-top:8px">
+  <a href="/portal/admin/projects" class="btn btn-secondary btn-sm">Back to projects</a>
+</div>
+{{end}}

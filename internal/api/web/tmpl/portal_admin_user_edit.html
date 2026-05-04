@@ -1,0 +1,70 @@
+{{template "base" .}}
+
+{{define "title"}}{{if .IsNew}}New user{{else}}Edit user{{end}}{{end}}
+{{define "pagetitle"}}{{if .IsNew}}New user{{else}}Edit user{{end}}{{end}}
+
+{{define "content"}}
+{{if .Error}}<div class="alert alert-error">{{.Error}}</div>{{end}}
+{{if .Success}}<div class="alert alert-success">{{.Success}}</div>{{end}}
+
+<div class="card" style="max-width:560px">
+  <div class="card-body">
+
+  {{if .IsNew}}
+    <form method="POST" action="/portal/admin/users/new">
+      <div class="form-group">
+        <label for="email">Email</label>
+        <input type="email" id="email" name="email" value="{{.User.Email}}" required autofocus>
+      </div>
+      <div class="form-group">
+        <label for="password">Initial password</label>
+        <input type="password" id="password" name="password" minlength="12" required autocomplete="new-password">
+      </div>
+      <div class="form-group">
+        <label for="role">Role</label>
+        <select id="role" name="role">
+          <option value="member" {{if eq .User.Role "member"}}selected{{end}}>Member</option>
+          <option value="admin"  {{if eq .User.Role "admin"}}selected{{end}}>Server admin</option>
+        </select>
+      </div>
+      <div style="display:flex;gap:10px">
+        <button type="submit" class="btn btn-primary">Create user</button>
+        <a href="/portal/admin/users" class="btn btn-secondary">Cancel</a>
+      </div>
+    </form>
+  {{else}}
+    <table style="margin-bottom:18px">
+      <tbody>
+        <tr><td class="text-muted" style="width:120px">Email</td><td>{{.User.Email}}</td></tr>
+        <tr><td class="text-muted">Role</td><td>{{.User.Role}} <span class="text-muted" style="font-size:12px">(role changes are CLI-only)</span></td></tr>
+        <tr><td class="text-muted">Created</td><td class="text-muted">{{.User.CreatedAt.Format "Jan 2, 2006"}}</td></tr>
+      </tbody>
+    </table>
+
+    <form method="POST" action="/portal/admin/users/{{.User.ID}}/active" style="margin-bottom:18px">
+      <input type="hidden" name="active" value="{{if .User.Active}}0{{else}}1{{end}}">
+      <button type="submit" class="btn {{if .User.Active}}btn-danger{{else}}btn-primary{{end}} btn-sm">
+        {{if .User.Active}}Deactivate user{{else}}Reactivate user{{end}}
+      </button>
+      <span class="text-muted" style="font-size:12px;margin-left:8px">Deactivation also revokes all the user's tokens.</span>
+    </form>
+
+    <div class="separator"></div>
+
+    <form method="POST" action="/portal/admin/users/{{.User.ID}}/password">
+      <h3 style="font-size:14px;font-weight:600;margin-bottom:12px">Reset password</h3>
+      <div class="form-group">
+        <label for="password">New password</label>
+        <input type="password" id="password" name="password" minlength="12" required autocomplete="new-password">
+        <div class="text-muted" style="font-size:12px;margin-top:4px">Forces re-login on every device.</div>
+      </div>
+      <div style="display:flex;gap:10px">
+        <button type="submit" class="btn btn-primary btn-sm">Reset password</button>
+        <a href="/portal/admin/users" class="btn btn-secondary btn-sm">Back</a>
+      </div>
+    </form>
+  {{end}}
+
+  </div>
+</div>
+{{end}}

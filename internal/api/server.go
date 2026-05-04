@@ -40,6 +40,18 @@ type Config struct {
 	// PruneMinAge is the minimum age a version must exceed before it is eligible
 	// for pruning (together with PruneMinCount). 0 → default (180 days).
 	PruneMinAge time.Duration
+	// CookieKey is a 32-byte AES-256-GCM key used to seal the portal session
+	// cookie. Pass the parsed VAULT_MASTER_KEY in local-key mode; KMS-mode
+	// deployments can pass a per-process random 32 bytes — sessions then do not
+	// survive vaultd restart, which is acceptable for an admin portal.
+	// Required for the /portal/* routes; if nil the portal endpoints are not registered.
+	CookieKey []byte
+	// AllowRegistration enables self-service signup at /portal/register and a
+	// "Create one" link on /portal/login. The first registrant is promoted to
+	// admin if no admin exists yet (mirrors /api/v1/auth/signup bootstrap).
+	// Disabled by default — admins manage users via /portal/admin/users.
+	// Has no effect when OIDCEnforce is true (local accounts are off entirely).
+	AllowRegistration bool
 }
 
 // Server holds shared dependencies for all HTTP handlers.
@@ -55,6 +67,9 @@ type Server struct {
 	trustedProxies []*net.IPNet      // nil = built-in defaults only; otherwise defaults + extras
 	pruneMinCount  int               // 0 = use defaultPruneMinCount
 	pruneMinAge    time.Duration     // 0 = use defaultPruneMinAge
+	cookieKey      []byte            // AES-256-GCM key for portal session cookie; nil disables /portal/*
+	portalTmpl     *tmplManager      // lazy-initialised portal template manager (nil when cookieKey is nil)
+	allowReg       bool              // gates /portal/register; ignored when oidcEnforce is true
 }
 
 // New returns a configured Server.
@@ -79,7 +94,7 @@ func New(st store.Store, kp crypto.KeyProvider, projectKP *crypto.ProjectKeyCach
 		proxies = append(proxies, cfg.TrustedProxies...)
 	}
 
-	return &Server{
+	srv := &Server{
 		store:          st,
 		kp:             kp,
 		projectKP:      projectKP,
@@ -91,7 +106,18 @@ func New(st store.Store, kp crypto.KeyProvider, projectKP *crypto.ProjectKeyCach
 		trustedProxies: proxies,
 		pruneMinCount:  cfg.PruneMinCount,
 		pruneMinAge:    cfg.PruneMinAge,
+		cookieKey:      cfg.CookieKey,
+		allowReg:       cfg.AllowRegistration && !cfg.OIDCEnforce,
 	}
+	if len(cfg.CookieKey) == 32 {
+		tm, err := newTmplManager("base_portal.html")
+		if err != nil {
+			log.Error("portal template init failed; portal disabled", "err", err)
+		} else {
+			srv.portalTmpl = tm
+		}
+	}
+	return srv
 }
 
 // Routes registers all API routes on mux and returns it.
@@ -202,6 +228,50 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/v1/projects/{project}/envs/{env}/dynamic/{name}/{role}/creds", s.auth(s.handleIssueCreds))
 	mux.HandleFunc("GET /api/v1/projects/{project}/envs/{env}/dynamic/leases", s.auth(s.handleListDynamicLeases))
 	mux.HandleFunc("DELETE /api/v1/projects/{project}/envs/{env}/dynamic/leases/{lease_id}", s.auth(s.handleRevokeDynamicLease))
+
+	// Portal — only mounted when CookieKey is set and templates loaded.
+	if s.portalTmpl != nil {
+		mux.Handle("GET /static/", staticHandler())
+		mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "/portal", http.StatusFound)
+		})
+		mux.HandleFunc("GET /portal/login", s.handlePortalLoginGET)
+		mux.HandleFunc("POST /portal/login", s.rateLimit(s.handlePortalLoginPOST))
+		mux.HandleFunc("GET /portal/login/oidc", s.handlePortalLoginOIDC)
+		mux.HandleFunc("GET /portal/register", s.handlePortalRegisterGET)
+		mux.HandleFunc("POST /portal/register", s.rateLimit(s.handlePortalRegisterPOST))
+		mux.HandleFunc("POST /portal/logout", s.portalAuth(s.handlePortalLogout))
+
+		mux.HandleFunc("GET /portal", s.portalAuth(s.handlePortalHome))
+		mux.HandleFunc("GET /portal/account", s.portalAuth(s.handlePortalAccount))
+		mux.HandleFunc("POST /portal/account/password", s.portalAuth(s.handlePortalAccountPassword))
+		mux.HandleFunc("GET /portal/tokens", s.portalAuth(s.handlePortalTokens))
+		mux.HandleFunc("POST /portal/tokens/new", s.portalAuth(s.handlePortalTokenNew))
+		mux.HandleFunc("POST /portal/tokens/{id}/delete", s.portalAuth(s.handlePortalTokenDelete))
+
+		mux.HandleFunc("GET /portal/admin/users", s.portalAdminAuth(s.handlePortalAdminUsers))
+		mux.HandleFunc("GET /portal/admin/users/new", s.portalAdminAuth(s.handlePortalAdminUserNew))
+		mux.HandleFunc("POST /portal/admin/users/new", s.portalAdminAuth(s.handlePortalAdminUserNew))
+		mux.HandleFunc("GET /portal/admin/users/{id}/edit", s.portalAdminAuth(s.handlePortalAdminUserEdit))
+		mux.HandleFunc("POST /portal/admin/users/{id}/active", s.portalAdminAuth(s.handlePortalAdminUserSetActive))
+		mux.HandleFunc("POST /portal/admin/users/{id}/password", s.portalAdminAuth(s.handlePortalAdminUserResetPassword))
+
+		mux.HandleFunc("GET /portal/admin/projects", s.portalAdminAuth(s.handlePortalAdminProjects))
+		mux.HandleFunc("GET /portal/admin/projects/{project}", s.portalAdminAuth(s.handlePortalAdminProjectEdit))
+		mux.HandleFunc("POST /portal/admin/projects/{project}/envs/new", s.portalAdminAuth(s.handlePortalAdminProjectEnvNew))
+		mux.HandleFunc("POST /portal/admin/projects/{project}/envs/{env}/delete", s.portalAdminAuth(s.handlePortalAdminProjectEnvDelete))
+		mux.HandleFunc("POST /portal/admin/projects/{project}/members/new", s.portalAdminAuth(s.handlePortalAdminProjectMemberNew))
+		mux.HandleFunc("POST /portal/admin/projects/{project}/members/{user_id}/delete", s.portalAdminAuth(s.handlePortalAdminProjectMemberDelete))
+
+		mux.HandleFunc("GET /portal/admin/scim-tokens", s.portalAdminAuth(s.handlePortalAdminSCIMTokens))
+		mux.HandleFunc("POST /portal/admin/scim-tokens/new", s.portalAdminAuth(s.handlePortalAdminSCIMTokenNew))
+		mux.HandleFunc("POST /portal/admin/scim-tokens/{id}/delete", s.portalAdminAuth(s.handlePortalAdminSCIMTokenDelete))
+
+		mux.HandleFunc("GET /portal/admin/scim-group-roles", s.portalAdminAuth(s.handlePortalAdminSCIMGroupRoles))
+		mux.HandleFunc("GET /portal/admin/scim-group-roles/new", s.portalAdminAuth(s.handlePortalAdminSCIMGroupRoleNew))
+		mux.HandleFunc("POST /portal/admin/scim-group-roles/new", s.portalAdminAuth(s.handlePortalAdminSCIMGroupRoleNew))
+		mux.HandleFunc("POST /portal/admin/scim-group-roles/{id}/delete", s.portalAdminAuth(s.handlePortalAdminSCIMGroupRoleDelete))
+	}
 
 	return limitBody(mux)
 }

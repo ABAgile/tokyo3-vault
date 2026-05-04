@@ -105,6 +105,15 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if cliCallback == portalSSOCallback {
+		if err := s.setPortalCookie(w, rawToken); err != nil {
+			s.log.Error("portal cookie", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		http.Redirect(w, r, "/portal", http.StatusFound)
+		return
+	}
 	if cliCallback != "" {
 		http.Redirect(w, r, cliCallback+"?token="+rawToken, http.StatusFound)
 		return

@@ -8,9 +8,14 @@
 #   vault-audit → audit-db  client cert + cert auth (no password in DSN)
 #
 # Prerequisites:
-#   1. make docker-up-mtls        # auto-generates certs and populates shared-data volume
+#   1. make docker-up-mtls        # auto-generates leaf certs (signed by mkcert's
+#                                 # root) and populates shared-data volume.
+#                                 # The root CA is mkcert's, kept at $(mkcert -CAROOT)
+#                                 # — _sync-certs stages it into /shared/certs/ca.crt
+#                                 # for the mounts referenced below.
 #
-#   To regenerate certs: rm certs/ca.crt, then re-run make docker-up-mtls.
+#   To regenerate leaf certs: rm certs/vaultd-server.crt, then re-run make docker-up-mtls.
+#   To rotate the root CA:    mkcert -uninstall && mkcert -install on the host.
 #
 # PostgreSQL cert auth:
 #   pg_hba_cert.conf replaces the default pg_hba.conf. All TCP connections must

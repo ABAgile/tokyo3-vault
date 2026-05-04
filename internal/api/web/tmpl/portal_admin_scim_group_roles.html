@@ -1,0 +1,47 @@
+{{template "base" .}}
+
+{{define "title"}}Group → Role{{end}}
+{{define "pagetitle"}}SCIM group → role mappings{{end}}
+
+{{define "topbar-right"}}
+<a href="/portal/admin/scim-group-roles/new" class="btn btn-primary btn-sm">+ New mapping</a>
+{{end}}
+
+{{define "content"}}
+{{if .Success}}<div class="alert alert-success">{{.Success}}</div>{{end}}
+{{if .Error}}<div class="alert alert-error">{{.Error}}</div>{{end}}
+
+<div class="card">
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>IdP group</th>
+          <th>Project</th>
+          <th>Environment</th>
+          <th>Role</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Mappings}}
+        <tr>
+          <td>{{.DisplayName}} <span class="text-muted mono" style="font-size:12px">{{.GroupID}}</span></td>
+          <td>{{.ProjectName}}</td>
+          <td>{{if .EnvName}}{{.EnvName}}{{else}}<span class="text-muted">(any)</span>{{end}}</td>
+          <td>{{.Role}}</td>
+          <td style="white-space:nowrap">
+            <form method="POST" action="/portal/admin/scim-group-roles/{{.ID}}/delete" style="display:inline"
+                  onsubmit="return confirm('Delete this mapping? Existing memberships are NOT removed; only future SCIM group syncs are affected.')">
+              <button type="submit" class="btn btn-secondary btn-sm">Delete</button>
+            </form>
+          </td>
+        </tr>
+        {{else}}
+        <tr><td colspan="5" class="text-muted" style="text-align:center;padding:28px">No mappings yet. Add one to translate IdP groups into vault project memberships.</td></tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+</div>
+{{end}}

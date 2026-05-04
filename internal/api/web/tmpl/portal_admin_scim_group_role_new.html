@@ -1,0 +1,51 @@
+{{template "base" .}}
+
+{{define "title"}}New mapping{{end}}
+{{define "pagetitle"}}New group → role mapping{{end}}
+
+{{define "content"}}
+{{if .Error}}<div class="alert alert-error">{{.Error}}</div>{{end}}
+
+<div class="card" style="max-width:640px">
+  <div class="card-body">
+    <form method="POST" action="/portal/admin/scim-group-roles/new">
+      <div class="form-group">
+        <label for="display_name">IdP group display name</label>
+        <input type="text" id="display_name" name="display_name" value="{{.Form.DisplayName}}" placeholder="engineers" required autofocus>
+        <div class="text-muted" style="font-size:12px;margin-top:4px">As it appears in the IdP — must match the SCIM group's <span class="mono">displayName</span>.</div>
+      </div>
+      <div class="form-group">
+        <label for="group_id">IdP group ID</label>
+        <input type="text" id="group_id" name="group_id" value="{{.Form.GroupID}}" required>
+        <div class="text-muted" style="font-size:12px;margin-top:4px">Stable group identifier from the IdP (the SCIM group's <span class="mono">id</span>).</div>
+      </div>
+      <div class="form-group">
+        <label for="project_slug">Project</label>
+        <select id="project_slug" name="project_slug" required>
+          <option value="">— select —</option>
+          {{range .Projects}}
+          <option value="{{.Slug}}" {{if eq $.Form.ProjectSlug .Slug}}selected{{end}}>{{.Name}} ({{.Slug}})</option>
+          {{end}}
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="env_slug">Environment</label>
+        <input type="text" id="env_slug" name="env_slug" value="{{.Form.EnvSlug}}" placeholder="leave blank for project-wide">
+        <div class="text-muted" style="font-size:12px;margin-top:4px">Environment slug (e.g. <span class="mono">prod</span>); blank grants project-wide access.</div>
+      </div>
+      <div class="form-group">
+        <label for="role">Role</label>
+        <select id="role" name="role">
+          <option value="viewer" {{if eq .Form.Role "viewer"}}selected{{end}}>Viewer</option>
+          <option value="editor" {{if eq .Form.Role "editor"}}selected{{end}}>Editor</option>
+          <option value="owner"  {{if eq .Form.Role "owner"}}selected{{end}}>Owner</option>
+        </select>
+      </div>
+      <div style="display:flex;gap:10px">
+        <button type="submit" class="btn btn-primary">Create mapping</button>
+        <a href="/portal/admin/scim-group-roles" class="btn btn-secondary">Cancel</a>
+      </div>
+    </form>
+  </div>
+</div>
+{{end}}

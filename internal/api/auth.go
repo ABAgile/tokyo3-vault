@@ -104,18 +104,13 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
 
-	user, err := s.store.GetUserByEmail(r.Context(), req.Email)
-	if errors.Is(err, store.ErrNotFound) || (err == nil && !auth.CheckPassword(user.PasswordHash, req.Password)) {
-		if auditErr := s.logAudit(r, ActionAuthLoginFailed, "", req.Email); auditErr != nil {
-			writeError(w, http.StatusInternalServerError, "audit unavailable")
-			return
-		}
-		writeError(w, http.StatusUnauthorized, "invalid credentials")
+	user, ok, err := s.loginUser(r, req.Email, req.Password)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	if err != nil {
-		s.log.Error("get user", "err", err)
-		writeError(w, http.StatusInternalServerError, "internal error")
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
 	if !user.Active {

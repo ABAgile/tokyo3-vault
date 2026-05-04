@@ -63,6 +63,11 @@
 //	VAULT_VERSION_MIN_DAYS        Minimum age in days a secret version must reach before it
 //	                              is eligible for pruning (default: 180). Works together with
 //	                              VAULT_VERSION_MIN_KEEP — both conditions must hold.
+//	VAULT_ALLOW_REGISTRATION      Set to "true" to enable self-service signup at /portal/register
+//	                              and a "Create one" link on /portal/login. The first registrant
+//	                              is promoted to admin if no admin exists yet. Ignored when
+//	                              VAULT_OIDC_ENFORCE=true (local accounts are off entirely).
+//	                              Default: false (admins manage users via /portal/admin/users).
 //
 // NATS / Audit sink (serve subcommand):
 //
@@ -236,14 +241,22 @@ func main() {
 		os.Exit(1)
 	}
 
+	cookieKey, err := portalCookieKey(log)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "portal cookie key: %v\n", err)
+		os.Exit(1)
+	}
+
 	srv := api.New(st, kp, projectKP, log, api.Config{
-		OIDC:           oidcProvider,
-		OIDCEnforce:    oidcEnforce,
-		Sink:           auditSink,
-		TrustedProxies: trustedProxies,
-		AuthRatePerMin: authRatePerMin,
-		PruneMinCount:  pruneMinCount,
-		PruneMinAge:    pruneMinAge,
+		OIDC:              oidcProvider,
+		OIDCEnforce:       oidcEnforce,
+		Sink:              auditSink,
+		TrustedProxies:    trustedProxies,
+		AuthRatePerMin:    authRatePerMin,
+		PruneMinCount:     pruneMinCount,
+		PruneMinAge:       pruneMinAge,
+		CookieKey:         cookieKey,
+		AllowRegistration: strings.EqualFold(os.Getenv("VAULT_ALLOW_REGISTRATION"), "true"),
 	})
 	httpSrv := &http.Server{
 		Addr:      addr,
@@ -355,6 +368,24 @@ func buildServerTLS(log *slog.Logger) (*tls.Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// portalCookieKey returns the 32-byte AES-GCM key used to seal the portal
+// session cookie. Local-key deployments reuse VAULT_MASTER_KEY directly so
+// portal sessions survive vaultd restart. KMS-mode deployments mint a random
+// per-process key — restarting vaultd invalidates outstanding portal sessions,
+// which is acceptable for an admin portal.
+func portalCookieKey(log *slog.Logger) ([]byte, error) {
+	if hex := os.Getenv("VAULT_MASTER_KEY"); hex != "" {
+		return crypto.ParseKEK(hex)
+	}
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		return nil, fmt.Errorf("generate ephemeral cookie key: %w", err)
+	}
+	log.Warn("portal cookie key is ephemeral; restarting vaultd will invalidate all portal sessions",
+		"reason", "VAULT_MASTER_KEY not set (KMS-mode deployment)")
+	return key, nil
 }
 
 // openKeyProvider selects LocalKeyProvider (VAULT_MASTER_KEY) or KMSKeyProvider

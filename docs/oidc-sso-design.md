@@ -209,8 +209,11 @@ New OIDC users are provisioned with `member` role. Admins can upgrade the role v
 4. `jitProvision` → vault user
 5. Check `user.Active` (SCIM deprovisioning guard)
 6. `IssueUserToken` → session token
-7. If `cliCallback` set → `302 Location: cliCallback?token=<raw>` (CLI flow)
-8. Otherwise → `200 {"token": "...", "name": "session"}` (web flow)
+7. If `cliCallback == "vault://portal"` → seal token into `vault_portal` cookie + `302 /portal` (admin portal flow — see `web_portal.go`)
+8. Else if `cliCallback` set → `302 Location: cliCallback?token=<raw>` (CLI loopback flow)
+9. Otherwise → `200 {"token": "...", "name": "session"}` (programmatic web flow)
+
+The portal flow reuses the same `BeginAuth`/`CompleteAuth`/`jitProvision` machinery and the same IdP redirect URI — there is no second OAuth client registration. The `vault://portal` sentinel is opaque to the IdP because the redirect URI it sees is still `/api/v1/auth/oidc/callback`; the discrimination happens after the IdP returns control.
 
 ### Server Integration (`internal/api/server.go`)
 

@@ -12,8 +12,10 @@
 ##   make docker-up         Start with docker compose (Postgres + NATS)
 ##   make docker-up-mtls    Start with docker compose + mTLS overlay (auto-generates certs)
 ##   make docker-down       Stop docker compose (overlay-aware; safe in any mode)
+##   make docker-down-all   Stop docker compose AND remove all volumes (nuclear — wipes DB/NATS state)
 ##   make gen-certs         Generate mTLS certs in certs/ (manual; auto-run by run-mtls/docker-up-mtls)
 ##   make clean             Remove ./bin/
+##   make clean-all         Remove ./bin/, generated certs, and .env (full reset)
 ##   make test              Run tests
 ##   make help              Show this help
 
@@ -56,8 +58,8 @@ SHARED_VOLUME   := $(COMPOSE_PROJECT)_shared-data
         run run-mtls run-audit run-audit-mtls keygen gen-certs \
         _gen-env _sync-pg-scripts _sync-certs \
         test test-verbose tidy vet lint check \
-        docker-build docker-build-amd64 docker-push docker-up docker-up-mtls docker-down docker-logs \
-        install clean help
+        docker-build docker-build-amd64 docker-push docker-up docker-up-mtls docker-down docker-down-all docker-logs \
+        install clean clean-all help
 
 all: build
 
@@ -113,32 +115,37 @@ build-darwin: $(BIN_DIR)
 _gen-env: build-server build-cli
 	@if [ ! -f .env ]; then \
 	    KEY=$$($(VAULT_BIN) keygen); \
-	    echo "VAULT_MASTER_KEY=$$KEY"                                                                                                                          > .env; \
-	    echo "VAULT_ADDR=:8443"                                                                                                                               >> .env; \
-	    echo "POSTGRES_PORT=$(POSTGRES_PORT)"                                                                                                                 >> .env; \
-	    echo "VAULT_ADMIN_PASSWORD=changeme"                                                                                                                  >> .env; \
-	    echo "VAULT_APP_PASSWORD=changeme"                                                                                                                    >> .env; \
-	    echo "VAULT_ADMIN_DATABASE_URL=postgres://$${VAULT_ADMIN_DB_USERNAME:-vault_admin}:changeme@localhost:$(POSTGRES_PORT)/vault?sslmode=disable"          >> .env; \
-	    echo "VAULT_DATABASE_URL=postgres://$${VAULT_APP_USERNAME:-vault_app}:changeme@localhost:$(POSTGRES_PORT)/vault?sslmode=disable"                      >> .env; \
-	    echo "NATS_PORT=$(NATS_PORT)"                                                                                                                         >> .env; \
-	    echo "AUDIT_DB_PORT=$(AUDIT_DB_PORT)"                                                                                                                 >> .env; \
-	    echo "VAULT_AUDIT_PASSWORD=changeme"                                                                                                                  >> .env; \
-	    echo "VAULT_AUDIT_NATS_URL=nats://localhost:$(NATS_PORT)"                                                                                             >> .env; \
-	    echo "VAULT_AUDIT_DATABASE_URL=postgres://$${VAULT_AUDIT_USERNAME:-vault_audit}:changeme@localhost:$(AUDIT_DB_PORT)/vault_audit?sslmode=disable"      >> .env; \
+	    echo "VAULT_MASTER_KEY=$$KEY"                                                                                                                             > .env; \
+	    echo "VAULT_ADDR=:8443"                                                                                                                                   >> .env; \
+	    echo "POSTGRES_PORT=$(POSTGRES_PORT)"                                                                                                                     >> .env; \
+	    echo "VAULT_ADMIN_PASSWORD=changeme"                                                                                                                      >> .env; \
+	    echo "VAULT_APP_PASSWORD=changeme"                                                                                                                        >> .env; \
+	    echo "VAULT_ADMIN_DATABASE_URL=postgres://$${VAULT_ADMIN_DB_USERNAME:-vault_admin}:changeme@db.localhost:$(POSTGRES_PORT)/vault?sslmode=disable"          >> .env; \
+	    echo "VAULT_DATABASE_URL=postgres://$${VAULT_APP_USERNAME:-vault_app}:changeme@db.localhost:$(POSTGRES_PORT)/vault?sslmode=disable"                       >> .env; \
+	    echo "NATS_PORT=$(NATS_PORT)"                                                                                                                             >> .env; \
+	    echo "AUDIT_DB_PORT=$(AUDIT_DB_PORT)"                                                                                                                     >> .env; \
+	    echo "VAULT_AUDIT_PASSWORD=changeme"                                                                                                                      >> .env; \
+	    echo "VAULT_AUDIT_NATS_URL=nats://nats.localhost:$(NATS_PORT)"                                                                                            >> .env; \
+	    echo "VAULT_AUDIT_DATABASE_URL=postgres://$${VAULT_AUDIT_USERNAME:-vault_audit}:changeme@audit-db.localhost:$(AUDIT_DB_PORT)/vault_audit?sslmode=disable" >> .env; \
+	    echo "VAULT_ALLOW_REGISTRATION=true"                                                                                                                      >> .env; \
 	    echo "  generated .env"; \
 	fi
 
 # Push local postgres/ scripts into shared-data:/shared/pg-scripts (no bind mount needed).
 # Re-runs on every invoke so changes to init scripts are always picked up.
 _sync-pg-scripts:
-	@docker volume create $(SHARED_VOLUME) 2>/dev/null || true
+	@docker volume create $(SHARED_VOLUME) 2>&1 >/dev/null || true
 	@tar -cf - -C postgres . | docker run --rm -i -v $(SHARED_VOLUME):/shared alpine:3.21 sh -c "mkdir -p /shared/pg-scripts && tar -xf - -C /shared/pg-scripts && chmod +x /shared/pg-scripts/*.sh"
 
-# Generate certs if absent, then push local certs/ into shared-data:/shared/certs.
+# Generate leaf certs if absent, then push local certs/ + mkcert's root CA
+# into shared-data:/shared/certs (root CA staged as ca.crt for compose mounts;
+# removed locally after the volume copy so certs/ stays free of the CA).
 _sync-certs:
-	@if [ ! -f certs/ca.crt ]; then bash certs/gen.sh; fi
-	@docker volume create $(SHARED_VOLUME) 2>/dev/null || true
+	@if [ ! -f certs/vaultd-server.crt ]; then bash certs/gen.sh; fi
+	@docker volume create $(SHARED_VOLUME) 2>&1 >/dev/null || true
+	@cp $$(mkcert -CAROOT)/rootCA.pem certs/ca.crt
 	@tar -cf - -C certs . | docker run --rm -i -v $(SHARED_VOLUME):/shared alpine:3.21 sh -c "mkdir -p /shared/certs && tar -xf - -C /shared/certs"
+	@rm -f certs/ca.crt
 
 # ── Dev ───────────────────────────────────────────────────────────────────────
 
@@ -150,18 +157,19 @@ run: _gen-env _sync-pg-scripts
 ## run-mtls: Build and start vaultd with mTLS (cert auth; overrides DSNs — no password)
 run-mtls: _gen-env _sync-pg-scripts _sync-certs
 	@docker compose -f docker-compose.yml -f docker-compose.mtls.yml up -d db audit-db --wait 2>/dev/null || true
-	@export $$(grep -v '^#' .env | xargs) && \
+	@CA_PEM=$$(mkcert -CAROOT)/rootCA.pem; \
+	    export $$(grep -v '^#' .env | xargs) && \
 	    VAULT_TLS_CERT=certs/vaultd-server.crt \
 	    VAULT_TLS_KEY=certs/vaultd-server.key \
-	    VAULT_TLS_CLIENT_CA=certs/ca.crt \
+	    VAULT_TLS_CLIENT_CA=$$CA_PEM \
 	    VAULT_ADMIN_DB_CERT=certs/vaultd-admin-db-client.crt \
 	    VAULT_ADMIN_DB_KEY=certs/vaultd-admin-db-client.key \
-	    VAULT_ADMIN_DB_CA=certs/ca.crt \
-	    VAULT_ADMIN_DATABASE_URL=postgres://$${VAULT_ADMIN_DB_USERNAME:-vault_admin}@localhost:$(POSTGRES_PORT)/vault?sslmode=verify-full \
+	    VAULT_ADMIN_DB_CA=$$CA_PEM \
+	    VAULT_ADMIN_DATABASE_URL=postgres://$${VAULT_ADMIN_DB_USERNAME:-vault_admin}@db.localhost:$(POSTGRES_PORT)/vault?sslmode=verify-full \
 	    VAULT_DB_CERT=certs/vaultd-app-db-client.crt \
 	    VAULT_DB_KEY=certs/vaultd-app-db-client.key \
-	    VAULT_DB_CA=certs/ca.crt \
-	    VAULT_DATABASE_URL=postgres://$${VAULT_APP_USERNAME:-vault_app}@localhost:$(POSTGRES_PORT)/vault?sslmode=verify-full \
+	    VAULT_DB_CA=$$CA_PEM \
+	    VAULT_DATABASE_URL=postgres://$${VAULT_APP_USERNAME:-vault_app}@db.localhost:$(POSTGRES_PORT)/vault?sslmode=verify-full \
 	    $(VAULTD_BIN)
 
 ## run-audit: Build and start vault-audit consume with dev defaults
@@ -172,14 +180,15 @@ run-audit: build-audit _gen-env _sync-pg-scripts
 ## run-audit-mtls: Build and start vault-audit consume with mTLS (cert auth; overrides DSN — no password)
 run-audit-mtls: build-audit _gen-env _sync-pg-scripts _sync-certs
 	@docker compose -f docker-compose.yml -f docker-compose.mtls.yml up -d nats audit-db --wait 2>/dev/null || true
-	@export $$(grep -v '^#' .env | xargs) && \
+	@CA_PEM=$$(mkcert -CAROOT)/rootCA.pem; \
+	    export $$(grep -v '^#' .env | xargs) && \
 	    VAULT_AUDIT_NATS_CERT=certs/vault-audit-nats-client.crt \
 	    VAULT_AUDIT_NATS_KEY=certs/vault-audit-nats-client.key \
-	    VAULT_AUDIT_NATS_CA=certs/ca.crt \
+	    VAULT_AUDIT_NATS_CA=$$CA_PEM \
 	    VAULT_AUDIT_DB_CERT=certs/vault-audit-db-client.crt \
 	    VAULT_AUDIT_DB_KEY=certs/vault-audit-db-client.key \
-	    VAULT_AUDIT_DB_CA=certs/ca.crt \
-	    VAULT_AUDIT_DATABASE_URL=postgres://$${VAULT_AUDIT_USERNAME:-vault_audit}@localhost:$(AUDIT_DB_PORT)/vault_audit?sslmode=verify-full \
+	    VAULT_AUDIT_DB_CA=$$CA_PEM \
+	    VAULT_AUDIT_DATABASE_URL=postgres://$${VAULT_AUDIT_USERNAME:-vault_audit}@audit-db.localhost:$(AUDIT_DB_PORT)/vault_audit?sslmode=verify-full \
 	    $(AUDIT_BIN) consume
 
 ## keygen: Print a fresh random master key
@@ -257,6 +266,10 @@ docker-up-mtls: _sync-pg-scripts _sync-certs
 docker-down:
 	docker compose -f docker-compose.yml -f docker-compose.mtls.yml down
 
+## docker-down-all: Stop services AND remove named volumes (db, audit-db, NATS, shared-data)
+docker-down-all:
+	docker compose -f docker-compose.yml -f docker-compose.mtls.yml down -v --remove-orphans
+
 ## docker-logs: Tail vaultd logs
 docker-logs:
 	docker compose logs -f vaultd
@@ -275,6 +288,12 @@ install:
 ## clean: Remove build artifacts
 clean:
 	rm -rf $(BIN_DIR)
+
+## clean-all: Remove build artifacts, generated certs, and .env (full reset)
+clean-all: clean
+	rm -f certs/*.crt certs/*.key certs/ca.srl
+	rm -f .env
+	@echo "  removed certs/* and .env"
 
 # ── Help ──────────────────────────────────────────────────────────────────────
 
