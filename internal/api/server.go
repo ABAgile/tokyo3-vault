@@ -264,6 +264,12 @@ func (s *Server) Routes() http.Handler {
 		mux.HandleFunc("POST /portal/admin/projects/{project}/rotate", s.portalAdminAuth(s.handlePortalAdminProjectRotateKey))
 		mux.HandleFunc("POST /portal/admin/projects/{project}/envs/new", s.portalAdminAuth(s.handlePortalAdminProjectEnvNew))
 		mux.HandleFunc("POST /portal/admin/projects/{project}/envs/{env}/delete", s.portalAdminAuth(s.handlePortalAdminProjectEnvDelete))
+		mux.HandleFunc("GET /portal/admin/projects/{project}/envs/{env}/secrets", s.portalAdminAuth(s.handlePortalAdminSecrets))
+		mux.HandleFunc("POST /portal/admin/projects/{project}/envs/{env}/secrets/{key}/delete", s.portalAdminAuth(s.handlePortalAdminSecretDelete))
+		mux.HandleFunc("GET /portal/admin/projects/{project}/envs/{env}/secrets/{key}/versions", s.portalAdminAuth(s.handlePortalAdminSecretVersions))
+		mux.HandleFunc("POST /portal/admin/projects/{project}/envs/{env}/secrets/{key}/versions/{version}/rollback", s.portalAdminAuth(s.handlePortalAdminSecretRollback))
+		mux.HandleFunc("POST /portal/admin/projects/{project}/envs/{env}/secrets/import", s.portalAdminAuth(s.handlePortalAdminSecretsImport))
+		mux.HandleFunc("GET /portal/admin/projects/{project}/envs/{env}/secrets/export", s.portalAdminAuth(s.handlePortalAdminSecretsExport))
 		mux.HandleFunc("POST /portal/admin/projects/{project}/members/new", s.portalAdminAuth(s.handlePortalAdminProjectMemberNew))
 		mux.HandleFunc("POST /portal/admin/projects/{project}/members/{user_id}/delete", s.portalAdminAuth(s.handlePortalAdminProjectMemberDelete))
 

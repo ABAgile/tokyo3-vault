@@ -564,62 +564,25 @@ func (s *Server) handleUploadEnvfile(w http.ResponseWriter, r *http.Request) {
 	if !s.requireWrite(w, r, tok, project.ID) {
 		return
 	}
-
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "failed to read body")
 		return
 	}
-
-	entries, err := envfile.Parse(string(body))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid .env file: "+err.Error())
-		return
-	}
-
 	overwrite := r.URL.Query().Get("overwrite") == "true"
-	createdBy := tokenCreatedBy(tok)
-
-	projectKP, err := s.projectKP.ForProject(r.Context(), project.ID, project.EncryptedPEK)
+	uploaded, skipped, err := s.uploadEnvfileBytes(r, project, envID, body, overwrite, tokenCreatedBy(tok))
 	if err != nil {
-		s.log.Error("load project key", "err", err)
-		writeError(w, http.StatusInternalServerError, "internal error")
+		switch {
+		case errors.Is(err, errInvalidEnvfile):
+			writeError(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, errInvalidKey):
+			writeError(w, http.StatusBadRequest, err.Error())
+		default:
+			s.log.Error("upload envfile", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+		}
 		return
 	}
-
-	uploaded, skipped := 0, 0
-	for _, entry := range entries {
-		if !keyRe.MatchString(entry.Key) {
-			writeError(w, http.StatusBadRequest, "invalid key: "+entry.Key)
-			return
-		}
-		if !overwrite {
-			if _, _, err := s.store.GetSecret(r.Context(), project.ID, envID, entry.Key); err == nil {
-				skipped++
-				continue
-			}
-		}
-		encVal, encDEK, err := crypto.EncryptSecret(r.Context(), projectKP, []byte(entry.Value))
-		if err != nil {
-			s.log.Error("encrypt secret", "key", entry.Key, "err", err)
-			writeError(w, http.StatusInternalServerError, "internal error")
-			return
-		}
-		comment := entry.Comment
-		sv, err := s.store.SetSecret(r.Context(), project.ID, envID, entry.Key, &comment, encVal, encDEK, createdBy)
-		if err != nil {
-			s.log.Error("set secret", "key", entry.Key, "err", err)
-			writeError(w, http.StatusInternalServerError, "internal error")
-			return
-		}
-		s.pruneVersions(r.Context(), sv)
-		if err := s.logAuditEnv(r, ActionSecretEnvfileUpload, project.ID, envID, entry.Key, secretAuditMeta(maskValue(entry.Value))); err != nil {
-			writeError(w, http.StatusInternalServerError, "audit unavailable")
-			return
-		}
-		uploaded++
-	}
-
 	writeJSON(w, http.StatusOK, map[string]any{"uploaded": uploaded, "skipped": skipped})
 }
 
@@ -630,21 +593,76 @@ func (s *Server) handleDownloadEnvfile(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-
-	secrets, versions, err := s.store.ListSecrets(r.Context(), project.ID, envID)
+	content, err := s.renderEnvfile(r, project, envID)
 	if err != nil {
-		s.log.Error("list secrets", "err", err)
+		s.log.Error("download envfile", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(content))
+}
 
+// errInvalidEnvfile / errInvalidKey wrap the parse-stage and key-validation
+// errors from uploadEnvfileBytes so callers can distinguish 400-class issues
+// from internal failures.
+var (
+	errInvalidEnvfile = errors.New("invalid .env file")
+	errInvalidKey     = errors.New("invalid key")
+)
+
+// uploadEnvfileBytes parses a raw .env body and upserts its secrets. Audits
+// each upserted key and prunes old versions. Wraps errInvalidEnvfile or
+// errInvalidKey on parse / validation failures so callers can map to 400.
+func (s *Server) uploadEnvfileBytes(r *http.Request, project *model.Project, envID string, body []byte, overwrite bool, createdBy *string) (uploaded, skipped int, err error) {
+	entries, parseErr := envfile.Parse(string(body))
+	if parseErr != nil {
+		return 0, 0, fmt.Errorf("%w: %v", errInvalidEnvfile, parseErr)
+	}
 	projectKP, err := s.projectKP.ForProject(r.Context(), project.ID, project.EncryptedPEK)
 	if err != nil {
-		s.log.Error("load project key", "err", err)
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
+		return 0, 0, fmt.Errorf("load project key: %w", err)
 	}
+	for _, entry := range entries {
+		if !keyRe.MatchString(entry.Key) {
+			return uploaded, skipped, fmt.Errorf("%w: %s", errInvalidKey, entry.Key)
+		}
+		if !overwrite {
+			if _, _, err := s.store.GetSecret(r.Context(), project.ID, envID, entry.Key); err == nil {
+				skipped++
+				continue
+			}
+		}
+		encVal, encDEK, encErr := crypto.EncryptSecret(r.Context(), projectKP, []byte(entry.Value))
+		if encErr != nil {
+			return uploaded, skipped, fmt.Errorf("encrypt %s: %w", entry.Key, encErr)
+		}
+		comment := entry.Comment
+		sv, setErr := s.store.SetSecret(r.Context(), project.ID, envID, entry.Key, &comment, encVal, encDEK, createdBy)
+		if setErr != nil {
+			return uploaded, skipped, fmt.Errorf("set secret %s: %w", entry.Key, setErr)
+		}
+		s.pruneVersions(r.Context(), sv)
+		if auditErr := s.logAuditEnv(r, ActionSecretEnvfileUpload, project.ID, envID, entry.Key, secretAuditMeta(maskValue(entry.Value))); auditErr != nil {
+			return uploaded, skipped, fmt.Errorf("audit %s: %w", entry.Key, auditErr)
+		}
+		uploaded++
+	}
+	return uploaded, skipped, nil
+}
 
+// renderEnvfile decrypts every secret for project+env, audits each, and returns
+// the serialised .env content. Callers handle the response headers + body.
+func (s *Server) renderEnvfile(r *http.Request, project *model.Project, envID string) (string, error) {
+	secrets, versions, err := s.store.ListSecrets(r.Context(), project.ID, envID)
+	if err != nil {
+		return "", fmt.Errorf("list secrets: %w", err)
+	}
+	projectKP, err := s.projectKP.ForProject(r.Context(), project.ID, project.EncryptedPEK)
+	if err != nil {
+		return "", fmt.Errorf("load project key: %w", err)
+	}
 	entries := make([]envfile.Entry, 0, len(secrets))
 	for i, sec := range secrets {
 		sv := versions[i]
@@ -653,13 +671,10 @@ func (s *Server) handleDownloadEnvfile(w http.ResponseWriter, r *http.Request) {
 		}
 		plaintext, err := crypto.DecryptSecret(r.Context(), projectKP, sv.EncryptedDEK, sv.EncryptedValue)
 		if err != nil {
-			s.log.Error("decrypt secret", "key", sec.Key, "err", err)
-			writeError(w, http.StatusInternalServerError, "internal error")
-			return
+			return "", fmt.Errorf("decrypt %s: %w", sec.Key, err)
 		}
 		if err := s.logAuditEnv(r, ActionSecretEnvfileDownload, project.ID, envID, sec.Key, secretAuditMeta(maskValue(string(plaintext)))); err != nil {
-			writeError(w, http.StatusInternalServerError, "audit unavailable")
-			return
+			return "", fmt.Errorf("audit %s: %w", sec.Key, err)
 		}
 		entries = append(entries, envfile.Entry{
 			Comment: sec.Comment,
@@ -667,9 +682,5 @@ func (s *Server) handleDownloadEnvfile(w http.ResponseWriter, r *http.Request) {
 			Value:   string(plaintext),
 		})
 	}
-
-	content := envfile.Serialize(entries)
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(content))
+	return envfile.Serialize(entries), nil
 }

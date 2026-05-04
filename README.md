@@ -250,13 +250,14 @@ These restrictions narrow access — they cannot grant more than the owning user
 
 ## Admin Portal
 
-vaultd serves a server-rendered admin portal at `/portal/*` on the same TLS listener as the API. It is **admin-only**: secrets, dynamic credentials, and lease management remain CLI-only — you cannot reveal a secret value through the browser.
+vaultd serves a server-rendered admin portal at `/portal/*` on the same TLS listener as the API. **Secret values, dynamic-credential issuance, and lease management remain CLI-only** — you cannot reveal a secret value through the browser. Metadata operations (key list, version history, rollback) are available in the portal because they don't expose plaintext.
 
 **What it covers**
 
 - **Self-service** — sign in (local password or OIDC SSO via auth), change password, list/revoke your own machine tokens.
 - **Admin → Users** — create users, deactivate (revokes all the user's tokens, matching SCIM deprovision semantics), reset password. Role changes remain CLI-only.
-- **Admin → Projects** — list projects, manage environments and members per project (add/remove, role select). Project creation, secret CRUD, and dynamic-credential management still go through the CLI.
+- **Admin → Projects** — full project lifecycle: create, delete, rotate envelope key, manage environments + members. The "Danger zone" on a project page hosts the destructive actions behind confirm dialogs.
+- **Admin → Secrets** — per-environment secret browser: list keys + version count + last-modified, view version history, roll back to a prior version, delete a secret. Bulk import via `.env` upload and download of a project+env's secrets as a `.env` file. Plaintext is **never rendered** — values flow through the encrypt/decrypt path and out as a downloadable file or audit-masked log entries.
 - **Admin → SCIM Tokens** — issue/delete the bearer tokens auth uses to push users and groups to vault.
 - **Admin → Group → Role** — UI for the SCIM group→role mappings table (translates IdP groups into vault project memberships when a SCIM group syncs).
 

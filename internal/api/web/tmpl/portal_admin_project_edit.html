@@ -16,8 +16,9 @@
         {{range .Envs}}
         <tr>
           <td>{{.Name}}</td>
-          <td class="mono">{{.Slug}}</td>
+          <td class="mono"><a href="/portal/admin/projects/{{$.Project.Slug}}/envs/{{.Slug}}/secrets">{{.Slug}}</a></td>
           <td style="white-space:nowrap">
+            <a href="/portal/admin/projects/{{$.Project.Slug}}/envs/{{.Slug}}/secrets" class="btn btn-secondary btn-sm">Secrets</a>
             <form method="POST" action="/portal/admin/projects/{{$.Project.Slug}}/envs/{{.Slug}}/delete" style="display:inline"
                   onsubmit="return confirm('Delete environment {{.Slug}}? Secrets in this env are also deleted.')">
               <button type="submit" class="btn btn-secondary btn-sm">Delete</button>

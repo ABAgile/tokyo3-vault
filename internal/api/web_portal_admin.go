@@ -3,6 +3,8 @@ package api
 import (
 	"crypto/rand"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -387,6 +389,281 @@ func (s *Server) handlePortalAdminSCIMGroupRoleDelete(w http.ResponseWriter, r *
 		return
 	}
 	flashRedirect(w, r, "/portal/admin/scim-group-roles", "success", "Mapping deleted.")
+}
+
+// ── Admin: Secrets (keys + metadata only — values stay CLI-only) ─────────────
+
+type secretRow struct {
+	Key       string
+	Version   int
+	UpdatedAt time.Time
+}
+
+func (s *Server) handlePortalAdminSecrets(w http.ResponseWriter, r *http.Request) {
+	pc := portalFromCtx(r)
+	projectSlug := r.PathValue("project")
+	envSlug := r.PathValue("env")
+	p, err := s.store.GetProject(r.Context(), projectSlug)
+	if errors.Is(err, store.ErrNotFound) {
+		http.Error(w, "project not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, "lookup failed", http.StatusInternalServerError)
+		return
+	}
+	env, err := s.store.GetEnvironment(r.Context(), p.ID, envSlug)
+	if errors.Is(err, store.ErrNotFound) {
+		http.Error(w, "environment not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, "lookup failed", http.StatusInternalServerError)
+		return
+	}
+	secrets, versions, err := s.store.ListSecrets(r.Context(), p.ID, env.ID)
+	if err != nil {
+		s.log.Error("portal admin list secrets", "err", err)
+		http.Error(w, "list failed", http.StatusInternalServerError)
+		return
+	}
+	rows := make([]secretRow, 0, len(secrets))
+	for i, sec := range secrets {
+		row := secretRow{Key: sec.Key, UpdatedAt: sec.UpdatedAt}
+		if i < len(versions) && versions[i] != nil {
+			row.Version = versions[i].Version
+		}
+		rows = append(rows, row)
+	}
+	s.portalTmpl.render(w, "portal_admin_secrets.html", struct {
+		portalBase
+		Project        *model.Project
+		Env            *model.Environment
+		Secrets        []secretRow
+		Success, Error string
+	}{
+		newPortalBase(pc, "admin-projects"),
+		p, env, rows,
+		r.URL.Query().Get("success"), r.URL.Query().Get("error"),
+	})
+}
+
+func (s *Server) handlePortalAdminSecretDelete(w http.ResponseWriter, r *http.Request) {
+	projectSlug := r.PathValue("project")
+	envSlug := r.PathValue("env")
+	key := strings.ToUpper(r.PathValue("key"))
+	back := "/portal/admin/projects/" + projectSlug + "/envs/" + envSlug + "/secrets"
+
+	p, err := s.store.GetProject(r.Context(), projectSlug)
+	if err != nil {
+		flashRedirect(w, r, back, "error", "Project not found.")
+		return
+	}
+	env, err := s.store.GetEnvironment(r.Context(), p.ID, envSlug)
+	if err != nil {
+		flashRedirect(w, r, back, "error", "Environment not found.")
+		return
+	}
+	err = s.store.DeleteSecret(r.Context(), p.ID, env.ID, key)
+	if errors.Is(err, store.ErrNotFound) {
+		flashRedirect(w, r, back, "error", "Secret not found.")
+		return
+	}
+	if err != nil {
+		s.log.Error("portal admin delete secret", "err", err)
+		flashRedirect(w, r, back, "error", "Delete failed.")
+		return
+	}
+	if err := s.logAuditEnv(r, ActionSecretDelete, p.ID, env.ID, key, `{"via":"portal"}`); err != nil {
+		http.Error(w, "audit unavailable", http.StatusInternalServerError)
+		return
+	}
+	flashRedirect(w, r, back, "success", "Secret "+key+" deleted.")
+}
+
+type versionRow struct {
+	ID        string
+	Version   int
+	CreatedAt time.Time
+	CreatedBy *string
+	IsCurrent bool
+}
+
+func (s *Server) handlePortalAdminSecretVersions(w http.ResponseWriter, r *http.Request) {
+	pc := portalFromCtx(r)
+	projectSlug := r.PathValue("project")
+	envSlug := r.PathValue("env")
+	key := strings.ToUpper(r.PathValue("key"))
+
+	p, err := s.store.GetProject(r.Context(), projectSlug)
+	if err != nil {
+		http.Error(w, "project not found", http.StatusNotFound)
+		return
+	}
+	env, err := s.store.GetEnvironment(r.Context(), p.ID, envSlug)
+	if err != nil {
+		http.Error(w, "environment not found", http.StatusNotFound)
+		return
+	}
+	sec, currentVer, err := s.store.GetSecret(r.Context(), p.ID, env.ID, key)
+	if errors.Is(err, store.ErrNotFound) {
+		http.Error(w, "secret not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		s.log.Error("portal admin get secret", "err", err)
+		http.Error(w, "lookup failed", http.StatusInternalServerError)
+		return
+	}
+	versions, err := s.store.ListSecretVersions(r.Context(), sec.ID)
+	if err != nil {
+		s.log.Error("portal admin list versions", "err", err)
+		http.Error(w, "list failed", http.StatusInternalServerError)
+		return
+	}
+	currentID := ""
+	if currentVer != nil {
+		currentID = currentVer.ID
+	}
+	rows := make([]versionRow, 0, len(versions))
+	for _, v := range versions {
+		rows = append(rows, versionRow{
+			ID: v.ID, Version: v.Version, CreatedAt: v.CreatedAt, CreatedBy: v.CreatedBy,
+			IsCurrent: v.ID == currentID,
+		})
+	}
+	s.portalTmpl.render(w, "portal_admin_secret_versions.html", struct {
+		portalBase
+		Project        *model.Project
+		Env            *model.Environment
+		Key            string
+		Versions       []versionRow
+		Success, Error string
+	}{
+		newPortalBase(pc, "admin-projects"),
+		p, env, key, rows,
+		r.URL.Query().Get("success"), r.URL.Query().Get("error"),
+	})
+}
+
+func (s *Server) handlePortalAdminSecretRollback(w http.ResponseWriter, r *http.Request) {
+	projectSlug := r.PathValue("project")
+	envSlug := r.PathValue("env")
+	key := strings.ToUpper(r.PathValue("key"))
+	versionID := r.PathValue("version")
+	back := "/portal/admin/projects/" + projectSlug + "/envs/" + envSlug + "/secrets/" + key + "/versions"
+
+	p, err := s.store.GetProject(r.Context(), projectSlug)
+	if err != nil {
+		flashRedirect(w, r, back, "error", "Project not found.")
+		return
+	}
+	env, err := s.store.GetEnvironment(r.Context(), p.ID, envSlug)
+	if err != nil {
+		flashRedirect(w, r, back, "error", "Environment not found.")
+		return
+	}
+	sec, _, err := s.store.GetSecret(r.Context(), p.ID, env.ID, key)
+	if err != nil {
+		flashRedirect(w, r, back, "error", "Secret not found.")
+		return
+	}
+	if _, err := s.store.GetSecretVersion(r.Context(), sec.ID, versionID); err != nil {
+		flashRedirect(w, r, back, "error", "Version not found for this secret.")
+		return
+	}
+	if err := s.store.RollbackSecret(r.Context(), sec.ID, versionID); err != nil {
+		s.log.Error("portal admin rollback secret", "err", err)
+		flashRedirect(w, r, back, "error", "Rollback failed.")
+		return
+	}
+	if err := s.logAuditEnv(r, ActionSecretRollback, p.ID, env.ID, key, `{"via":"portal"}`); err != nil {
+		http.Error(w, "audit unavailable", http.StatusInternalServerError)
+		return
+	}
+	flashRedirect(w, r, back, "success", "Rolled back to version "+versionID+".")
+}
+
+func (s *Server) handlePortalAdminSecretsImport(w http.ResponseWriter, r *http.Request) {
+	pc := portalFromCtx(r)
+	projectSlug := r.PathValue("project")
+	envSlug := r.PathValue("env")
+	back := "/portal/admin/projects/" + projectSlug + "/envs/" + envSlug + "/secrets"
+
+	p, err := s.store.GetProject(r.Context(), projectSlug)
+	if err != nil {
+		flashRedirect(w, r, back, "error", "Project not found.")
+		return
+	}
+	env, err := s.store.GetEnvironment(r.Context(), p.ID, envSlug)
+	if err != nil {
+		flashRedirect(w, r, back, "error", "Environment not found.")
+		return
+	}
+	// 4 MiB cap matches the global limitBody wrapper.
+	if err := r.ParseMultipartForm(4 << 20); err != nil {
+		flashRedirect(w, r, back, "error", "Upload too large or malformed.")
+		return
+	}
+	file, _, err := r.FormFile("envfile")
+	if err != nil {
+		flashRedirect(w, r, back, "error", "Choose a .env file to upload.")
+		return
+	}
+	defer file.Close()
+	body, err := io.ReadAll(file)
+	if err != nil {
+		flashRedirect(w, r, back, "error", "Failed to read uploaded file.")
+		return
+	}
+	overwrite := r.FormValue("overwrite") == "true"
+	var createdBy *string
+	if pc != nil && pc.User != nil {
+		uid := pc.User.ID
+		createdBy = &uid
+	}
+	uploaded, skipped, err := s.uploadEnvfileBytes(r, p, env.ID, body, overwrite, createdBy)
+	if err != nil {
+		switch {
+		case errors.Is(err, errInvalidEnvfile):
+			flashRedirect(w, r, back, "error", "Invalid .env file.")
+		case errors.Is(err, errInvalidKey):
+			flashRedirect(w, r, back, "error", "File contains an invalid key (must match A-Z0-9_).")
+		default:
+			s.log.Error("portal admin envfile upload", "err", err)
+			flashRedirect(w, r, back, "error", "Upload failed.")
+		}
+		return
+	}
+	flashRedirect(w, r, back, "success", fmt.Sprintf("Uploaded %d, skipped %d.", uploaded, skipped))
+}
+
+func (s *Server) handlePortalAdminSecretsExport(w http.ResponseWriter, r *http.Request) {
+	projectSlug := r.PathValue("project")
+	envSlug := r.PathValue("env")
+	back := "/portal/admin/projects/" + projectSlug + "/envs/" + envSlug + "/secrets"
+
+	p, err := s.store.GetProject(r.Context(), projectSlug)
+	if err != nil {
+		flashRedirect(w, r, back, "error", "Project not found.")
+		return
+	}
+	env, err := s.store.GetEnvironment(r.Context(), p.ID, envSlug)
+	if err != nil {
+		flashRedirect(w, r, back, "error", "Environment not found.")
+		return
+	}
+	content, err := s.renderEnvfile(r, p, env.ID)
+	if err != nil {
+		s.log.Error("portal admin envfile download", "err", err)
+		flashRedirect(w, r, back, "error", "Export failed.")
+		return
+	}
+	filename := projectSlug + "-" + envSlug + ".env"
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(content))
 }
 
 // ── Admin: Projects (envs + members) ──────────────────────────────────────────
