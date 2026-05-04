@@ -39,6 +39,29 @@ Session token names are set to the client hostname at login time (sent by the CL
 
 `PUT /auth/password` and `PUT /users/{user_id}/password` both call `DeleteAllTokensForUser` after updating the password hash. All existing session and machine tokens for the affected user are invalidated immediately.
 
+### Portal session cookie
+
+The `/portal/*` admin UI authenticates with the `vault_portal` cookie. On
+login (local password or OIDC SSO), `auth.IssueUserToken` issues a normal
+session token row in the `tokens` table; the raw token value is sealed with
+AES-256-GCM (`crypto.SealBytes`) under a 32-byte key, base64url-encoded, and
+set as an HttpOnly + Secure + SameSite=Lax cookie. `portalAuth` decodes the
+cookie on every request, runs `auth.Validate` exactly like the bearer flow,
+re-checks expiry, and slides session expiry — so portal sessions inherit the
+15-min sliding window, deactivation, and audit semantics of API tokens.
+`GetUserByID` runs on every request to detect mid-session deactivation.
+
+The cookie key is selected at server startup:
+
+| Mode | Source | Restart behaviour |
+|------|--------|-------------------|
+| `VAULT_MASTER_KEY` set | the parsed master KEK | sessions survive restart |
+| KMS-mode (`VAULT_KMS_KEY_ID`) | per-process random 32 bytes | restart invalidates outstanding portal sessions |
+
+Machine tokens that somehow end up in the cookie are rejected
+(`tok.UserID == nil`); the portal is for human sessions only. Scoped portal
+routes (`/portal/admin/*`) additionally require `user.Role == admin`.
+
 ### SPIFFE / mTLS
 
 When a client presents a TLS certificate, `authFromClientCert` runs before bearer-token auth:
@@ -59,7 +82,7 @@ Certificate chain verification is handled by Go's TLS stack. Set `VAULT_TLS_CLIE
 - bcrypt cost factor 12 (`auth.HashPassword`)
 - `auth.CheckPassword` uses `bcrypt.CompareHashAndPassword` (constant-time)
 - Plaintext passwords are never logged or stored anywhere other than the bcrypt hash in the DB
-- Minimum length: 8 characters (enforced in API handlers)
+- Minimum length: 8 characters on the JSON API (`validatePassword`); 12 characters in the admin portal (`validatePortalPassword` / `minPortalPasswordLen`)
 
 ### Rate limiting
 
@@ -231,7 +254,7 @@ Querying is handled entirely by `vault-audit query`, which reads directly from t
 | Members | `member.add`, `member.update`, `member.remove` |
 | Dynamic | `dynamic.backend.set`, `dynamic.backend.delete`, `dynamic.role.set`, `dynamic.role.delete`, `dynamic.lease.issue`, `dynamic.lease.revoke` |
 | Certificates | `cert.principal.register`, `cert.principal.delete` |
-| Users | `user.create` |
+| Users | `user.create`, `user.set_active` |
 | SCIM | `scim.user.create`, `scim.user.update`, `scim.user.deactivate`, `scim.group.sync`, `scim.token.create`, `scim.token.delete` |
 
 ### Record structure
@@ -244,7 +267,7 @@ Querying is handled entirely by `vault-audit query`, which reads directly from t
 | `project_id` | Empty string when not project-scoped |
 | `env_id` | Environment UUID for env-scoped actions (`secret.*`, `dynamic.*`, `env.*`); empty otherwise |
 | `resource` | Identifies the affected resource (secret key name, user email, SPIFFE ID, etc.) |
-| `metadata` | Free-form string; secret values are masked to first 3 characters + `...` |
+| `metadata` | Free-form JSON string; secret values are masked to first 3 characters + `...`. Portal-originated mutations include `"via":"portal"` (see `portalMeta` in `internal/api/web_portal.go`) |
 | `ip` | Client IP: `X-Forwarded-For` (first value) when the TCP connection arrives from a trusted proxy CIDR (`VAULT_TRUSTED_PROXIES`), otherwise `RemoteAddr` |
 | `occurred_at` | Server-side UTC timestamp; stored as `created_at` in the audit DB and returned as `created_at` by the API |
 

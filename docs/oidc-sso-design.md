@@ -222,10 +222,18 @@ type Server struct {
     // ... existing fields ...
     oidc        *oidcpkg.Provider // nil when not configured
     oidcEnforce bool              // true = local login/signup returns 403
+    cookieKey   []byte            // 32 bytes; nil disables /portal/*
+    portalTmpl  *tmplManager      // lazy-initialised when cookieKey is set
+    allowReg    bool              // VAULT_ALLOW_REGISTRATION; ignored when oidcEnforce
 }
 
-func New(st, kp, projectKP, log, oidcProvider *oidcpkg.Provider, oidcEnforce bool) *Server
+func New(st store.Store, kp crypto.KeyProvider, projectKP *crypto.ProjectKeyCache,
+         log *slog.Logger, cfg api.Config) *Server
 ```
+
+`api.Config` carries `OIDC`, `OIDCEnforce`, `Sink`, `TrustedProxies`,
+`AuthRatePerMin`, `PruneMinCount`, `PruneMinAge`, `CookieKey`, and
+`AllowRegistration`.
 
 ### Enforce Mode (`internal/api/auth.go`)
 
@@ -254,6 +262,7 @@ if s.oidcEnforce {
 | `VAULT_OIDC_CLIENT_SECRET` | Yes (if OIDC) | OAuth2 client secret; also used to derive the state signing key |
 | `VAULT_OIDC_REDIRECT_URI` | Yes (if OIDC) | Callback URL (e.g. `https://vault.example.com/api/v1/auth/oidc/callback`) |
 | `VAULT_OIDC_ENFORCE` | No | Set to `"true"` to disable `/auth/login` and `/auth/signup` |
+| `VAULT_ALLOW_REGISTRATION` | No | `"true"` enables self-service signup at `/portal/register`. First registrant is promoted to admin if no admin exists. Ignored when `VAULT_OIDC_ENFORCE=true`. |
 
 OIDC is disabled (no env vars set) → `s.oidc == nil` → all OIDC endpoints return 404, local auth works normally.
 

@@ -183,6 +183,43 @@ sweep():
                 The next sweep will retry (every 60 s).
 ```
 
+## Portal session (`/portal/*`)
+
+```
+POST /portal/login (local password)
+ │
+ ├─ rate-limit per IP (same limiter as JSON /auth/*)
+ ├─ s.loginUser(email, password)
+ │   ├─ GetUserByEmail → bcrypt.CompareHashAndPassword
+ │   ├─ on bad creds → ActionAuthLoginFailed audit (fail-closed); return ok=false
+ │   └─ on success    → return user
+ ├─ user.Active check  — deactivated → flash + 302 /portal/login
+ ├─ auth.IssueUserToken(userID, "portal")
+ │   └─ rawToken (one-time), tok row in tokens (is_session=true, 15-min expiry)
+ ├─ setPortalCookie(rawToken)
+ │   └─ crypto.SealBytes(cookieKey, rawToken) → base64url → HttpOnly cookie
+ ├─ logAuditEnv(ActionAuthLogin, …, portalMeta(nil))   ← {"via":"portal"}
+ │   └─ on audit failure: DeleteToken(tok.ID, user.ID) + clearPortalCookie + 500
+ └─ 302 /portal
+
+every subsequent /portal/* request
+ └─ portalAuth middleware
+     ├─ readPortalCookie  → AES-256-GCM unseal → raw bearer
+     ├─ auth.Validate(raw)
+     │   ├─ tok not found / err → clear cookie + 302 /portal/login
+     │   ├─ ExpiresAt < now()  → clear cookie + 302 /portal/login
+     │   └─ tok.UserID == nil  → reject machine token, clear, 302
+     ├─ ExtendTokenExpiry(now()+15min)        — sliding window
+     ├─ GetUserByID → detect mid-session deactivation
+     └─ inject *portalCtx + tokenKey into ctx — handlers can use s.logAudit*
+```
+
+OIDC SSO from the portal follows the same code path as the CLI flow at
+`/api/v1/auth/oidc/callback`; the only difference is the `cli_callback`
+sentinel `vault://portal`, which the callback handler recognises after
+verifying ID token + JIT-provisioning the user, sealing the bearer into
+the portal cookie before redirecting to `/portal`.
+
 ## SPIFFE principal registration
 
 ```

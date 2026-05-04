@@ -21,6 +21,9 @@ HTTP handlers for vaultd. All routes go through the `auth` middleware in `middle
 | `audit.go` | audit log queries (reads from `auditStore`) + **all action string constants** + `logAudit`/`logAuditEnv` helpers |
 | `users.go` | server-admin user management |
 | `scim.go` | SCIM 2.0 Users + Groups endpoints + SCIM token management |
+| `web.go` | embedded `web/` template + static FS, `tmplManager`, `staticHandler` |
+| `web_portal.go` | `/portal/*` self-service: login (local + OIDC sentinel), register, account, tokens. Cookie helpers (`set/read/clearPortalCookie`), `portalAuth` middleware, `loginUser` (shared with JSON `handleLogin`), `flashRedirect`, `portalMeta` |
+| `web_portal_admin.go` | `/portal/admin/*` admin-only: users, SCIM tokens, SCIM group→role mappings, projects (envs + members) |
 
 ## Adding a handler
 
@@ -50,6 +53,20 @@ mTLS cert present?
   no match       → errCertUnregistered → fall through
 Bearer token → auth.Validate
 ```
+
+## Portal flow (web_portal.go)
+
+```
+portalAuth → readPortalCookie (AES-256-GCM unseal, base64url) → auth.Validate
+  → expiry check → slide if IsSession → reject if !UserID
+  → GetUserByID → reject if !Active → set both portalCtxKey and tokenKey in ctx
+```
+
+Portal handlers reuse `s.logAudit*` because `tokenKey` is set in the request
+context. Use `flashRedirect(w, r, path, "error"|"success"|"token", msg)` for
+all portal redirects (escapes via `url.Values`) and `portalMeta(map)` for
+audit metadata (always tags `via=portal`). New portal handlers register on
+the `s.portalAuth` or `s.portalAdminAuth` middleware in `server.go`.
 
 ## Testing
 

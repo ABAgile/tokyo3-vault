@@ -4,7 +4,7 @@
 
 ## Overview
 
-Vault is a self-hosted secrets manager. It stores encrypted secrets, issues short-lived dynamic database credentials, and provides a full audit trail. All access goes through a single HTTPS API server (`vaultd`); the companion CLI (`vault`) is a thin HTTP client.
+Vault is a self-hosted secrets manager. It stores encrypted secrets, issues short-lived dynamic database credentials, and provides a full audit trail. All access goes through a single HTTPS API server (`vaultd`); the companion CLI (`vault`) is a thin HTTP client. `vaultd` also serves a server-rendered admin portal at `/portal/*` on the same listener for user/project/SCIM administration — secrets and dynamic credentials remain CLI-only. See [README.md → Admin Portal](../README.md#admin-portal).
 
 ```
 ┌───────────────────────────────────────────────────────────────┐
@@ -105,6 +105,10 @@ Handler files map roughly to resource types:
 | `access.go` | unified access view (members + tokens + principals per project/env) |
 | `audit.go` | action string constants + `logAudit`/`logAuditEnv` helpers |
 | `users.go` | server-admin user management |
+| `scim.go` | SCIM 2.0 Users + Groups + SCIM token + group→role mapping management |
+| `web.go` | embedded `web/` template + static FS, `tmplManager`, `staticHandler` |
+| `web_portal.go` | `/portal/*` self-service (login, register, account, tokens) + portal cookie + `portalAuth` middleware |
+| `web_portal_admin.go` | `/portal/admin/*` (users, SCIM tokens, SCIM group→role, projects) |
 
 ### `internal/crypto` — encryption & key management
 
@@ -195,6 +199,7 @@ Key relationships:
 | `VAULT_OIDC_CLIENT_SECRET` | no | — | OAuth2 client secret |
 | `VAULT_OIDC_REDIRECT_URI` | no | — | Callback URL registered with the IdP |
 | `VAULT_OIDC_ENFORCE` | no | `false` | `"true"` disables local `/auth/login` and `/auth/signup` |
+| `VAULT_ALLOW_REGISTRATION` | no | `false` | `"true"` enables self-service signup at `/portal/register`. First registrant becomes admin if no admin exists. Ignored when `VAULT_OIDC_ENFORCE=true`. |
 
 **Audit sink — `vaultd serve` (publisher credential)**
 

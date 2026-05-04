@@ -1,7 +1,7 @@
 # Vault — agent orientation
 
 ## What this is
-Self-hosted secrets manager. Stores encrypted secrets, issues short-lived dynamic database credentials, handles user auth (local, OIDC, SCIM, mTLS). Single HTTPS API server (`vaultd`) + thin CLI (`vault`).
+Self-hosted secrets manager. Stores encrypted secrets, issues short-lived dynamic database credentials, handles user auth (local, OIDC, SCIM, mTLS). Single HTTPS API server (`vaultd`) + thin CLI (`vault`) + a server-rendered admin portal at `/portal/*` (user/project/SCIM admin only — secrets remain CLI-only).
 
 ## Layout
 
@@ -9,7 +9,7 @@ Self-hosted secrets manager. Stores encrypted secrets, issues short-lived dynami
 cmd/vaultd/          server binary — startup, TLS, env config
 cmd/vault/           CLI client (Cobra); reads ~/.vault/config.json
 cmd/vault-audit/     standalone audit pipeline tool — consume (NATS→DB) and query subcommands
-internal/api/        HTTP handlers (one file per resource type)
+internal/api/        HTTP handlers (one file per resource type) + `web/` embedded templates/static + `web_portal*.go` for /portal/*
 internal/audit/      audit pipeline — Entry, Sink, JetStreamSink, Store interface, Filter
 internal/audit/postgres/    audit DB Postgres backend — Open, Migrate, UpsertAuditLog, ListAuditLogs
 internal/audit/postgres/migrations/  versioned SQL migrations for the audit DB (Postgres)
@@ -52,6 +52,7 @@ docs/                architecture.md, contributing.md, data-flows.md, er-diagram
 - **Auth middleware** (`internal/api/middleware.go`): mTLS cert (SPIFFE URI SAN first, then email SAN) → bearer token. `errCertUnregistered` is the fall-through sentinel.
 - **SCIM deprovisioning**: `SetUserActive(false)` + `DeleteAllTokensForUser` — two calls intentionally, not atomic.
 - **OIDC state token**: stateless HMAC-signed, carries `{code_verifier, nonce, cli_callback, exp}`, key = SHA-256(client_secret).
+- **Portal session**: `vault_portal` cookie holds the raw bearer token sealed with AES-256-GCM under either `VAULT_MASTER_KEY` (sessions survive restart) or a per-process random key (KMS-mode; restart invalidates sessions). Validation reuses `auth.Validate`, so the 15-min sliding expiry, deactivation, and audit semantics match the JSON API. OIDC SSO into the portal uses the `vault://portal` cli_callback sentinel and the same `/api/v1/auth/oidc/callback` route — no second OAuth client.
 
 ## Task shortcuts
 
@@ -66,6 +67,7 @@ docs/                architecture.md, contributing.md, data-flows.md, er-diagram
 | Work on mTLS cert principals | `internal/api/certs.go` + `internal/store/*/postgres_certs.go` |
 | Crypto / key rotation | `internal/crypto/` + `docs/security.md` |
 | Work on audit pipeline | `internal/audit/` + `internal/audit/postgres/` + `internal/audit/sqlite/` + `cmd/vault-audit/main.go` + `docs/security.md` |
+| Work on the admin portal | `internal/api/web.go` + `internal/api/web_portal.go` + `internal/api/web_portal_admin.go` + `internal/api/web/tmpl/` + `internal/api/server.go` (route table) |
 
 ## Test mocks
 
