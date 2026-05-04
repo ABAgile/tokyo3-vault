@@ -612,6 +612,20 @@ var (
 	errInvalidKey     = errors.New("invalid key")
 )
 
+// decryptSecretVersion loads the project's PEK and decrypts a specific secret
+// version's value. Caller is responsible for authorization and audit logging.
+func (s *Server) decryptSecretVersion(ctx context.Context, project *model.Project, sv *model.SecretVersion) ([]byte, error) {
+	projectKP, err := s.projectKP.ForProject(ctx, project.ID, project.EncryptedPEK)
+	if err != nil {
+		return nil, fmt.Errorf("load project key: %w", err)
+	}
+	plaintext, err := crypto.DecryptSecret(ctx, projectKP, sv.EncryptedDEK, sv.EncryptedValue)
+	if err != nil {
+		return nil, fmt.Errorf("decrypt: %w", err)
+	}
+	return plaintext, nil
+}
+
 // uploadEnvfileBytes parses a raw .env body and upserts its secrets. Audits
 // each upserted key and prunes old versions. Wraps errInvalidEnvfile or
 // errInvalidKey on parse / validation failures so callers can map to 400.

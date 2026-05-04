@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/abagile/tokyo3-vault/internal/crypto"
 	"github.com/abagile/tokyo3-vault/internal/model"
 	"github.com/abagile/tokyo3-vault/internal/store"
 )
@@ -208,6 +209,147 @@ func TestPortalAdminSecretRollback_OK(t *testing.T) {
 	}
 	if !rolledBack {
 		t.Fatal("RollbackSecret was not called")
+	}
+}
+
+// ── Secret reveal ─────────────────────────────────────────────────────────────
+
+// makeEncryptedSecret writes plaintext through the test server's project-key
+// cache so the same server's decryptSecretVersion can recover it. Returns the
+// Project (with EncryptedPEK populated) and the matching SecretVersion.
+func makeEncryptedSecret(t *testing.T, srv *Server, plaintext string) (*model.Project, *model.SecretVersion) {
+	t.Helper()
+	pek := make([]byte, 32)
+	for i := range pek {
+		pek[i] = byte(i + 1)
+	}
+	ctx := context.Background()
+	encPEK, err := srv.kp.WrapDEK(ctx, pek)
+	if err != nil {
+		t.Fatalf("wrap PEK: %v", err)
+	}
+	p := &model.Project{ID: "p1", Slug: "demo", EncryptedPEK: encPEK}
+	pkp, err := srv.projectKP.ForProject(ctx, p.ID, p.EncryptedPEK)
+	if err != nil {
+		t.Fatalf("project KP: %v", err)
+	}
+	encVal, encDEK, err := crypto.EncryptSecret(ctx, pkp, []byte(plaintext))
+	if err != nil {
+		t.Fatalf("encrypt: %v", err)
+	}
+	return p, &model.SecretVersion{
+		ID:             "v1",
+		SecretID:       "s1",
+		Version:        1,
+		EncryptedValue: encVal,
+		EncryptedDEK:   encDEK,
+		CreatedAt:      time.Now(),
+	}
+}
+
+func TestPortalAdminSecretReveal_OK(t *testing.T) {
+	st := &mockStore{}
+	srv := newPortalAdminTestServer(t, st)
+	p, sv := makeEncryptedSecret(t, srv, "p4ssw0rd!")
+
+	st.getProject = func(_ context.Context, slug string) (*model.Project, error) {
+		if slug != p.Slug {
+			return nil, store.ErrNotFound
+		}
+		return p, nil
+	}
+	st.getEnvironment = func(_ context.Context, _, _ string) (*model.Environment, error) {
+		return &model.Environment{ID: "e1", Slug: "prod"}, nil
+	}
+	st.getSecret = func(_ context.Context, _, _, key string) (*model.Secret, *model.SecretVersion, error) {
+		if key != "DB_PASSWORD" {
+			return nil, nil, store.ErrNotFound
+		}
+		return &model.Secret{ID: "s1", Key: key}, sv, nil
+	}
+
+	r := httptest.NewRequest(http.MethodPost, "/portal/admin/projects/demo/envs/prod/secrets/db_password/reveal", nil)
+	r.SetPathValue("project", "demo")
+	r.SetPathValue("env", "prod")
+	r.SetPathValue("key", "db_password")
+	r = withPortalAdmin(r)
+	w := httptest.NewRecorder()
+
+	srv.handlePortalAdminSecretReveal(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d body=%q", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "p4ssw0rd!") {
+		t.Fatalf("body should contain plaintext value, got: %s", w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "secret.get") {
+		t.Fatalf("body should warn that this view was logged as secret.get, got: %s", w.Body.String())
+	}
+}
+
+func TestPortalAdminSecretReveal_NotFound(t *testing.T) {
+	st := &mockStore{}
+	setProjectEnv(st)
+	st.getSecret = func(_ context.Context, _, _, _ string) (*model.Secret, *model.SecretVersion, error) {
+		return nil, nil, store.ErrNotFound
+	}
+	srv := newPortalAdminTestServer(t, st)
+
+	r := httptest.NewRequest(http.MethodPost, "/portal/admin/projects/demo/envs/prod/secrets/missing/reveal", nil)
+	r.SetPathValue("project", "demo")
+	r.SetPathValue("env", "prod")
+	r.SetPathValue("key", "missing")
+	r = withPortalAdmin(r)
+	w := httptest.NewRecorder()
+
+	srv.handlePortalAdminSecretReveal(w, r)
+
+	if w.Code != http.StatusFound {
+		t.Fatalf("expected redirect, got %d", w.Code)
+	}
+	if !strings.Contains(w.Header().Get("Location"), "error=Secret+not+found") {
+		t.Fatalf("expected secret-not-found flash, got %q", w.Header().Get("Location"))
+	}
+}
+
+func TestPortalAdminSecretVersionReveal_OK(t *testing.T) {
+	st := &mockStore{}
+	srv := newPortalAdminTestServer(t, st)
+	p, sv := makeEncryptedSecret(t, srv, "old-secret-value")
+
+	st.getProject = func(_ context.Context, _ string) (*model.Project, error) { return p, nil }
+	st.getEnvironment = func(_ context.Context, _, _ string) (*model.Environment, error) {
+		return &model.Environment{ID: "e1", Slug: "prod"}, nil
+	}
+	st.getSecret = func(_ context.Context, _, _, _ string) (*model.Secret, *model.SecretVersion, error) {
+		return &model.Secret{ID: "s1", Key: "DB_PASSWORD"}, &model.SecretVersion{ID: "v3"}, nil
+	}
+	st.getSecretVersion = func(_ context.Context, secretID, versionID string) (*model.SecretVersion, error) {
+		if secretID == "s1" && versionID == "v1" {
+			return sv, nil
+		}
+		return nil, store.ErrNotFound
+	}
+
+	r := httptest.NewRequest(http.MethodPost, "/portal/admin/projects/demo/envs/prod/secrets/db_password/versions/v1/reveal", nil)
+	r.SetPathValue("project", "demo")
+	r.SetPathValue("env", "prod")
+	r.SetPathValue("key", "db_password")
+	r.SetPathValue("version", "v1")
+	r = withPortalAdmin(r)
+	w := httptest.NewRecorder()
+
+	srv.handlePortalAdminSecretVersionReveal(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d body=%q", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "old-secret-value") {
+		t.Fatalf("body should contain historical plaintext, got: %s", w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "Back to versions") {
+		t.Fatalf("expected Back-to-versions link (BackToVersions=true), got: %s", w.Body.String())
 	}
 }
 

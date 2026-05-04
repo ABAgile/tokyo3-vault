@@ -1,7 +1,7 @@
 # Vault — agent orientation
 
 ## What this is
-Self-hosted secrets manager. Stores encrypted secrets, issues short-lived dynamic database credentials, handles user auth (local, OIDC, SCIM, mTLS). Single HTTPS API server (`vaultd`) + thin CLI (`vault`) + a server-rendered admin portal at `/portal/*` (user/project/SCIM admin only — secrets remain CLI-only).
+Self-hosted secrets manager. Stores encrypted secrets, issues short-lived dynamic database credentials, handles user auth (local, OIDC, SCIM, mTLS). Single HTTPS API server (`vaultd`) + thin CLI (`vault`) + a server-rendered admin portal at `/portal/*` covering user/project/secret admin (every secret-value reveal is audit-logged as `secret.get`). Dynamic-credential issuance and lease management remain CLI-only.
 
 ## Layout
 

@@ -2,6 +2,7 @@ package api
 
 import (
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -582,6 +583,136 @@ func (s *Server) handlePortalAdminSecretRollback(w http.ResponseWriter, r *http.
 		return
 	}
 	flashRedirect(w, r, back, "success", "Rolled back to version "+versionID+".")
+}
+
+// secretValuePage is the data envelope for portal_admin_secret_value.html.
+type secretValuePage struct {
+	portalBase
+	Project        *model.Project
+	Env            *model.Environment
+	Key            string
+	Version        int
+	IsCurrent      bool
+	CreatedAt      time.Time
+	CreatedBy      *string
+	Value          string
+	BackToVersions bool // when revealed from the version history page, link "Back" goes there
+}
+
+// revealAuditMeta is the JSON metadata for secret.get audit entries from the
+// portal — masked plaintext preview + version + via tag.
+func revealAuditMeta(maskedValue string, version int) string {
+	b, _ := json.Marshal(map[string]any{"value": maskedValue, "version": version, "via": "portal"})
+	return string(b)
+}
+
+// handlePortalAdminSecretReveal decrypts and renders the current value for the
+// requested secret. POST-only so the value never sits in a URL; each reveal
+// emits a secret.get audit entry with a masked preview.
+func (s *Server) handlePortalAdminSecretReveal(w http.ResponseWriter, r *http.Request) {
+	pc := portalFromCtx(r)
+	projectSlug := r.PathValue("project")
+	envSlug := r.PathValue("env")
+	key := strings.ToUpper(r.PathValue("key"))
+	back := "/portal/admin/projects/" + projectSlug + "/envs/" + envSlug + "/secrets"
+
+	p, err := s.store.GetProject(r.Context(), projectSlug)
+	if err != nil {
+		flashRedirect(w, r, back, "error", "Project not found.")
+		return
+	}
+	env, err := s.store.GetEnvironment(r.Context(), p.ID, envSlug)
+	if err != nil {
+		flashRedirect(w, r, back, "error", "Environment not found.")
+		return
+	}
+	_, sv, err := s.store.GetSecret(r.Context(), p.ID, env.ID, key)
+	if errors.Is(err, store.ErrNotFound) || sv == nil {
+		flashRedirect(w, r, back, "error", "Secret not found.")
+		return
+	}
+	if err != nil {
+		s.log.Error("portal admin reveal: get secret", "err", err)
+		flashRedirect(w, r, back, "error", "Lookup failed.")
+		return
+	}
+	plaintext, err := s.decryptSecretVersion(r.Context(), p, sv)
+	if err != nil {
+		s.log.Error("portal admin reveal: decrypt", "err", err)
+		flashRedirect(w, r, back, "error", "Decrypt failed.")
+		return
+	}
+	if err := s.logAuditEnv(r, ActionSecretGet, p.ID, env.ID, key, revealAuditMeta(maskValue(string(plaintext)), sv.Version)); err != nil {
+		http.Error(w, "audit unavailable", http.StatusInternalServerError)
+		return
+	}
+	s.portalTmpl.render(w, "portal_admin_secret_value.html", secretValuePage{
+		portalBase: newPortalBase(pc, "admin-projects"),
+		Project:    p, Env: env, Key: key,
+		Version: sv.Version, IsCurrent: true,
+		CreatedAt: sv.CreatedAt, CreatedBy: sv.CreatedBy,
+		Value: string(plaintext),
+	})
+}
+
+// handlePortalAdminSecretVersionReveal decrypts a specific (possibly historical)
+// version. Same audit + render path as the current-version reveal.
+func (s *Server) handlePortalAdminSecretVersionReveal(w http.ResponseWriter, r *http.Request) {
+	pc := portalFromCtx(r)
+	projectSlug := r.PathValue("project")
+	envSlug := r.PathValue("env")
+	key := strings.ToUpper(r.PathValue("key"))
+	versionID := r.PathValue("version")
+	back := "/portal/admin/projects/" + projectSlug + "/envs/" + envSlug + "/secrets/" + key + "/versions"
+
+	p, err := s.store.GetProject(r.Context(), projectSlug)
+	if err != nil {
+		flashRedirect(w, r, back, "error", "Project not found.")
+		return
+	}
+	env, err := s.store.GetEnvironment(r.Context(), p.ID, envSlug)
+	if err != nil {
+		flashRedirect(w, r, back, "error", "Environment not found.")
+		return
+	}
+	sec, currentVer, err := s.store.GetSecret(r.Context(), p.ID, env.ID, key)
+	if errors.Is(err, store.ErrNotFound) {
+		flashRedirect(w, r, back, "error", "Secret not found.")
+		return
+	}
+	if err != nil {
+		s.log.Error("portal admin version reveal: get secret", "err", err)
+		flashRedirect(w, r, back, "error", "Lookup failed.")
+		return
+	}
+	sv, err := s.store.GetSecretVersion(r.Context(), sec.ID, versionID)
+	if errors.Is(err, store.ErrNotFound) {
+		flashRedirect(w, r, back, "error", "Version not found for this secret.")
+		return
+	}
+	if err != nil {
+		s.log.Error("portal admin version reveal: get version", "err", err)
+		flashRedirect(w, r, back, "error", "Lookup failed.")
+		return
+	}
+	plaintext, err := s.decryptSecretVersion(r.Context(), p, sv)
+	if err != nil {
+		s.log.Error("portal admin version reveal: decrypt", "err", err)
+		flashRedirect(w, r, back, "error", "Decrypt failed.")
+		return
+	}
+	if err := s.logAuditEnv(r, ActionSecretGet, p.ID, env.ID, key, revealAuditMeta(maskValue(string(plaintext)), sv.Version)); err != nil {
+		http.Error(w, "audit unavailable", http.StatusInternalServerError)
+		return
+	}
+	isCurrent := currentVer != nil && currentVer.ID == sv.ID
+	s.portalTmpl.render(w, "portal_admin_secret_value.html", secretValuePage{
+		portalBase: newPortalBase(pc, "admin-projects"),
+		Project:    p, Env: env, Key: key,
+		Version: sv.Version, IsCurrent: isCurrent,
+		CreatedAt: sv.CreatedAt, CreatedBy: sv.CreatedBy,
+		Value: string(plaintext), BackToVersions: true,
+	})
 }
 
 func (s *Server) handlePortalAdminSecretsImport(w http.ResponseWriter, r *http.Request) {
