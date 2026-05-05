@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	lcrypto "github.com/abagile/tokyo3-lcl/crypto"
 	"github.com/abagile/tokyo3-vault/internal/audit"
 	"github.com/abagile/tokyo3-vault/internal/crypto"
 	oidcpkg "github.com/abagile/tokyo3-vault/internal/oidc"
@@ -65,7 +66,7 @@ type Config struct {
 // Server holds shared dependencies for all HTTP handlers.
 type Server struct {
 	store          store.Store
-	kp             crypto.KeyProvider      // server KEK — used only to wrap/unwrap PEKs
+	kp             lcrypto.KeyProvider     // server KEK — used only to wrap/unwrap PEKs
 	projectKP      *crypto.ProjectKeyCache // project-scoped key cache; wraps/unwraps per-secret DEKs
 	log            *slog.Logger
 	oidc           *oidcpkg.Provider // nil when OIDC is not configured
@@ -83,7 +84,7 @@ type Server struct {
 }
 
 // New returns a configured Server.
-func New(st store.Store, kp crypto.KeyProvider, projectKP *crypto.ProjectKeyCache, log *slog.Logger, cfg Config) *Server {
+func New(st store.Store, kp lcrypto.KeyProvider, projectKP *crypto.ProjectKeyCache, log *slog.Logger, cfg Config) *Server {
 	sink := cfg.Sink
 	if sink == nil {
 		sink = audit.NoopSink{}

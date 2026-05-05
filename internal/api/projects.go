@@ -102,7 +102,7 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 	// (master KEK directly) until operator runs `vaultd migrate-keys`.
 	pek := make([]byte, 32)
 	if _, randErr := rand.Read(pek); randErr == nil {
-		if encPEK, wrapErr := s.kp.WrapDEK(r.Context(), pek); wrapErr == nil {
+		if encPEK, wrapErr := s.kp.Wrap(r.Context(), pek); wrapErr == nil {
 			if err := s.store.SetProjectKey(r.Context(), p.ID, encPEK, time.Now().UTC()); err != nil {
 				s.log.Warn("set project key", "project", p.ID, "err", err)
 			}
@@ -218,7 +218,7 @@ func (s *Server) rotateProjectPEK(ctx context.Context, p *model.Project) error {
 	if p.EncryptedPEK == nil {
 		return errProjectMissingPEK
 	}
-	oldPEK, err := s.kp.UnwrapDEK(ctx, p.EncryptedPEK)
+	oldPEK, err := s.kp.Unwrap(ctx, p.EncryptedPEK)
 	if err != nil {
 		return fmt.Errorf("unwrap old PEK: %w", err)
 	}
@@ -228,7 +228,7 @@ func (s *Server) rotateProjectPEK(ctx context.Context, p *model.Project) error {
 	if _, err := rand.Read(newPEK); err != nil {
 		return fmt.Errorf("generate PEK: %w", err)
 	}
-	newEncPEK, err := s.kp.WrapDEK(ctx, newPEK)
+	newEncPEK, err := s.kp.Wrap(ctx, newPEK)
 	if err != nil {
 		return fmt.Errorf("wrap new PEK: %w", err)
 	}
@@ -236,11 +236,11 @@ func (s *Server) rotateProjectPEK(ctx context.Context, p *model.Project) error {
 
 	rotatedAt := time.Now().UTC()
 	err = s.store.RotateProjectPEK(ctx, p.ID, newEncPEK, rotatedAt, func(encDEK []byte) ([]byte, error) {
-		dek, err := oldProjectKP.UnwrapDEK(ctx, encDEK)
+		dek, err := oldProjectKP.Unwrap(ctx, encDEK)
 		if err != nil {
 			return nil, fmt.Errorf("unwrap DEK: %w", err)
 		}
-		return newProjectKP.WrapDEK(ctx, dek)
+		return newProjectKP.Wrap(ctx, dek)
 	})
 	if err != nil {
 		return fmt.Errorf("rotate: %w", err)

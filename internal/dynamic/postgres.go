@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/abagile/tokyo3-vault/internal/crypto"
+	lcrypto "github.com/abagile/tokyo3-lcl/crypto"
+	"github.com/abagile/tokyo3-lcl/tlsutil"
 	"github.com/abagile/tokyo3-vault/internal/model"
-	"github.com/abagile/tokyo3-vault/internal/tlsutil"
 	"github.com/jackc/pgx/v5"
 	pgxstdlib "github.com/jackc/pgx/v5/stdlib"
 )
@@ -23,7 +23,7 @@ import (
 // The backend's EncryptedConfig decrypts to a JSON object: {"dsn": "postgres://..."}.
 type PostgresIssuer struct{}
 
-func (p *PostgresIssuer) Issue(ctx context.Context, kp crypto.KeyProvider, backend *model.DynamicBackend, role *model.DynamicRole, ttl time.Duration) (username, password string, expiresAt time.Time, err error) {
+func (p *PostgresIssuer) Issue(ctx context.Context, kp lcrypto.KeyProvider, backend *model.DynamicBackend, role *model.DynamicRole, ttl time.Duration) (username, password string, expiresAt time.Time, err error) {
 	cfg, err := decryptConfig(ctx, kp, backend)
 	if err != nil {
 		return "", "", time.Time{}, fmt.Errorf("decrypt config: %w", err)
@@ -38,7 +38,7 @@ func (p *PostgresIssuer) Issue(ctx context.Context, kp crypto.KeyProvider, backe
 	return username, password, expiresAt, nil
 }
 
-func (p *PostgresIssuer) Revoke(ctx context.Context, kp crypto.KeyProvider, backend *model.DynamicBackend, revocationTmpl, username string) error {
+func (p *PostgresIssuer) Revoke(ctx context.Context, kp lcrypto.KeyProvider, backend *model.DynamicBackend, revocationTmpl, username string) error {
 	cfg, err := decryptConfig(ctx, kp, backend)
 	if err != nil {
 		return fmt.Errorf("decrypt config: %w", err)
@@ -57,8 +57,8 @@ type pgConfig struct {
 	CACert     string `json:"ca_cert,omitempty"`     // PEM-encoded CA for server verification
 }
 
-func decryptConfig(ctx context.Context, kp crypto.KeyProvider, backend *model.DynamicBackend) (pgConfig, error) {
-	plaintext, err := crypto.DecryptSecret(ctx, kp, backend.EncryptedConfigDEK, backend.EncryptedConfig)
+func decryptConfig(ctx context.Context, kp lcrypto.KeyProvider, backend *model.DynamicBackend) (pgConfig, error) {
+	plaintext, err := lcrypto.DecryptEnvelope(ctx, kp, backend.EncryptedConfigDEK, backend.EncryptedConfig)
 	if err != nil {
 		return pgConfig{}, err
 	}

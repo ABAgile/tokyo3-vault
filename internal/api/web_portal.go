@@ -16,8 +16,8 @@ import (
 	"strings"
 	"time"
 
+	lcrypto "github.com/abagile/tokyo3-lcl/crypto"
 	"github.com/abagile/tokyo3-vault/internal/auth"
-	icrypto "github.com/abagile/tokyo3-vault/internal/crypto"
 	"github.com/abagile/tokyo3-vault/internal/model"
 	"github.com/abagile/tokyo3-vault/internal/store"
 )
@@ -72,7 +72,7 @@ func newPortalBase(pc *portalCtx, page string) portalBase {
 // ── Cookie helpers ────────────────────────────────────────────────────────────
 
 func (s *Server) setPortalCookie(w http.ResponseWriter, rawToken string) error {
-	enc, err := icrypto.Seal(s.cookieKey, []byte(rawToken))
+	enc, err := lcrypto.Seal(s.cookieKey, []byte(rawToken))
 	if err != nil {
 		return err
 	}
@@ -97,7 +97,7 @@ func (s *Server) readPortalCookie(r *http.Request) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	raw, err := icrypto.Open(s.cookieKey, enc)
+	raw, err := lcrypto.Open(s.cookieKey, enc)
 	if err != nil {
 		return "", err
 	}

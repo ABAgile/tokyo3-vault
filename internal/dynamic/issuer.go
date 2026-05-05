@@ -5,14 +5,14 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/abagile/tokyo3-vault/internal/crypto"
+	lcrypto "github.com/abagile/tokyo3-lcl/crypto"
 	"github.com/abagile/tokyo3-vault/internal/model"
 )
 
 // Issuer handles credential issuance and revocation for one backend type.
 type Issuer interface {
-	Issue(ctx context.Context, kp crypto.KeyProvider, backend *model.DynamicBackend, role *model.DynamicRole, ttl time.Duration) (username, password string, expiresAt time.Time, err error)
-	Revoke(ctx context.Context, kp crypto.KeyProvider, backend *model.DynamicBackend, revocationTmpl, username string) error
+	Issue(ctx context.Context, kp lcrypto.KeyProvider, backend *model.DynamicBackend, role *model.DynamicRole, ttl time.Duration) (username, password string, expiresAt time.Time, err error)
+	Revoke(ctx context.Context, kp lcrypto.KeyProvider, backend *model.DynamicBackend, revocationTmpl, username string) error
 }
 
 var registry = map[string]Issuer{

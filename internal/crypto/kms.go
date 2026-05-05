@@ -9,9 +9,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/kms"
 )
 
-// KMSKeyProvider implements KeyProvider using AWS KMS Encrypt/Decrypt to wrap DEKs.
-// Use this in production via VAULT_KMS_KEY_ID.
-// AWS credentials are loaded from the standard chain (env vars, IAM role, etc.).
+// KMSKeyProvider implements lcrypto.KeyProvider using AWS KMS Encrypt/Decrypt
+// to wrap DEKs. Use this in production via VAULT_KMS_KEY_ID. AWS credentials
+// are loaded from the standard chain (env vars, IAM role, etc.).
 type KMSKeyProvider struct {
 	client *kms.Client
 	keyID  string
@@ -29,7 +29,7 @@ func NewKMSKeyProvider(ctx context.Context, keyID string) (*KMSKeyProvider, erro
 	}, nil
 }
 
-func (p *KMSKeyProvider) WrapDEK(ctx context.Context, dek []byte) ([]byte, error) {
+func (p *KMSKeyProvider) Wrap(ctx context.Context, dek []byte) ([]byte, error) {
 	out, err := p.client.Encrypt(ctx, &kms.EncryptInput{
 		KeyId:     aws.String(p.keyID),
 		Plaintext: dek,
@@ -40,7 +40,7 @@ func (p *KMSKeyProvider) WrapDEK(ctx context.Context, dek []byte) ([]byte, error
 	return out.CiphertextBlob, nil
 }
 
-func (p *KMSKeyProvider) UnwrapDEK(ctx context.Context, encryptedDEK []byte) ([]byte, error) {
+func (p *KMSKeyProvider) Unwrap(ctx context.Context, encryptedDEK []byte) ([]byte, error) {
 	out, err := p.client.Decrypt(ctx, &kms.DecryptInput{
 		KeyId:          aws.String(p.keyID),
 		CiphertextBlob: encryptedDEK,

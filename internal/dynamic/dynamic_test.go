@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	lcrypto "github.com/abagile/tokyo3-lcl/crypto"
 	"github.com/abagile/tokyo3-vault/internal/crypto"
 	"github.com/abagile/tokyo3-vault/internal/model"
 	"github.com/abagile/tokyo3-vault/internal/testutil/mockstore"
@@ -143,7 +144,7 @@ func TestGeneratePassword(t *testing.T) {
 
 func TestNewRevoker(t *testing.T) {
 	st := &mockstore.Stub{}
-	kp := crypto.NewLocalKeyProvider(make([]byte, 32))
+	kp := lcrypto.NewLocalKeyProvider(make([]byte, 32))
 	projectKP := crypto.NewProjectKeyCache(kp, time.Minute)
 
 	r := NewRevoker(st, kp, projectKP, slog.Default())
@@ -154,7 +155,7 @@ func TestNewRevoker(t *testing.T) {
 
 func TestRevoker_Run_CancelImmediately(t *testing.T) {
 	st := &mockstore.Stub{}
-	kp := crypto.NewLocalKeyProvider(make([]byte, 32))
+	kp := lcrypto.NewLocalKeyProvider(make([]byte, 32))
 	projectKP := crypto.NewProjectKeyCache(kp, time.Minute)
 
 	r := NewRevoker(st, kp, projectKP, slog.Default())

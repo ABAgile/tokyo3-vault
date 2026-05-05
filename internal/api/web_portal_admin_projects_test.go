@@ -195,7 +195,7 @@ func TestPortalAdminProjectRotateKey_OK(t *testing.T) {
 	if _, err := rand.Read(plainPEK); err != nil {
 		t.Fatalf("rand: %v", err)
 	}
-	encPEK, err := srv.kp.WrapDEK(context.Background(), plainPEK)
+	encPEK, err := srv.kp.Wrap(context.Background(), plainPEK)
 	if err != nil {
 		t.Fatalf("wrap PEK: %v", err)
 	}

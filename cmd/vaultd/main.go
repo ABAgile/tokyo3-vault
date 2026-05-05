@@ -115,6 +115,8 @@ import (
 	"syscall"
 	"time"
 
+	lcrypto "github.com/abagile/tokyo3-lcl/crypto"
+	"github.com/abagile/tokyo3-lcl/tlsutil"
 	"github.com/abagile/tokyo3-vault/internal/api"
 	"github.com/abagile/tokyo3-vault/internal/audit"
 	"github.com/abagile/tokyo3-vault/internal/build"
@@ -124,7 +126,6 @@ import (
 	"github.com/abagile/tokyo3-vault/internal/store"
 	"github.com/abagile/tokyo3-vault/internal/store/postgres"
 	"github.com/abagile/tokyo3-vault/internal/store/sqlite"
-	"github.com/abagile/tokyo3-vault/internal/tlsutil"
 )
 
 func main() {
@@ -309,7 +310,7 @@ func main() {
 // PEK, wraps it with the server KEK, and re-wraps all per-secret and per-backend
 // DEKs for that project so they are wrapped by the PEK instead of the server KEK.
 // Safe to re-run (idempotent): projects with an existing PEK are skipped.
-func runMigrateKeys(ctx context.Context, st store.Store, kp crypto.KeyProvider, log *slog.Logger) error {
+func runMigrateKeys(ctx context.Context, st store.Store, kp lcrypto.KeyProvider, log *slog.Logger) error {
 	projects, err := st.ListProjects(ctx)
 	if err != nil {
 		return fmt.Errorf("list projects: %w", err)
@@ -324,7 +325,7 @@ func runMigrateKeys(ctx context.Context, st store.Store, kp crypto.KeyProvider, 
 		if _, err := rand.Read(pek); err != nil {
 			return fmt.Errorf("generate PEK for %s: %w", p.Slug, err)
 		}
-		encPEK, err := kp.WrapDEK(ctx, pek)
+		encPEK, err := kp.Wrap(ctx, pek)
 		if err != nil {
 			return fmt.Errorf("wrap PEK for %s: %w", p.Slug, err)
 		}
@@ -333,11 +334,11 @@ func runMigrateKeys(ctx context.Context, st store.Store, kp crypto.KeyProvider, 
 		// Old DEKs here are wrapped by the server KEK directly (pre-migration).
 		projectKP := crypto.NewProjectKeyProvider(pek)
 		err = st.RotateProjectPEK(ctx, p.ID, encPEK, time.Now().UTC(), func(old []byte) ([]byte, error) {
-			dek, err := kp.UnwrapDEK(ctx, old)
+			dek, err := kp.Unwrap(ctx, old)
 			if err != nil {
 				return nil, err
 			}
-			return projectKP.WrapDEK(ctx, dek)
+			return projectKP.Wrap(ctx, dek)
 		})
 		if err != nil {
 			return fmt.Errorf("migrate PEK for %s: %w", p.Slug, err)
@@ -420,7 +421,7 @@ func buildServerTLS(log *slog.Logger) (*tls.Config, error) {
 // which is acceptable for an admin portal.
 func portalCookieKey(log *slog.Logger) ([]byte, error) {
 	if hex := os.Getenv("VAULT_MASTER_KEY"); hex != "" {
-		return crypto.ParseKEK(hex)
+		return lcrypto.ParseKEK(hex)
 	}
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
@@ -433,7 +434,7 @@ func portalCookieKey(log *slog.Logger) ([]byte, error) {
 
 // openKeyProvider selects LocalKeyProvider (VAULT_MASTER_KEY) or KMSKeyProvider
 // (VAULT_KMS_KEY_ID). Exactly one must be set; setting both is an error.
-func openKeyProvider(ctx context.Context, log *slog.Logger) (crypto.KeyProvider, error) {
+func openKeyProvider(ctx context.Context, log *slog.Logger) (lcrypto.KeyProvider, error) {
 	masterKeyHex := os.Getenv("VAULT_MASTER_KEY")
 	kmsKeyID := os.Getenv("VAULT_KMS_KEY_ID")
 
@@ -447,12 +448,12 @@ func openKeyProvider(ctx context.Context, log *slog.Logger) (crypto.KeyProvider,
 	if masterKeyHex == "" {
 		return nil, fmt.Errorf("VAULT_MASTER_KEY or VAULT_KMS_KEY_ID is required")
 	}
-	kek, err := crypto.ParseKEK(masterKeyHex)
+	kek, err := lcrypto.ParseKEK(masterKeyHex)
 	if err != nil {
 		return nil, fmt.Errorf("invalid VAULT_MASTER_KEY: %w", err)
 	}
 	log.Info("using local master key provider")
-	return crypto.NewLocalKeyProvider(kek), nil
+	return lcrypto.NewLocalKeyProvider(kek), nil
 }
 
 // buildOIDCProvider configures the OIDC provider from environment variables.

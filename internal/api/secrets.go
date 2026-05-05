@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/abagile/tokyo3-vault/internal/crypto"
+	lcrypto "github.com/abagile/tokyo3-lcl/crypto"
 	"github.com/abagile/tokyo3-vault/internal/envfile"
 	"github.com/abagile/tokyo3-vault/internal/model"
 	"github.com/abagile/tokyo3-vault/internal/store"
@@ -168,7 +168,7 @@ func (s *Server) handleGetSecret(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	plaintext, err := crypto.DecryptSecret(r.Context(), projectKP, sv.EncryptedDEK, sv.EncryptedValue)
+	plaintext, err := lcrypto.DecryptEnvelope(r.Context(), projectKP, sv.EncryptedDEK, sv.EncryptedValue)
 	if err != nil {
 		s.log.Error("decrypt secret", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -437,7 +437,7 @@ func inKeyFilter(filter map[string]bool, key string) bool {
 
 // importSecretsList iterates srcSecrets, applies the key filter, and copies
 // eligible secrets to the destination. Returns (imported, skipped, error).
-func (s *Server) importSecretsList(r *http.Request, srcSecrets []*model.Secret, srcVersions []*model.SecretVersion, keyFilter map[string]bool, srcKP crypto.KeyProvider, dstProjectID, dstEnvID string, dstKP crypto.KeyProvider, createdBy *string, overwrite bool) (imported, skipped int, err error) {
+func (s *Server) importSecretsList(r *http.Request, srcSecrets []*model.Secret, srcVersions []*model.SecretVersion, keyFilter map[string]bool, srcKP lcrypto.KeyProvider, dstProjectID, dstEnvID string, dstKP lcrypto.KeyProvider, createdBy *string, overwrite bool) (imported, skipped int, err error) {
 	for i, sec := range srcSecrets {
 		if !inKeyFilter(keyFilter, sec.Key) {
 			continue
@@ -505,18 +505,18 @@ func (s *Server) resolveSrcProjectEnv(w http.ResponseWriter, r *http.Request, fr
 // copySecret decrypts one source secret and writes it to the destination env.
 // Returns (true, nil) when written, (false, nil) when skipped (already exists
 // and overwrite is false), or (false, err) on failure.
-func (s *Server) copySecret(r *http.Request, sec *model.Secret, sv *model.SecretVersion, srcKP crypto.KeyProvider, dstProjectID, dstEnvID string, dstKP crypto.KeyProvider, createdBy *string, overwrite bool) (bool, error) {
+func (s *Server) copySecret(r *http.Request, sec *model.Secret, sv *model.SecretVersion, srcKP lcrypto.KeyProvider, dstProjectID, dstEnvID string, dstKP lcrypto.KeyProvider, createdBy *string, overwrite bool) (bool, error) {
 	if !overwrite {
 		if _, _, err := s.store.GetSecret(r.Context(), dstProjectID, dstEnvID, sec.Key); err == nil {
 			return false, nil
 		}
 	}
-	plaintext, err := crypto.DecryptSecret(r.Context(), srcKP, sv.EncryptedDEK, sv.EncryptedValue)
+	plaintext, err := lcrypto.DecryptEnvelope(r.Context(), srcKP, sv.EncryptedDEK, sv.EncryptedValue)
 	if err != nil {
 		s.log.Error("decrypt src secret", "key", sec.Key, "err", err)
 		return false, fmt.Errorf("failed to decrypt source secret %s", sec.Key)
 	}
-	encVal, encDEK, err := crypto.EncryptSecret(r.Context(), dstKP, plaintext)
+	encVal, encDEK, err := lcrypto.EncryptEnvelope(r.Context(), dstKP, plaintext)
 	if err != nil {
 		s.log.Error("encrypt dst secret", "key", sec.Key, "err", err)
 		return false, fmt.Errorf("internal error")
@@ -613,7 +613,7 @@ func (s *Server) upsertSecret(r *http.Request, project *model.Project, envID, ke
 	if err != nil {
 		return nil, fmt.Errorf("load project key: %w", err)
 	}
-	encVal, encDEK, err := crypto.EncryptSecret(r.Context(), projectKP, []byte(value))
+	encVal, encDEK, err := lcrypto.EncryptEnvelope(r.Context(), projectKP, []byte(value))
 	if err != nil {
 		return nil, fmt.Errorf("encrypt: %w", err)
 	}
@@ -635,7 +635,7 @@ func (s *Server) decryptSecretVersion(ctx context.Context, project *model.Projec
 	if err != nil {
 		return nil, fmt.Errorf("load project key: %w", err)
 	}
-	plaintext, err := crypto.DecryptSecret(ctx, projectKP, sv.EncryptedDEK, sv.EncryptedValue)
+	plaintext, err := lcrypto.DecryptEnvelope(ctx, projectKP, sv.EncryptedDEK, sv.EncryptedValue)
 	if err != nil {
 		return nil, fmt.Errorf("decrypt: %w", err)
 	}
@@ -664,7 +664,7 @@ func (s *Server) uploadEnvfileBytes(r *http.Request, project *model.Project, env
 				continue
 			}
 		}
-		encVal, encDEK, encErr := crypto.EncryptSecret(r.Context(), projectKP, []byte(entry.Value))
+		encVal, encDEK, encErr := lcrypto.EncryptEnvelope(r.Context(), projectKP, []byte(entry.Value))
 		if encErr != nil {
 			return uploaded, skipped, fmt.Errorf("encrypt %s: %w", entry.Key, encErr)
 		}
@@ -699,7 +699,7 @@ func (s *Server) renderEnvfile(r *http.Request, project *model.Project, envID st
 		if sv == nil {
 			continue
 		}
-		plaintext, err := crypto.DecryptSecret(r.Context(), projectKP, sv.EncryptedDEK, sv.EncryptedValue)
+		plaintext, err := lcrypto.DecryptEnvelope(r.Context(), projectKP, sv.EncryptedDEK, sv.EncryptedValue)
 		if err != nil {
 			return "", fmt.Errorf("decrypt %s: %w", sec.Key, err)
 		}

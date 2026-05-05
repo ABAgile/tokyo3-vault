@@ -7,6 +7,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	lcrypto "github.com/abagile/tokyo3-lcl/crypto"
 )
 
 // makeKEK returns a deterministic 32-byte KEK for tests.
@@ -18,7 +20,7 @@ func makeKEK() []byte {
 	return kek
 }
 
-// TestProjectKeyProvider_WrapUnwrap tests round-trip of WrapDEK/UnwrapDEK.
+// TestProjectKeyProvider_WrapUnwrap tests round-trip of Wrap/Unwrap.
 func TestProjectKeyProvider_WrapUnwrap(t *testing.T) {
 	pek := make([]byte, 32)
 	for i := range pek {
@@ -29,17 +31,17 @@ func TestProjectKeyProvider_WrapUnwrap(t *testing.T) {
 
 	dek := []byte("my-secret-dek-value-32-bytes!!!!")
 
-	enc, err := kp.WrapDEK(ctx, dek)
+	enc, err := kp.Wrap(ctx, dek)
 	if err != nil {
-		t.Fatalf("WrapDEK: %v", err)
+		t.Fatalf("Wrap: %v", err)
 	}
 	if len(enc) == 0 {
-		t.Fatal("WrapDEK returned empty ciphertext")
+		t.Fatal("Wrap returned empty ciphertext")
 	}
 
-	dec, err := kp.UnwrapDEK(ctx, enc)
+	dec, err := kp.Unwrap(ctx, enc)
 	if err != nil {
-		t.Fatalf("UnwrapDEK: %v", err)
+		t.Fatalf("Unwrap: %v", err)
 	}
 	if string(dec) != string(dek) {
 		t.Errorf("round-trip mismatch: got %q, want %q", dec, dek)
@@ -48,23 +50,21 @@ func TestProjectKeyProvider_WrapUnwrap(t *testing.T) {
 
 // TestProjectKeyCache_NilEncPEK tests that nil encPEK returns master.
 func TestProjectKeyCache_NilEncPEK(t *testing.T) {
-	kek := makeKEK()
-	master := NewLocalKeyProvider(kek)
+	master := lcrypto.NewLocalKeyProvider(makeKEK())
 	cache := NewProjectKeyCache(master, time.Minute)
 
 	kp, err := cache.ForProject(context.Background(), "proj-1", nil)
 	if err != nil {
 		t.Fatalf("ForProject(nil): %v", err)
 	}
-	if kp != master {
+	if kp != lcrypto.KeyProvider(master) {
 		t.Error("expected master KeyProvider when encPEK is nil")
 	}
 }
 
 // TestProjectKeyCache_CacheHit tests that ForProject caches the result.
 func TestProjectKeyCache_CacheHit(t *testing.T) {
-	kek := makeKEK()
-	master := NewLocalKeyProvider(kek)
+	master := lcrypto.NewLocalKeyProvider(makeKEK())
 	cache := NewProjectKeyCache(master, time.Minute)
 	ctx := context.Background()
 
@@ -73,9 +73,9 @@ func TestProjectKeyCache_CacheHit(t *testing.T) {
 	for i := range pek {
 		pek[i] = byte(i + 5)
 	}
-	encPEK, err := master.WrapDEK(ctx, pek)
+	encPEK, err := master.Wrap(ctx, pek)
 	if err != nil {
-		t.Fatalf("WrapDEK: %v", err)
+		t.Fatalf("Wrap: %v", err)
 	}
 
 	kp1, err := cache.ForProject(ctx, "proj-x", encPEK)
@@ -93,8 +93,7 @@ func TestProjectKeyCache_CacheHit(t *testing.T) {
 
 // TestProjectKeyCache_Invalidate tests that Invalidate removes the cache entry.
 func TestProjectKeyCache_Invalidate(t *testing.T) {
-	kek := makeKEK()
-	master := NewLocalKeyProvider(kek)
+	master := lcrypto.NewLocalKeyProvider(makeKEK())
 	cache := NewProjectKeyCache(master, time.Minute)
 	ctx := context.Background()
 
@@ -102,7 +101,7 @@ func TestProjectKeyCache_Invalidate(t *testing.T) {
 	for i := range pek {
 		pek[i] = byte(i + 7)
 	}
-	encPEK, _ := master.WrapDEK(ctx, pek)
+	encPEK, _ := master.Wrap(ctx, pek)
 
 	kp1, _ := cache.ForProject(ctx, "proj-inv", encPEK)
 	cache.Invalidate("proj-inv")
@@ -115,8 +114,7 @@ func TestProjectKeyCache_Invalidate(t *testing.T) {
 
 // TestProjectKeyCache_ExpiredTTL tests that a negative TTL forces cache miss every time.
 func TestProjectKeyCache_ExpiredTTL(t *testing.T) {
-	kek := makeKEK()
-	master := NewLocalKeyProvider(kek)
+	master := lcrypto.NewLocalKeyProvider(makeKEK())
 	cache := NewProjectKeyCache(master, -1*time.Second) // TTL already expired
 	ctx := context.Background()
 
@@ -124,7 +122,7 @@ func TestProjectKeyCache_ExpiredTTL(t *testing.T) {
 	for i := range pek {
 		pek[i] = byte(i + 3)
 	}
-	encPEK, _ := master.WrapDEK(ctx, pek)
+	encPEK, _ := master.Wrap(ctx, pek)
 
 	kp1, err := cache.ForProject(ctx, "proj-exp", encPEK)
 	if err != nil {
@@ -140,13 +138,13 @@ func TestProjectKeyCache_ExpiredTTL(t *testing.T) {
 	}
 }
 
-// errKeyProvider is a KeyProvider that always fails UnwrapDEK.
+// errKeyProvider is a KeyProvider that always fails Unwrap.
 type errKeyProvider struct{}
 
-func (errKeyProvider) WrapDEK(_ context.Context, _ []byte) ([]byte, error) {
+func (errKeyProvider) Wrap(_ context.Context, _ []byte) ([]byte, error) {
 	return nil, errors.New("wrap error")
 }
-func (errKeyProvider) UnwrapDEK(_ context.Context, _ []byte) ([]byte, error) {
+func (errKeyProvider) Unwrap(_ context.Context, _ []byte) ([]byte, error) {
 	return nil, errors.New("unwrap error")
 }
 
@@ -159,7 +157,7 @@ func TestProjectKeyCache_UnwrapError(t *testing.T) {
 	}
 }
 
-// countingKeyProvider records UnwrapDEK calls and sleeps briefly so concurrent
+// countingKeyProvider records Unwrap calls and sleeps briefly so concurrent
 // callers overlap in the slow path. The exact PEK bytes don't matter for the
 // dedupe assertion — only the call count.
 type countingKeyProvider struct {
@@ -167,17 +165,17 @@ type countingKeyProvider struct {
 	delay time.Duration
 }
 
-func (p *countingKeyProvider) WrapDEK(_ context.Context, dek []byte) ([]byte, error) {
+func (p *countingKeyProvider) Wrap(_ context.Context, dek []byte) ([]byte, error) {
 	return append([]byte(nil), dek...), nil
 }
-func (p *countingKeyProvider) UnwrapDEK(_ context.Context, _ []byte) ([]byte, error) {
+func (p *countingKeyProvider) Unwrap(_ context.Context, _ []byte) ([]byte, error) {
 	p.calls.Add(1)
 	time.Sleep(p.delay)
 	return make([]byte, 32), nil
 }
 
 // TestProjectKeyCache_SingleflightDedupe asserts that concurrent cold misses
-// for the same projectID collapse into a single master.UnwrapDEK call. Without
+// for the same projectID collapse into a single master.Unwrap call. Without
 // singleflight the count would be `concurrency`; with it, exactly 1.
 func TestProjectKeyCache_SingleflightDedupe(t *testing.T) {
 	master := &countingKeyProvider{delay: 50 * time.Millisecond}
@@ -202,6 +200,6 @@ func TestProjectKeyCache_SingleflightDedupe(t *testing.T) {
 	wg.Wait()
 
 	if got := master.calls.Load(); got != 1 {
-		t.Errorf("expected exactly 1 UnwrapDEK call from %d concurrent misses, got %d", concurrency, got)
+		t.Errorf("expected exactly 1 Unwrap call from %d concurrent misses, got %d", concurrency, got)
 	}
 }

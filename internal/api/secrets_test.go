@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/abagile/tokyo3-vault/internal/crypto"
+	lcrypto "github.com/abagile/tokyo3-lcl/crypto"
 	"github.com/abagile/tokyo3-vault/internal/model"
 	"github.com/abagile/tokyo3-vault/internal/store"
 )
@@ -99,8 +99,8 @@ func encryptForTest(t *testing.T, value string) (encVal, encDEK []byte) {
 	for i := range kek {
 		kek[i] = byte(i + 1)
 	}
-	kp := crypto.NewLocalKeyProvider(kek)
-	ev, ed, err := crypto.EncryptSecret(context.Background(), kp, []byte(value))
+	kp := lcrypto.NewLocalKeyProvider(kek)
+	ev, ed, err := lcrypto.EncryptEnvelope(context.Background(), kp, []byte(value))
 	if err != nil {
 		t.Fatal(err)
 	}

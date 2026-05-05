@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
+	lcrypto "github.com/abagile/tokyo3-lcl/crypto"
 	"github.com/abagile/tokyo3-vault/internal/auth"
-	"github.com/abagile/tokyo3-vault/internal/crypto"
 	"github.com/abagile/tokyo3-vault/internal/model"
 	"github.com/abagile/tokyo3-vault/internal/store"
 )
@@ -61,9 +61,9 @@ func TestHandleRotateProjectKey_GetProjectDBError(t *testing.T) {
 func TestHandleRotateProjectKey_UnwrapDEKError(t *testing.T) {
 	// Use a different KEK so UnwrapDEK fails (the PEK was wrapped with wrong key).
 	wrongKEK := make([]byte, 32)
-	wrongKP := crypto.NewLocalKeyProvider(wrongKEK)
+	wrongKP := lcrypto.NewLocalKeyProvider(wrongKEK)
 	fakePEK := make([]byte, 32) // plaintext PEK
-	badEncPEK, err := wrongKP.WrapDEK(context.Background(), fakePEK)
+	badEncPEK, err := wrongKP.Wrap(context.Background(), fakePEK)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,12 +89,12 @@ func TestHandleRotateProjectKey_Success(t *testing.T) {
 	for i := range testKEK {
 		testKEK[i] = byte(i + 1)
 	}
-	kp := crypto.NewLocalKeyProvider(testKEK)
+	kp := lcrypto.NewLocalKeyProvider(testKEK)
 	fakePEK := make([]byte, 32)
 	for i := range fakePEK {
 		fakePEK[i] = byte(i + 10)
 	}
-	encPEK, err := kp.WrapDEK(context.Background(), fakePEK)
+	encPEK, err := kp.Wrap(context.Background(), fakePEK)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,9 +119,9 @@ func TestHandleRotateProjectKey_RotateDBError(t *testing.T) {
 	for i := range testKEK {
 		testKEK[i] = byte(i + 1)
 	}
-	kp := crypto.NewLocalKeyProvider(testKEK)
+	kp := lcrypto.NewLocalKeyProvider(testKEK)
 	fakePEK := make([]byte, 32)
-	encPEK, err := kp.WrapDEK(context.Background(), fakePEK)
+	encPEK, err := kp.Wrap(context.Background(), fakePEK)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1387,9 +1387,9 @@ func TestHandleImportSecrets_ListSecretsDBError(t *testing.T) {
 	for i := range testKEK {
 		testKEK[i] = byte(i + 1)
 	}
-	kp := crypto.NewLocalKeyProvider(testKEK)
+	kp := lcrypto.NewLocalKeyProvider(testKEK)
 	fakePEK := make([]byte, 32)
-	encPEK, err := kp.WrapDEK(context.Background(), fakePEK)
+	encPEK, err := kp.Wrap(context.Background(), fakePEK)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1463,9 +1463,9 @@ func TestWriteSetSecret_Success(t *testing.T) {
 	for i := range testKEK {
 		testKEK[i] = byte(i + 1)
 	}
-	kp := crypto.NewLocalKeyProvider(testKEK)
+	kp := lcrypto.NewLocalKeyProvider(testKEK)
 	fakePEK := make([]byte, 32)
-	encPEK, err := kp.WrapDEK(context.Background(), fakePEK)
+	encPEK, err := kp.Wrap(context.Background(), fakePEK)
 	if err != nil {
 		t.Fatal(err)
 	}

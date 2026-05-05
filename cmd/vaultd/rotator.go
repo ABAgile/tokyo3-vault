@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	lcrypto "github.com/abagile/tokyo3-lcl/crypto"
 	"github.com/abagile/tokyo3-vault/internal/audit"
 	"github.com/abagile/tokyo3-vault/internal/crypto"
 	"github.com/abagile/tokyo3-vault/internal/model"
@@ -22,14 +23,14 @@ const actionProjectRotateKey = "project.rotate_key"
 // PEK in a single transaction, so a crash mid-rotation leaves the DB unchanged.
 type PEKRotator struct {
 	store     store.Store
-	kp        crypto.KeyProvider
+	kp        lcrypto.KeyProvider
 	projectKP *crypto.ProjectKeyCache
 	audit     audit.Sink
 	period    time.Duration
 	log       *slog.Logger
 }
 
-func newPEKRotator(st store.Store, kp crypto.KeyProvider, projectKP *crypto.ProjectKeyCache, auditSink audit.Sink, period time.Duration, log *slog.Logger) *PEKRotator {
+func newPEKRotator(st store.Store, kp lcrypto.KeyProvider, projectKP *crypto.ProjectKeyCache, auditSink audit.Sink, period time.Duration, log *slog.Logger) *PEKRotator {
 	return &PEKRotator{store: st, kp: kp, projectKP: projectKP, audit: auditSink, period: period, log: log}
 }
 
@@ -76,7 +77,7 @@ func (r *PEKRotator) sweep(ctx context.Context) {
 }
 
 func (r *PEKRotator) rotateProjectPEK(ctx context.Context, p *model.Project) error {
-	oldPEK, err := r.kp.UnwrapDEK(ctx, p.EncryptedPEK)
+	oldPEK, err := r.kp.Unwrap(ctx, p.EncryptedPEK)
 	if err != nil {
 		return fmt.Errorf("unwrap old PEK: %w", err)
 	}
@@ -86,7 +87,7 @@ func (r *PEKRotator) rotateProjectPEK(ctx context.Context, p *model.Project) err
 	if _, err := rand.Read(newPEK); err != nil {
 		return fmt.Errorf("generate PEK: %w", err)
 	}
-	newEncPEK, err := r.kp.WrapDEK(ctx, newPEK)
+	newEncPEK, err := r.kp.Wrap(ctx, newPEK)
 	if err != nil {
 		return fmt.Errorf("wrap new PEK: %w", err)
 	}
@@ -94,11 +95,11 @@ func (r *PEKRotator) rotateProjectPEK(ctx context.Context, p *model.Project) err
 
 	rotatedAt := time.Now().UTC()
 	err = r.store.RotateProjectPEK(ctx, p.ID, newEncPEK, rotatedAt, func(encDEK []byte) ([]byte, error) {
-		dek, err := oldProjectKP.UnwrapDEK(ctx, encDEK)
+		dek, err := oldProjectKP.Unwrap(ctx, encDEK)
 		if err != nil {
 			return nil, err
 		}
-		return newProjectKP.WrapDEK(ctx, dek)
+		return newProjectKP.Wrap(ctx, dek)
 	})
 	if err != nil {
 		return fmt.Errorf("rotate project PEK: %w", err)

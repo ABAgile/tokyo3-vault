@@ -34,11 +34,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/abagile/tokyo3-lcl/tlsutil"
 	"github.com/abagile/tokyo3-vault/internal/audit"
 	auditpg "github.com/abagile/tokyo3-vault/internal/audit/postgres"
 	auditsqlite "github.com/abagile/tokyo3-vault/internal/audit/sqlite"
 	"github.com/abagile/tokyo3-vault/internal/build"
-	"github.com/abagile/tokyo3-vault/internal/tlsutil"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/spf13/cobra"

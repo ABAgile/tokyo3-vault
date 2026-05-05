@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/abagile/tokyo3-vault/internal/crypto"
+	lcrypto "github.com/abagile/tokyo3-lcl/crypto"
 	"github.com/abagile/tokyo3-vault/internal/model"
 	"github.com/abagile/tokyo3-vault/internal/store"
 )
@@ -491,7 +491,7 @@ func makeEncryptedSecret(t *testing.T, srv *Server, plaintext string) (*model.Pr
 		pek[i] = byte(i + 1)
 	}
 	ctx := context.Background()
-	encPEK, err := srv.kp.WrapDEK(ctx, pek)
+	encPEK, err := srv.kp.Wrap(ctx, pek)
 	if err != nil {
 		t.Fatalf("wrap PEK: %v", err)
 	}
@@ -500,7 +500,7 @@ func makeEncryptedSecret(t *testing.T, srv *Server, plaintext string) (*model.Pr
 	if err != nil {
 		t.Fatalf("project KP: %v", err)
 	}
-	encVal, encDEK, err := crypto.EncryptSecret(ctx, pkp, []byte(plaintext))
+	encVal, encDEK, err := lcrypto.EncryptEnvelope(ctx, pkp, []byte(plaintext))
 	if err != nil {
 		t.Fatalf("encrypt: %v", err)
 	}

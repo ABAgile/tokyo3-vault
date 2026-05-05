@@ -1013,7 +1013,7 @@ func (s *Server) handlePortalAdminProjectNew(w http.ResponseWriter, r *http.Requ
 	// (matches the JSON handler's behaviour).
 	pek := make([]byte, 32)
 	if _, randErr := rand.Read(pek); randErr == nil {
-		if encPEK, wrapErr := s.kp.WrapDEK(r.Context(), pek); wrapErr == nil {
+		if encPEK, wrapErr := s.kp.Wrap(r.Context(), pek); wrapErr == nil {
 			if err := s.store.SetProjectKey(r.Context(), p.ID, encPEK, time.Now().UTC()); err != nil {
 				s.log.Warn("portal admin set project key", "project", p.ID, "err", err)
 			}

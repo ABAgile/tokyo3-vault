@@ -5,7 +5,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/abagile/tokyo3-vault/internal/crypto"
+	lcrypto "github.com/abagile/tokyo3-lcl/crypto"
 	"github.com/abagile/tokyo3-vault/internal/dynamic"
 	"github.com/abagile/tokyo3-vault/internal/store"
 )
@@ -123,7 +123,7 @@ func (s *Server) handleSetDynamicBackend(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	encConfig, encConfigDEK, err := crypto.EncryptSecret(r.Context(), projectKP, configJSON)
+	encConfig, encConfigDEK, err := lcrypto.EncryptEnvelope(r.Context(), projectKP, configJSON)
 	if err != nil {
 		s.log.Error("encrypt backend config", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")

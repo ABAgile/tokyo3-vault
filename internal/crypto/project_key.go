@@ -6,24 +6,25 @@ import (
 	"sync"
 	"time"
 
+	lcrypto "github.com/abagile/tokyo3-lcl/crypto"
 	"golang.org/x/sync/singleflight"
 )
 
-// projectKeyProvider implements KeyProvider using a plaintext in-memory PEK.
-// All operations are pure AES-256-GCM via the package Seal/Open helpers.
+// projectKeyProvider implements lcrypto.KeyProvider using a plaintext in-memory
+// PEK. All operations are pure AES-256-GCM via lcrypto.Seal/Open.
 type projectKeyProvider struct{ pek []byte }
 
-func (p *projectKeyProvider) WrapDEK(_ context.Context, dek []byte) ([]byte, error) {
-	return Seal(p.pek, dek)
+func (p *projectKeyProvider) Wrap(_ context.Context, dek []byte) ([]byte, error) {
+	return lcrypto.Seal(p.pek, dek)
 }
 
-func (p *projectKeyProvider) UnwrapDEK(_ context.Context, enc []byte) ([]byte, error) {
-	return Open(p.pek, enc)
+func (p *projectKeyProvider) Unwrap(_ context.Context, enc []byte) ([]byte, error) {
+	return lcrypto.Open(p.pek, enc)
 }
 
 // NewProjectKeyProvider returns a KeyProvider backed by the given 32-byte PEK.
 // Use this when constructing a project KP outside this package (e.g. migration).
-func NewProjectKeyProvider(pek []byte) KeyProvider {
+func NewProjectKeyProvider(pek []byte) lcrypto.KeyProvider {
 	return &projectKeyProvider{pek: pek}
 }
 
@@ -39,9 +40,9 @@ type pekCacheEntry struct {
 //
 // `unwrap` collapses concurrent cache misses for the same project — when N
 // goroutines miss simultaneously (cold start, post-TTL, or post-Invalidate),
-// only one calls master.UnwrapDEK; the rest piggyback on its result.
+// only one calls master.Unwrap; the rest piggyback on its result.
 type ProjectKeyCache struct {
-	master KeyProvider
+	master lcrypto.KeyProvider
 	mu     sync.RWMutex
 	keys   map[string]*pekCacheEntry
 	ttl    time.Duration
@@ -52,7 +53,7 @@ type ProjectKeyCache struct {
 // KEK/KMS). ttl controls how long a decrypted PEK stays in memory; 5 minutes
 // is a reasonable default that keeps KMS costs low without holding keys
 // indefinitely.
-func NewProjectKeyCache(master KeyProvider, ttl time.Duration) *ProjectKeyCache {
+func NewProjectKeyCache(master lcrypto.KeyProvider, ttl time.Duration) *ProjectKeyCache {
 	return &ProjectKeyCache{
 		master: master,
 		keys:   make(map[string]*pekCacheEntry),
@@ -67,7 +68,7 @@ func NewProjectKeyCache(master KeyProvider, ttl time.Duration) *ProjectKeyCache 
 //     work without any data migration.
 //   - Otherwise the PEK is unwrapped (via master) on cache miss and cached for
 //     ttl; subsequent calls within that window are free.
-func (c *ProjectKeyCache) ForProject(ctx context.Context, projectID string, encPEK []byte) (KeyProvider, error) {
+func (c *ProjectKeyCache) ForProject(ctx context.Context, projectID string, encPEK []byte) (lcrypto.KeyProvider, error) {
 	if encPEK == nil {
 		return c.master, nil
 	}
@@ -83,8 +84,8 @@ func (c *ProjectKeyCache) ForProject(ctx context.Context, projectID string, encP
 	c.mu.RUnlock()
 
 	// Slow path: collapse concurrent misses for the same project into a single
-	// UnwrapDEK call. The leader runs with its own ctx; waiters share its
-	// result (or its error — failure paths dedupe too).
+	// Unwrap call. The leader runs with its own ctx; waiters share its result
+	// (or its error — failure paths dedupe too).
 	v, err, _ := c.unwrap.Do(projectID, func() (any, error) {
 		// Re-check after acquiring the singleflight slot — a previous leader
 		// may have populated the cache while we were queued.
@@ -95,7 +96,7 @@ func (c *ProjectKeyCache) ForProject(ctx context.Context, projectID string, encP
 			return entry.kp, nil
 		}
 
-		pek, err := c.master.UnwrapDEK(ctx, encPEK)
+		pek, err := c.master.Unwrap(ctx, encPEK)
 		if err != nil {
 			return nil, fmt.Errorf("unwrap project key: %w", err)
 		}
@@ -108,7 +109,7 @@ func (c *ProjectKeyCache) ForProject(ctx context.Context, projectID string, encP
 	if err != nil {
 		return nil, err
 	}
-	return v.(KeyProvider), nil
+	return v.(lcrypto.KeyProvider), nil
 }
 
 // Invalidate removes a project's cached PEK, forcing the next ForProject call

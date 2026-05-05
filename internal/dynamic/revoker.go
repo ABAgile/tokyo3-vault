@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	lcrypto "github.com/abagile/tokyo3-lcl/crypto"
 	"github.com/abagile/tokyo3-vault/internal/crypto"
 	"github.com/abagile/tokyo3-vault/internal/model"
 	"github.com/abagile/tokyo3-vault/internal/store"
@@ -16,13 +17,13 @@ import (
 // while the server was down.
 type Revoker struct {
 	store     store.Store
-	kp        crypto.KeyProvider
+	kp        lcrypto.KeyProvider
 	projectKP *crypto.ProjectKeyCache
 	log       *slog.Logger
 }
 
 // NewRevoker returns a Revoker backed by the given store and key providers.
-func NewRevoker(st store.Store, kp crypto.KeyProvider, projectKP *crypto.ProjectKeyCache, log *slog.Logger) *Revoker {
+func NewRevoker(st store.Store, kp lcrypto.KeyProvider, projectKP *crypto.ProjectKeyCache, log *slog.Logger) *Revoker {
 	return &Revoker{store: st, kp: kp, projectKP: projectKP, log: log}
 }
 
