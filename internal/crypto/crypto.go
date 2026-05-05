@@ -16,6 +16,17 @@ import (
 	"io"
 )
 
+// RandomBytes returns n cryptographically random bytes from crypto/rand.
+// Used to mint KEKs, DEKs, and AES-GCM nonces — all of which require
+// uniformly random material.
+func RandomBytes(n int) ([]byte, error) {
+	b := make([]byte, n)
+	if _, err := io.ReadFull(rand.Reader, b); err != nil {
+		return nil, err
+	}
+	return b, nil
+}
+
 // ParseKEK decodes a 64-hex-character string into a 32-byte key.
 // The KEK is typically loaded from the VAULT_MASTER_KEY environment variable.
 func ParseKEK(hexKey string) ([]byte, error) {
@@ -32,16 +43,16 @@ func ParseKEK(hexKey string) ([]byte, error) {
 // GenerateKEK returns a random 32-byte key encoded as a 64-char hex string,
 // suitable for use as VAULT_MASTER_KEY.
 func GenerateKEK() (string, error) {
-	b := make([]byte, 32)
-	if _, err := io.ReadFull(rand.Reader, b); err != nil {
+	b, err := RandomBytes(32)
+	if err != nil {
 		return "", err
 	}
 	return hex.EncodeToString(b), nil
 }
 
-// seal encrypts plaintext with key using AES-256-GCM.
+// Seal encrypts plaintext with key using AES-256-GCM.
 // Output format: nonce || ciphertext+tag (nonce is prepended).
-func seal(key, plaintext []byte) ([]byte, error) {
+func Seal(key, plaintext []byte) ([]byte, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, fmt.Errorf("new cipher: %w", err)
@@ -50,15 +61,15 @@ func seal(key, plaintext []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("new gcm: %w", err)
 	}
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+	nonce, err := RandomBytes(gcm.NonceSize())
+	if err != nil {
 		return nil, fmt.Errorf("generate nonce: %w", err)
 	}
 	return gcm.Seal(nonce, nonce, plaintext, nil), nil
 }
 
-// open decrypts ciphertext (nonce || ciphertext+tag) with key.
-func open(key, ciphertext []byte) ([]byte, error) {
+// Open decrypts ciphertext (nonce || ciphertext+tag) with key.
+func Open(key, ciphertext []byte) ([]byte, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, fmt.Errorf("new cipher: %w", err)
@@ -81,11 +92,11 @@ func open(key, ciphertext []byte) ([]byte, error) {
 // EncryptSecret encrypts plaintext under a fresh random DEK, then wraps the DEK
 // using kp. Returns (encryptedValue, encryptedDEK, error).
 func EncryptSecret(ctx context.Context, kp KeyProvider, plaintext []byte) (encryptedValue, encryptedDEK []byte, err error) {
-	dek := make([]byte, 32)
-	if _, err = io.ReadFull(rand.Reader, dek); err != nil {
+	dek, err := RandomBytes(32)
+	if err != nil {
 		return nil, nil, fmt.Errorf("generate dek: %w", err)
 	}
-	encryptedValue, err = seal(dek, plaintext)
+	encryptedValue, err = Seal(dek, plaintext)
 	if err != nil {
 		return nil, nil, fmt.Errorf("seal value: %w", err)
 	}
@@ -102,19 +113,12 @@ func DecryptSecret(ctx context.Context, kp KeyProvider, encryptedDEK, encryptedV
 	if err != nil {
 		return nil, fmt.Errorf("unwrap dek: %w", err)
 	}
-	plaintext, err := open(dek, encryptedValue)
+	plaintext, err := Open(dek, encryptedValue)
 	if err != nil {
 		return nil, fmt.Errorf("decrypt value: %w", err)
 	}
 	return plaintext, nil
 }
-
-// SealBytes encrypts plaintext directly with key using AES-256-GCM.
-// Use for short-lived values (cookies, session tokens) where DEK wrapping is unnecessary.
-func SealBytes(key, plaintext []byte) ([]byte, error) { return seal(key, plaintext) }
-
-// OpenBytes decrypts ciphertext produced by SealBytes.
-func OpenBytes(key, ciphertext []byte) ([]byte, error) { return open(key, ciphertext) }
 
 // RewrapDEK unwraps a DEK under oldKP and re-wraps it under newKP.
 // Use this when rotating the master key without re-encrypting secret values.

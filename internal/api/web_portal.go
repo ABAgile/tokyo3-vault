@@ -72,7 +72,7 @@ func newPortalBase(pc *portalCtx, page string) portalBase {
 // ── Cookie helpers ────────────────────────────────────────────────────────────
 
 func (s *Server) setPortalCookie(w http.ResponseWriter, rawToken string) error {
-	enc, err := icrypto.SealBytes(s.cookieKey, []byte(rawToken))
+	enc, err := icrypto.Seal(s.cookieKey, []byte(rawToken))
 	if err != nil {
 		return err
 	}
@@ -97,7 +97,7 @@ func (s *Server) readPortalCookie(r *http.Request) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	raw, err := icrypto.OpenBytes(s.cookieKey, enc)
+	raw, err := icrypto.Open(s.cookieKey, enc)
 	if err != nil {
 		return "", err
 	}

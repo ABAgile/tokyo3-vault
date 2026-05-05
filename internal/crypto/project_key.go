@@ -5,18 +5,20 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 )
 
 // projectKeyProvider implements KeyProvider using a plaintext in-memory PEK.
-// All operations are pure AES-256-GCM via the package-private seal/open helpers.
+// All operations are pure AES-256-GCM via the package Seal/Open helpers.
 type projectKeyProvider struct{ pek []byte }
 
 func (p *projectKeyProvider) WrapDEK(_ context.Context, dek []byte) ([]byte, error) {
-	return seal(p.pek, dek)
+	return Seal(p.pek, dek)
 }
 
 func (p *projectKeyProvider) UnwrapDEK(_ context.Context, enc []byte) ([]byte, error) {
-	return open(p.pek, enc)
+	return Open(p.pek, enc)
 }
 
 // NewProjectKeyProvider returns a KeyProvider backed by the given 32-byte PEK.
@@ -34,11 +36,16 @@ type pekCacheEntry struct {
 // ProjectKeyCache caches per-project plaintext PEKs to minimise calls to the
 // server-level KeyProvider (KMS). ForProject returns a project-scoped KeyProvider;
 // the server KEK is called at most once per project per TTL period.
+//
+// `unwrap` collapses concurrent cache misses for the same project — when N
+// goroutines miss simultaneously (cold start, post-TTL, or post-Invalidate),
+// only one calls master.UnwrapDEK; the rest piggyback on its result.
 type ProjectKeyCache struct {
 	master KeyProvider
 	mu     sync.RWMutex
 	keys   map[string]*pekCacheEntry
 	ttl    time.Duration
+	unwrap singleflight.Group
 }
 
 // NewProjectKeyCache returns a ProjectKeyCache backed by master (the server
@@ -75,18 +82,33 @@ func (c *ProjectKeyCache) ForProject(ctx context.Context, projectID string, encP
 	}
 	c.mu.RUnlock()
 
-	// Slow path: unwrap PEK via master KeyProvider (may call KMS).
-	pek, err := c.master.UnwrapDEK(ctx, encPEK)
+	// Slow path: collapse concurrent misses for the same project into a single
+	// UnwrapDEK call. The leader runs with its own ctx; waiters share its
+	// result (or its error — failure paths dedupe too).
+	v, err, _ := c.unwrap.Do(projectID, func() (any, error) {
+		// Re-check after acquiring the singleflight slot — a previous leader
+		// may have populated the cache while we were queued.
+		c.mu.RLock()
+		entry, ok := c.keys[projectID]
+		c.mu.RUnlock()
+		if ok && time.Now().Before(entry.expiresAt) {
+			return entry.kp, nil
+		}
+
+		pek, err := c.master.UnwrapDEK(ctx, encPEK)
+		if err != nil {
+			return nil, fmt.Errorf("unwrap project key: %w", err)
+		}
+		kp := &projectKeyProvider{pek: pek}
+		c.mu.Lock()
+		c.keys[projectID] = &pekCacheEntry{kp: kp, expiresAt: time.Now().Add(c.ttl)}
+		c.mu.Unlock()
+		return kp, nil
+	})
 	if err != nil {
-		return nil, fmt.Errorf("unwrap project key: %w", err)
+		return nil, err
 	}
-
-	kp := &projectKeyProvider{pek: pek}
-	c.mu.Lock()
-	c.keys[projectID] = &pekCacheEntry{kp: kp, expiresAt: time.Now().Add(c.ttl)}
-	c.mu.Unlock()
-
-	return kp, nil
+	return v.(KeyProvider), nil
 }
 
 // Invalidate removes a project's cached PEK, forcing the next ForProject call

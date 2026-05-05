@@ -3,6 +3,8 @@ package crypto
 import (
 	"context"
 	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -154,5 +156,52 @@ func TestProjectKeyCache_UnwrapError(t *testing.T) {
 	_, err := cache.ForProject(context.Background(), "proj-err", []byte("bogus"))
 	if err == nil {
 		t.Fatal("expected error from unwrap failure, got nil")
+	}
+}
+
+// countingKeyProvider records UnwrapDEK calls and sleeps briefly so concurrent
+// callers overlap in the slow path. The exact PEK bytes don't matter for the
+// dedupe assertion — only the call count.
+type countingKeyProvider struct {
+	calls atomic.Int64
+	delay time.Duration
+}
+
+func (p *countingKeyProvider) WrapDEK(_ context.Context, dek []byte) ([]byte, error) {
+	return append([]byte(nil), dek...), nil
+}
+func (p *countingKeyProvider) UnwrapDEK(_ context.Context, _ []byte) ([]byte, error) {
+	p.calls.Add(1)
+	time.Sleep(p.delay)
+	return make([]byte, 32), nil
+}
+
+// TestProjectKeyCache_SingleflightDedupe asserts that concurrent cold misses
+// for the same projectID collapse into a single master.UnwrapDEK call. Without
+// singleflight the count would be `concurrency`; with it, exactly 1.
+func TestProjectKeyCache_SingleflightDedupe(t *testing.T) {
+	master := &countingKeyProvider{delay: 50 * time.Millisecond}
+	cache := NewProjectKeyCache(master, time.Minute)
+
+	const concurrency = 10
+	encPEK := []byte("any-encpek-bytes")
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(concurrency)
+
+	for range concurrency {
+		go func() {
+			defer wg.Done()
+			<-start // release all goroutines simultaneously
+			if _, err := cache.ForProject(context.Background(), "proj-dedupe", encPEK); err != nil {
+				t.Errorf("ForProject: %v", err)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	if got := master.calls.Load(); got != 1 {
+		t.Errorf("expected exactly 1 UnwrapDEK call from %d concurrent misses, got %d", concurrency, got)
 	}
 }

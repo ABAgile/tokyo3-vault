@@ -22,9 +22,9 @@ func NewLocalKeyProvider(kek []byte) *LocalKeyProvider {
 }
 
 func (p *LocalKeyProvider) WrapDEK(_ context.Context, dek []byte) ([]byte, error) {
-	return seal(p.kek, dek)
+	return Seal(p.kek, dek)
 }
 
 func (p *LocalKeyProvider) UnwrapDEK(_ context.Context, encryptedDEK []byte) ([]byte, error) {
-	return open(p.kek, encryptedDEK)
+	return Open(p.kek, encryptedDEK)
 }

@@ -75,8 +75,9 @@ func (c *CertLoader) GetCertificate(_ *tls.ClientHelloInfo) (*tls.Certificate, e
 }
 
 // SelfSignedCert generates an ephemeral ECDSA P-256 self-signed certificate valid for
-// one year. SANs cover localhost and 127.0.0.1. Used as TLS fallback when no certificate
-// files are configured.
+// one year. SANs cover localhost, *.localhost (single-label subdomains like
+// vault.localhost / nats.localhost), and 127.0.0.1 / ::1. Used as TLS fallback when no
+// certificate files are configured.
 func SelfSignedCert() (tls.Certificate, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -96,7 +97,7 @@ func SelfSignedCert() (tls.Certificate, error) {
 		NotAfter:     now.Add(365 * 24 * time.Hour),
 		KeyUsage:     x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		DNSNames:     []string{"localhost"},
+		DNSNames:     []string{"localhost", "*.localhost"},
 		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1"), net.IPv6loopback},
 	}
 
