@@ -132,14 +132,14 @@ services:
     build: .
     image: abagile/vault:${VERSION:-latest}
     ports:
-      - "${VAULT_PORT:-8443}:8443"
+      - "${VAULT_PORT:-8443}:443"
     environment:
       VAULT_MASTER_KEY:         ${VAULT_MASTER_KEY:?VAULT_MASTER_KEY is required}
       # Admin DSN: schema migration only (DDL privileges).
       VAULT_ADMIN_DATABASE_URL: postgres://${VAULT_ADMIN_DB_USERNAME:-vault_admin}:${VAULT_ADMIN_PASSWORD}@db:5432/vault?sslmode=disable
       # Runtime DSN: DML-only after schema is in place.
       VAULT_DATABASE_URL:       postgres://${VAULT_APP_USERNAME:-vault_app}:${VAULT_APP_PASSWORD}@db:5432/vault?sslmode=disable
-      VAULT_ADDR:               :8443
+      VAULT_ADDR:               :443
       # Audit sink: publish events to NATS JetStream (fail-closed).
       VAULT_NATS_URL:           nats://nats:4222
     depends_on:
@@ -151,7 +151,7 @@ services:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "--no-check-certificate", "https://localhost:8443/api/v1/projects"]
+      test: ["CMD", "wget", "-qO-", "--no-check-certificate", "https://localhost:443/api/v1/projects"]
       interval: 30s
       timeout: 5s
       retries: 3

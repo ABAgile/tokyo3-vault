@@ -32,6 +32,6 @@ COPY --from=builder /out/vaultd      /usr/local/bin/vaultd
 COPY --from=builder /out/vault       /usr/local/bin/vault
 COPY --from=builder /out/vault-audit /usr/local/bin/vault-audit
 
-EXPOSE 8443
+EXPOSE 443
 
 ENTRYPOINT ["/usr/local/bin/vaultd"]

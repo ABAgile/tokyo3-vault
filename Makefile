@@ -43,6 +43,7 @@ GOFLAGS :=
 
 IMAGE_NAME    ?= abagile/vault
 IMAGE_TAG     ?= $(VERSION)
+VAULT_ADDR    ?= :8443
 POSTGRES_PORT ?= 35432
 AUDIT_DB_PORT ?= 35433
 NATS_PORT     ?= 34222
@@ -116,7 +117,7 @@ _gen-env: build-server build-cli
 	@if [ ! -f .env ]; then \
 	    KEY=$$($(VAULT_BIN) keygen); \
 	    echo "VAULT_MASTER_KEY=$$KEY"                                                                                                                             > .env; \
-	    echo "VAULT_ADDR=:8443"                                                                                                                                   >> .env; \
+	    echo "VAULT_ADDR=$(VAULT_ADDR)"                                                                                                                           >> .env; \
 	    echo "POSTGRES_PORT=$(POSTGRES_PORT)"                                                                                                                     >> .env; \
 	    echo "VAULT_ADMIN_PASSWORD=changeme"                                                                                                                      >> .env; \
 	    echo "VAULT_APP_PASSWORD=changeme"                                                                                                                        >> .env; \
