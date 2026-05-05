@@ -14,10 +14,10 @@ import (
 const (
 	// Subject is the NATS subject for all audit events. The publisher mTLS
 	// credential (vault-publisher identity) has PUBLISH-only permission here.
-	Subject = "audit.events"
+	Subject = "vault.audit.events"
 
 	// StreamName is the JetStream stream that captures Subject.
-	StreamName = "AUDIT"
+	StreamName = "vault_audit"
 
 	// StreamMaxAge is the stream retention floor for PCI-DSS 10.5 (12 months).
 	// Set to 13 months so operations have a comfortable roll-over buffer.
@@ -26,7 +26,7 @@ const (
 
 // JetStreamSink publishes audit entries to a NATS JetStream stream via mTLS.
 // The NATS user identity (derived from the TLS cert subject or SPIFFE URI SAN
-// via verify_and_map) must have PUBLISH-only permission on audit.events with
+// via verify_and_map) must have PUBLISH-only permission on vault.audit.events with
 // no subscribe or stream-management rights.
 type JetStreamSink struct {
 	nc *nats.Conn
@@ -55,7 +55,7 @@ func NewJetStreamSink(url string, tlsCfg *tls.Config) (*JetStreamSink, error) {
 	return &JetStreamSink{nc: nc, js: js}, nil
 }
 
-// Log marshals e to JSON and publishes it synchronously to the AUDIT stream.
+// Log marshals e to JSON and publishes it synchronously to the vault_audit stream.
 // Returns an error if the publish times out or NATS rejects the message.
 // Because this is synchronous, callers receive the JetStream server-ack before
 // the method returns — the event is durable once Log returns nil.

@@ -86,6 +86,44 @@ services:
       timeout: 5s
       retries: 5
 
+  # ── nats-box: stream provisioner + interactive shell ──────────────────────
+  # On startup, ensures the vault_audit JetStream stream exists. Without this
+  # step, vaultd's first audit publish would fail (no stream covers the subject)
+  # and every audit-emitting handler would 500 until vault-audit ran and created
+  # the stream. Provisioning it here keeps vaultd's publisher credential
+  # PUBLISH-only and prevents event loss when vault-audit is offline.
+  #
+  # After provisioning the container stays alive (tail -f /dev/null) so you can:
+  #   docker compose exec natsbox nats stream info vault_audit
+  #   docker compose exec natsbox nats sub 'vault.audit.events'
+  natsbox:
+    image: natsio/nats-box:latest
+    depends_on:
+      nats:
+        condition: service_healthy
+    environment:
+      NATS_URL: nats://nats:4222
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        nats stream info vault_audit > /dev/null 2>&1 || \
+          nats stream add vault_audit \
+            --subjects 'vault.audit.events' \
+            --retention limits \
+            --storage file \
+            --max-age 9600h \
+            --deny-delete \
+            --deny-purge \
+            --defaults
+        exec tail -f /dev/null
+    healthcheck:
+      test: ["CMD-SHELL", "nats stream info vault_audit > /dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
   # ── API server ────────────────────────────────────────────────────────────
   # Exposes HTTPS on ${VAULT_PORT:-8443}. Browse https://localhost:8443; the
   # CLI uses --server https://localhost:8443. Use mkcert (via certs/gen.sh)
@@ -109,6 +147,8 @@ services:
         condition: service_healthy
       nats:
         condition: service_healthy
+      natsbox:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-qO-", "--no-check-certificate", "https://localhost:8443/api/v1/projects"]
@@ -129,6 +169,8 @@ services:
       audit-db:
         condition: service_healthy
       nats:
+        condition: service_healthy
+      natsbox:
         condition: service_healthy
     restart: unless-stopped
 

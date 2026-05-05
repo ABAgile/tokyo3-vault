@@ -59,6 +59,37 @@ services:
     volumes:
       - shared-data:/shared:ro
 
+  # ── nats-box: TLS context + stream provisioner ────────────────────────────
+  # Reuses vault-audit-nats-client.crt for both stream provisioning and
+  # interactive inspection — the dev NATS server has no per-subject auth, so a
+  # valid client cert grants full access. A `default` nats context is saved at
+  # startup so subsequent CLI calls inherit the TLS settings:
+  #   docker compose exec natsbox nats sub 'vault.audit.events'
+  natsbox:
+    environment:
+      NATS_URL: tls://nats:4222
+    command:
+      - |
+        set -e
+        nats context save default \
+          --server tls://nats:4222 \
+          --tlscert /shared/certs/vault-audit-nats-client.crt \
+          --tlskey /shared/certs/vault-audit-nats-client.key \
+          --tlsca /shared/certs/ca.crt \
+          --select > /dev/null
+        nats stream info vault_audit > /dev/null 2>&1 || \
+          nats stream add vault_audit \
+            --subjects 'vault.audit.events' \
+            --retention limits \
+            --storage file \
+            --max-age 9600h \
+            --deny-delete \
+            --deny-purge \
+            --defaults
+        exec tail -f /dev/null
+    volumes:
+      - shared-data:/shared:ro
+
   # ── vaultd: HTTPS + mTLS certs for NATS and Postgres ─────────────────────
   vaultd:
     environment:

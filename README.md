@@ -356,6 +356,8 @@ All four base vars (`VAULT_OIDC_ISSUER`, `VAULT_OIDC_CLIENT_ID`, `VAULT_OIDC_CLI
 
 If `VAULT_NATS_URL` is unset, audit events are discarded (development only). In production all three NATS variables must be set together for mTLS.
 
+`vaultd` publishes synchronously to subject `vault.audit.events` and expects the JetStream stream `vault_audit` to already exist — its publisher credential is PUBLISH-only and does not have stream-management rights. The bundled `docker-compose.yml` provisions the stream via a small `natsbox` service (image `natsio/nats-box`) on first start; for hand-rolled deployments either run `vault-audit consume` once (its `CreateOrUpdateStream` is idempotent) or `nats stream add vault_audit --subjects 'vault.audit.events' --retention limits --storage file --max-age 9600h --deny-delete --deny-purge`. Without a stream, every audit-emitting handler 500s (fail-closed).
+
 | Variable | Default | Description |
 |---|---|---|
 | `VAULT_NATS_URL` | — | NATS server URL; enables JetStream sink when set |

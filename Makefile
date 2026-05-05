@@ -2,8 +2,8 @@
 ##
 ## Usage:
 ##   make build             Build all three binaries to ./bin/
-##   make run               Start vaultd with dev defaults (starts Postgres via compose)
-##   make run-mtls          Start vaultd with mTLS (cert auth, no password in DSN)
+##   make run               Start vaultd with dev defaults (starts Postgres + NATS via compose)
+##   make run-mtls          Start vaultd with mTLS (cert auth, no password in DSN; starts Postgres + NATS)
 ##   make run-audit         Start vault-audit consume (starts NATS + audit-db via compose)
 ##   make run-audit-mtls    Start vault-audit consume with mTLS (cert auth, no password in DSN)
 ##   make keygen            Generate a VAULT_MASTER_KEY
@@ -43,9 +43,9 @@ GOFLAGS :=
 
 IMAGE_NAME    ?= abagile/vault
 IMAGE_TAG     ?= $(VERSION)
-POSTGRES_PORT ?= 5433
-AUDIT_DB_PORT ?= 5434
-NATS_PORT     ?= 4222
+POSTGRES_PORT ?= 35432
+AUDIT_DB_PORT ?= 35433
+NATS_PORT     ?= 34222
 
 # Docker Compose project name (defaults to directory basename, matching Compose behaviour).
 # Used to derive the shared named volume name for pre-population via tar pipe (no bind mounts).
@@ -123,6 +123,7 @@ _gen-env: build-server build-cli
 	    echo "VAULT_ADMIN_DATABASE_URL=postgres://$${VAULT_ADMIN_DB_USERNAME:-vault_admin}:changeme@db.localhost:$(POSTGRES_PORT)/vault?sslmode=disable"          >> .env; \
 	    echo "VAULT_DATABASE_URL=postgres://$${VAULT_APP_USERNAME:-vault_app}:changeme@db.localhost:$(POSTGRES_PORT)/vault?sslmode=disable"                       >> .env; \
 	    echo "NATS_PORT=$(NATS_PORT)"                                                                                                                             >> .env; \
+	    echo "VAULT_NATS_URL=nats://nats.localhost:$(NATS_PORT)"                                                                                                  >> .env; \
 	    echo "AUDIT_DB_PORT=$(AUDIT_DB_PORT)"                                                                                                                     >> .env; \
 	    echo "VAULT_AUDIT_PASSWORD=changeme"                                                                                                                      >> .env; \
 	    echo "VAULT_AUDIT_NATS_URL=nats://nats.localhost:$(NATS_PORT)"                                                                                            >> .env; \
@@ -161,12 +162,12 @@ _sync-certs:
 
 ## run: Build and start vaultd with dev defaults (auto-generates .env on first run)
 run: _gen-env _sync-pg-scripts
-	@docker compose up -d db audit-db --wait 2>/dev/null || true
+	@docker compose up -d db audit-db nats natsbox --wait 2>/dev/null || true
 	@export $$(grep -v '^#' .env | xargs) && $(VAULTD_BIN)
 
 ## run-mtls: Build and start vaultd with mTLS (cert auth; overrides DSNs — no password)
 run-mtls: _gen-env _sync-pg-scripts _sync-certs
-	@docker compose -f docker-compose.yml -f docker-compose.mtls.yml up -d db audit-db --wait 2>/dev/null || true
+	@docker compose -f docker-compose.yml -f docker-compose.mtls.yml up -d db audit-db nats natsbox --wait 2>/dev/null || true
 	@CA_PEM=$$(mkcert -CAROOT)/rootCA.pem; \
 	    export $$(grep -v '^#' .env | xargs) && \
 	    if [ -n "$$VAULT_OIDC_CLIENT_ID" ]; then \
@@ -185,6 +186,9 @@ run-mtls: _gen-env _sync-pg-scripts _sync-certs
 	    VAULT_DB_KEY=certs/vaultd-app-db-client.key \
 	    VAULT_DB_CA=$$CA_PEM \
 	    VAULT_DATABASE_URL=postgres://$${VAULT_APP_USERNAME:-vault_app}@db.localhost:$(POSTGRES_PORT)/vault?sslmode=verify-full \
+	    VAULT_NATS_CERT=certs/vaultd-nats-client.crt \
+	    VAULT_NATS_KEY=certs/vaultd-nats-client.key \
+	    VAULT_NATS_CA=$$CA_PEM \
 	    VAULT_SCIM_MTLS_CA=$$CA_PEM \
 	    VAULT_SCIM_MTLS_SAN_DNS=$${VAULT_SCIM_MTLS_SAN_DNS:-auth.localhost} \
 	    $(VAULTD_BIN)

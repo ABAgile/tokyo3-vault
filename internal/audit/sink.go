@@ -2,7 +2,7 @@
 //
 // Write path (vaultd serve):
 //
-//	Handler → Sink.Log → NATS JetStream "AUDIT" stream (authoritative record)
+//	Handler → Sink.Log → NATS JetStream "vault_audit" stream (authoritative record)
 //
 // Read/consume path (vault-audit — separate binary):
 //
@@ -14,7 +14,7 @@
 // from the stream by vault-audit; it can be dropped and replayed at any time.
 //
 // Credential separation:
-//   - vaultd serve uses a NATS publisher credential (PUBLISH-only on audit.events).
+//   - vaultd serve uses a NATS publisher credential (PUBLISH-only on vault.audit.events).
 //   - vault-audit consume uses a NATS consumer credential (SUBSCRIBE + consumer
 //     management) and an audit DB writer credential (INSERT-only on audit_logs).
 //   - Neither credential can perform the other role's operations.

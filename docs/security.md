@@ -218,7 +218,7 @@ Audit uses a two-process design with credential separation between the vault ser
 
 ```
 vaultd serve (publisher credential)
-    │ Sink.Log → NATS JetStream "AUDIT" stream
+    │ Sink.Log → NATS JetStream "vault_audit" stream
     │            (DenyDelete, DenyPurge, FileStorage, 400-day retention)
     │
 vault-audit consume (subscriber credential)
@@ -231,13 +231,15 @@ Querying is handled entirely by `vault-audit query`, which reads directly from t
 
 **Tamper evidence**: the NATS stream is configured with `DenyDelete` and `DenyPurge`, so no individual message or the entire stream can be deleted via the NATS API. `FileStorage` ensures records survive restarts.
 
+**Stream provisioning**: `vaultd`'s publisher credential is PUBLISH-only on `vault.audit.events` and intentionally lacks stream-management rights. The `vault_audit` stream must therefore exist before the first publish — if absent, JetStream rejects the publish, `logAudit` returns an error, and the handler 500s (fail-closed). Provision the stream out-of-band: the bundled `docker-compose.yml` runs a `natsbox` sidecar that creates it idempotently on startup; for hand-rolled deployments either run `vault-audit consume` once (its `CreateOrUpdateStream` is idempotent and uses the same parameters) or use `nats stream add vault_audit --subjects 'vault.audit.events' --retention limits --storage file --max-age 9600h --deny-delete --deny-purge`.
+
 **Credential separation** (five distinct identities):
 
 | Identity | Rights | Used by |
 |----------|--------|---------|
 | `vault_app` | DML-only on main DB | `vaultd serve` (runtime) |
 | `vault` (admin) | DDL on main DB | `vaultd serve` (startup migration only) |
-| `nats_publisher` | PUBLISH-only on `audit.events` | `vaultd serve` |
+| `nats_publisher` | PUBLISH-only on `vault.audit.events` | `vaultd serve` |
 | `nats_consumer` | SUBSCRIBE + consumer management | `vault-audit consume` |
 | `vault_audit` | DDL + INSERT + SELECT on audit DB | `vault-audit` (both subcommands) |
 

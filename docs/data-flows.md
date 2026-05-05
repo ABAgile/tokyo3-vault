@@ -37,7 +37,7 @@ runConsume()
  │   ├─ VAULT_AUDIT_DATABASE_URL set → auditpg.Migrate() then auditpg.Open() (vault_audit owner)
  │   └─ else                         → auditsqlite.Open(VAULT_AUDIT_DB_PATH, default: audit.db)
  ├─ connectConsumerNATS()   — VAULT_AUDIT_NATS_URL + optional mTLS (VAULT_AUDIT_NATS_CERT/KEY/CA)
- ├─ js.CreateOrUpdateStream() — idempotent: ensures AUDIT stream exists
+ ├─ js.CreateOrUpdateStream() — idempotent: ensures vault_audit stream exists
  └─ loop: cons.Fetch(64) → json.Unmarshal → adb.UpsertAuditLog (ON CONFLICT DO NOTHING)
            Ack on success; Nak on upsert failure; Ack+discard on unmarshal failure
 ```

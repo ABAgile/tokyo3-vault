@@ -36,7 +36,7 @@ Vault is a self-hosted secrets manager. It stores encrypted secrets, issues shor
               ▼
    ┌────────────────────────┐
    │   NATS JetStream       │
-   │   AUDIT stream         │
+   │   vault_audit stream   │
    │   (authoritative,      │
    │    DenyDelete+Purge,   │
    │    FileStorage, 400 d) │
@@ -73,7 +73,7 @@ Two subcommands:
 2. Open the main store: for Postgres, run schema migrations with `VAULT_ADMIN_DATABASE_URL` (owner/DDL role; skipped when unset) then open the runtime connection with `VAULT_DATABASE_URL` (DML-only `vault_app` role); for SQLite, open `VAULT_DB_PATH` directly (migrations run inline)
 3. Create `ProjectKeyCache` with configurable TTL (default 5 minutes)
 4. Dispatch `migrate-keys` → `runMigrateKeys(); exit` if that subcommand was requested
-5. Open `audit.JetStreamSink` (publisher credential, PUBLISH-only on `audit.events`); falls back to `NoopSink` when `VAULT_NATS_URL` is unset
+5. Open `audit.JetStreamSink` (publisher credential, PUBLISH-only on `vault.audit.events`); falls back to `NoopSink` when `VAULT_NATS_URL` is unset
 6. Start background `Revoker` goroutine (sweeps expired dynamic leases every 60 s; also sweeps on startup)
 7. Start background `PEKRotator` goroutine (sweeps for stale PEKs every hour; also sweeps on startup; disabled when `VAULT_PEK_ROTATION_PERIOD=0`)
 8. Start background `VersionPruner` goroutine (prunes old secret versions once at startup then every 24 h; controlled by `VAULT_VERSION_MIN_KEEP` and `VAULT_VERSION_MIN_DAYS`)
@@ -136,7 +136,7 @@ The audit subsystem uses CQRS: JetStream is the authoritative write record; the 
 
 | Component | Package | Credential |
 |-----------|---------|------------|
-| `JetStreamSink` | `internal/audit` | `nats_publisher` — PUBLISH-only on `audit.events` |
+| `JetStreamSink` | `internal/audit` | `nats_publisher` — PUBLISH-only on `vault.audit.events` |
 | `postgres.DB` | `internal/audit/postgres` | `vault_audit` — DDL + INSERT + SELECT on audit DB |
 | `sqlite.DB` | `internal/audit/sqlite` | file-level access (dev/single-node) |
 | NATS consumer | `cmd/vault-audit` | `nats_consumer` — SUBSCRIBE + consumer management |

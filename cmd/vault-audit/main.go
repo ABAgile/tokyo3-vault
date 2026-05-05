@@ -148,7 +148,7 @@ func runConsume(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("jetstream client: %w", err)
 	}
 
-	// Ensure the AUDIT stream exists. In production the NATS operator should
+	// Ensure the vault_audit stream exists. In production the NATS operator should
 	// provision the stream; CreateOrUpdateStream is idempotent so it is safe
 	// to call here as a convenience for development and first-run scenarios.
 	stream, err := js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
