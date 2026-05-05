@@ -2,6 +2,9 @@ package api
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -53,6 +56,87 @@ func TestScimAuth_InvalidToken(t *testing.T) {
 	w := scimCall(t, srv, srv.scimAuth(inner), http.MethodGet, "/scim/v2/Users", "", "bad-token")
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("status = %d, want 401; body: %s", w.Code, w.Body)
+	}
+}
+
+// ── scimMTLSAuthorized ────────────────────────────────────────────────────────
+
+// scimMTLSAuthorized is the security-critical gate for the no-token path:
+// it MUST return false unless both (a) the SAN allow-list is configured and
+// (b) the leaf cert's DNS SAN matches one of those allowed names. Bare CN is
+// deliberately not consulted, and a peer cert chained-but-not-allow-listed
+// must fall through to the bearer path (returns false here).
+func TestScimMTLSAuthorized(t *testing.T) {
+	mkLeaf := func(dnsNames []string, cn string) *x509.Certificate {
+		return &x509.Certificate{
+			DNSNames: dnsNames,
+			Subject:  pkix.Name{CommonName: cn},
+		}
+	}
+	withTLS := func(leaf *x509.Certificate) *http.Request {
+		r := httptest.NewRequest(http.MethodGet, "/scim/v2/Users", nil)
+		if leaf != nil {
+			r.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{leaf}}
+		}
+		return r
+	}
+
+	cases := []struct {
+		name        string
+		allowedSANs []string
+		leaf        *x509.Certificate
+		want        bool
+	}{
+		{"no allow-list configured → bearer-only", nil, mkLeaf([]string{"authd.example.com"}, ""), false},
+		{"allow-list set, no peer cert → fall back to bearer", []string{"authd.example.com"}, nil, false},
+		{"matching DNS SAN → allow", []string{"authd.example.com"}, mkLeaf([]string{"authd.example.com"}, ""), true},
+		{"case-insensitive match", []string{"AuthD.Example.com"}, mkLeaf([]string{"authd.EXAMPLE.com"}, ""), true},
+		{"non-matching SAN → reject (caller falls through to bearer)", []string{"authd.example.com"}, mkLeaf([]string{"attacker.example.com"}, ""), false},
+		{"CN-only (no DNS SAN) → reject — CN is deliberately not consulted", []string{"authd"}, mkLeaf(nil, "authd"), false},
+		{"second SAN matches", []string{"authd-prod.example.com"}, mkLeaf([]string{"unrelated.example.com", "authd-prod.example.com"}, ""), true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := newTestServer(t, &mockStore{})
+			srv.scimAllowedSANs = tc.allowedSANs
+			// Match how Server.New normalises — lower-case the allow-list once.
+			for i, s := range srv.scimAllowedSANs {
+				srv.scimAllowedSANs[i] = strings.ToLower(s)
+			}
+			got := srv.scimMTLSAuthorized(withTLS(tc.leaf))
+			if got != tc.want {
+				t.Errorf("scimMTLSAuthorized = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// scimAuth must short-circuit on a valid mTLS cert WITHOUT touching the bearer
+// store — proves the no-token path actually works end-to-end through the
+// middleware (not just the helper in isolation).
+func TestScimAuth_MTLS_BypassesBearerCheck(t *testing.T) {
+	srv := newTestServer(t, &mockStore{})
+	srv.scimAllowedSANs = []string{"authd.example.com"}
+
+	called := false
+	inner := func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	}
+
+	leaf := &x509.Certificate{DNSNames: []string{"authd.example.com"}}
+	r := httptest.NewRequest(http.MethodGet, "/scim/v2/Users", nil)
+	r.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{leaf}}
+	// Deliberately omit Authorization header — bearer path would 401, mTLS path passes.
+
+	w := httptest.NewRecorder()
+	srv.scimAuth(inner)(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body)
+	}
+	if !called {
+		t.Error("inner handler not invoked")
 	}
 }
 
@@ -554,6 +638,65 @@ func TestHandleSCIMCreateUser(t *testing.T) {
 				t.Errorf("status = %d, want %d; body: %s", w.Code, tc.wantStatus, w.Body)
 			}
 		})
+	}
+}
+
+// ── handleSCIMCreateUser — first-user admin bootstrap ────────────────────────
+//
+// When the users table is empty (HasAdminUser=false), the very first
+// SCIM-provisioned user is promoted to admin. Mirrors handleSignup's
+// first-user rule and is the only way to bootstrap an admin when
+// VAULT_OIDC_ENFORCE=true closes /api/v1/auth/signup.
+
+func TestHandleSCIMCreateUser_BootstrapsFirstAdmin(t *testing.T) {
+	var seenRole string
+	st := adminStore()
+	st.hasAdminUser = func(_ context.Context) (bool, error) { return false, nil }
+	st.createUser = func(_ context.Context, email, _, role string) (*model.User, error) {
+		seenRole = role
+		return &model.User{ID: "u-first", Email: email, Role: role, Active: true, CreatedAt: time.Now().UTC()}, nil
+	}
+	srv := newTestServer(t, st)
+	w := scimCall(t, srv, srv.handleSCIMCreateUser, http.MethodPost, "/scim/v2/Users",
+		`{"userName":"first@example.com"}`, "")
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body)
+	}
+	if seenRole != model.UserRoleAdmin {
+		t.Errorf("first user role = %q, want admin", seenRole)
+	}
+}
+
+func TestHandleSCIMCreateUser_SecondUserStaysMember(t *testing.T) {
+	var seenRole string
+	st := adminStore() // adminStore() defaults hasAdminUser → true
+	st.createUser = func(_ context.Context, email, _, role string) (*model.User, error) {
+		seenRole = role
+		return &model.User{ID: "u-2", Email: email, Role: role, Active: true, CreatedAt: time.Now().UTC()}, nil
+	}
+	srv := newTestServer(t, st)
+	w := scimCall(t, srv, srv.handleSCIMCreateUser, http.MethodPost, "/scim/v2/Users",
+		`{"userName":"second@example.com"}`, "")
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body)
+	}
+	if seenRole != model.UserRoleMember {
+		t.Errorf("subsequent user role = %q, want member", seenRole)
+	}
+}
+
+func TestHandleSCIMCreateUser_HasAdminUserDBError(t *testing.T) {
+	st := adminStore()
+	st.hasAdminUser = func(_ context.Context) (bool, error) { return false, errDB }
+	st.createUser = func(_ context.Context, _, _, _ string) (*model.User, error) {
+		t.Fatal("createUser must not be called when HasAdminUser fails")
+		return nil, nil
+	}
+	srv := newTestServer(t, st)
+	w := scimCall(t, srv, srv.handleSCIMCreateUser, http.MethodPost, "/scim/v2/Users",
+		`{"userName":"err@example.com"}`, "")
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500", w.Code)
 	}
 }
 

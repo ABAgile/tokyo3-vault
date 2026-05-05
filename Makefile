@@ -128,6 +128,16 @@ _gen-env: build-server build-cli
 	    echo "VAULT_AUDIT_NATS_URL=nats://nats.localhost:$(NATS_PORT)"                                                                                            >> .env; \
 	    echo "VAULT_AUDIT_DATABASE_URL=postgres://$${VAULT_AUDIT_USERNAME:-vault_audit}:changeme@audit-db.localhost:$(AUDIT_DB_PORT)/vault_audit?sslmode=disable" >> .env; \
 	    echo "VAULT_ALLOW_REGISTRATION=true"                                                                                                                      >> .env; \
+	    echo ""                                                                                                                                                  >> .env; \
+	    echo "# OIDC SSO via auth — paste CLIENT_ID/SECRET from \`authd\`'s /admin/clients (POST) or"                                                            >> .env; \
+	    echo "# /portal/admin/clients/new. Leave both blank to keep OIDC disabled. When CLIENT_ID is"                                                            >> .env; \
+	    echo "# set, run-mtls auto-defaults VAULT_OIDC_ISSUER + VAULT_OIDC_REDIRECT_URI to the values"                                                           >> .env; \
+	    echo "# below — override here if your auth/vault hosts/ports differ."                                                                                   >> .env; \
+	    echo "VAULT_OIDC_CLIENT_ID="                                                                                                                              >> .env; \
+	    echo "VAULT_OIDC_CLIENT_SECRET="                                                                                                                          >> .env; \
+	    echo "# VAULT_OIDC_ISSUER=https://auth.localhost:8443"                                                                                                    >> .env; \
+	    echo "# VAULT_OIDC_REDIRECT_URI=https://vault.localhost:8443/api/v1/auth/oidc/callback"                                                                   >> .env; \
+	    echo "VAULT_OIDC_ENFORCE=false"                                                                                                                           >> .env; \
 	    echo "  generated .env"; \
 	fi
 
@@ -159,6 +169,11 @@ run-mtls: _gen-env _sync-pg-scripts _sync-certs
 	@docker compose -f docker-compose.yml -f docker-compose.mtls.yml up -d db audit-db --wait 2>/dev/null || true
 	@CA_PEM=$$(mkcert -CAROOT)/rootCA.pem; \
 	    export $$(grep -v '^#' .env | xargs) && \
+	    if [ -n "$$VAULT_OIDC_CLIENT_ID" ]; then \
+	        : "$${VAULT_OIDC_ISSUER:=https://auth.localhost:8443}"; \
+	        : "$${VAULT_OIDC_REDIRECT_URI:=https://vault.localhost:8443/api/v1/auth/oidc/callback}"; \
+	        export VAULT_OIDC_ISSUER VAULT_OIDC_REDIRECT_URI; \
+	    fi; \
 	    VAULT_TLS_CERT=certs/vaultd-server.crt \
 	    VAULT_TLS_KEY=certs/vaultd-server.key \
 	    VAULT_TLS_CLIENT_CA=$$CA_PEM \
@@ -170,6 +185,8 @@ run-mtls: _gen-env _sync-pg-scripts _sync-certs
 	    VAULT_DB_KEY=certs/vaultd-app-db-client.key \
 	    VAULT_DB_CA=$$CA_PEM \
 	    VAULT_DATABASE_URL=postgres://$${VAULT_APP_USERNAME:-vault_app}@db.localhost:$(POSTGRES_PORT)/vault?sslmode=verify-full \
+	    VAULT_SCIM_MTLS_CA=$$CA_PEM \
+	    VAULT_SCIM_MTLS_SAN_DNS=$${VAULT_SCIM_MTLS_SAN_DNS:-auth.localhost} \
 	    $(VAULTD_BIN)
 
 ## run-audit: Build and start vault-audit consume with dev defaults

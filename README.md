@@ -102,6 +102,8 @@ vault signup --server https://localhost:8443
 
 Subsequent `vault signup` calls create regular member accounts.
 
+**OIDC-only deployments:** when `VAULT_OIDC_ENFORCE=true`, both `/auth/signup` and `/portal/register` are closed — there's no local-account path to create the first admin. The same first-user rule then applies on the SCIM side instead: the **first** user provisioned via `POST /scim/v2/Users` is promoted to admin (single-shot; every subsequent SCIM create lands as `member`). Audit-logged separately as `scim.user.create.bootstrap_admin`. With inbound SCIM mTLS configured (`VAULT_SCIM_MTLS_CA` + `VAULT_SCIM_MTLS_SAN_DNS`), this means a fresh deployment can be brought up end-to-end with no manual token bootstrap and no pre-seeded admin.
+
 ### 4. Log in from the CLI
 
 ```sh
@@ -317,6 +319,8 @@ In local-key mode (`VAULT_MASTER_KEY` set), the master KEK doubles as the portal
 | `VAULT_TLS_CERT` | — | Path to PEM-encoded server certificate. If set, `VAULT_TLS_KEY` is also required. The cert is hot-reloaded per-handshake when the file changes, so certificate rotation (e.g. by a SPIFFE/SPIRE agent) never requires a restart. |
 | `VAULT_TLS_KEY` | — | Path to PEM-encoded private key paired with `VAULT_TLS_CERT`. |
 | `VAULT_TLS_CLIENT_CA` | — | Path to a PEM-encoded CA certificate. When set, the server requests a client certificate during the TLS handshake and verifies it against this CA. Used to enable SPIFFE/mTLS authentication (see [SPIFFE/mTLS Principals](#spiFFEmtls-principals)). |
+| `VAULT_SCIM_MTLS_CA` | — | Path to a PEM-encoded CA bundle for the IdP's client certificate (inbound SCIM). Merged into the same `ClientCAs` pool as `VAULT_TLS_CLIENT_CA`; either may be set independently. |
+| `VAULT_SCIM_MTLS_SAN_DNS` | — | Comma-separated allow-list of DNS SANs that identify trusted IdPs for inbound SCIM. Required alongside `VAULT_SCIM_MTLS_CA`. The SCIM middleware accepts a peer cert whose DNS SAN matches one of these (case-insensitive) and skips the bearer-token check entirely — **no SCIM token mint needed**. CN is deliberately not consulted. Without these, inbound SCIM stays bearer-only. |
 
 **PostgreSQL TLS — client certificate auth for vault's own database connection:**
 

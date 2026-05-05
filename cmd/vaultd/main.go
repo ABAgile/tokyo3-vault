@@ -33,6 +33,19 @@
 //	                      When set, enables mTLS: clients may authenticate via SPIFFE cert
 //	                      instead of a Bearer token.
 //
+// Inbound SCIM mTLS (optional — when set, the IdP can call /scim/v2/* with a
+// client cert instead of minting a SCIM bearer token):
+//
+//	VAULT_SCIM_MTLS_CA       Path to CA bundle PEM that signs the IdP's client
+//	                         cert. Merged into the same ClientCAs pool as
+//	                         VAULT_TLS_CLIENT_CA — either may be omitted.
+//	VAULT_SCIM_MTLS_SAN_DNS  Comma-separated allow-list of DNS SANs that
+//	                         identify the IdP. Required alongside
+//	                         VAULT_SCIM_MTLS_CA. The peer cert's SAN must match
+//	                         one of these (case-insensitive); CN is not
+//	                         consulted. Without these, inbound SCIM stays
+//	                         bearer-only.
+//
 // Vault's own Postgres TLS (optional):
 //
 //	VAULT_DB_CERT     Path to client certificate PEM for the vault→postgres connection.
@@ -90,6 +103,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"log/slog"
 	"net"
@@ -247,6 +261,15 @@ func main() {
 		os.Exit(1)
 	}
 
+	scimAllowedSANs := splitCSV(os.Getenv("VAULT_SCIM_MTLS_SAN_DNS"))
+	if len(scimAllowedSANs) > 0 {
+		if os.Getenv("VAULT_SCIM_MTLS_CA") == "" {
+			log.Warn("VAULT_SCIM_MTLS_SAN_DNS is set but VAULT_SCIM_MTLS_CA is not — inbound SCIM mTLS will not work; the TLS handshake has no CA to verify the IdP cert against")
+		} else {
+			log.Info("inbound SCIM mTLS enabled", "allowed_sans", scimAllowedSANs)
+		}
+	}
+
 	srv := api.New(st, kp, projectKP, log, api.Config{
 		OIDC:              oidcProvider,
 		OIDCEnforce:       oidcEnforce,
@@ -257,6 +280,7 @@ func main() {
 		PruneMinAge:       pruneMinAge,
 		CookieKey:         cookieKey,
 		AllowRegistration: strings.EqualFold(os.Getenv("VAULT_ALLOW_REGISTRATION"), "true"),
+		SCIMAllowedSANDNS: scimAllowedSANs,
 	})
 	httpSrv := &http.Server{
 		Addr:      addr,
@@ -328,11 +352,15 @@ func runMigrateKeys(ctx context.Context, st store.Store, kp crypto.KeyProvider, 
 //  1. VAULT_TLS_CERT + VAULT_TLS_KEY files (tbot hot-reload via GetCertificate)
 //  2. Auto-generated self-signed cert (dev fallback, logs a warning)
 //
-// If VAULT_TLS_CLIENT_CA is set, mTLS client verification is enabled.
+// Client-cert verification is enabled if VAULT_TLS_CLIENT_CA (general client
+// auth) and/or VAULT_SCIM_MTLS_CA (IdP-only, for inbound SCIM) is set. Both
+// CAs are merged into the same ClientCAs pool — the per-route middleware then
+// decides which trust path is acceptable for that route.
 func buildServerTLS(log *slog.Logger) (*tls.Config, error) {
 	certFile := os.Getenv("VAULT_TLS_CERT")
 	keyFile := os.Getenv("VAULT_TLS_KEY")
 	clientCAFile := os.Getenv("VAULT_TLS_CLIENT_CA")
+	scimCAFile := os.Getenv("VAULT_SCIM_MTLS_CA")
 
 	if (certFile == "") != (keyFile == "") {
 		return nil, fmt.Errorf("VAULT_TLS_CERT and VAULT_TLS_KEY must both be set or both unset")
@@ -353,18 +381,33 @@ func buildServerTLS(log *slog.Logger) (*tls.Config, error) {
 		cfg.Certificates = []tls.Certificate{cert}
 	}
 
+	pool := x509.NewCertPool()
+	hasCA := false
 	if clientCAFile != "" {
 		data, err := os.ReadFile(clientCAFile)
 		if err != nil {
 			return nil, fmt.Errorf("read VAULT_TLS_CLIENT_CA: %w", err)
 		}
-		pool, err := tlsutil.CertPoolFromPEM(data)
-		if err != nil {
-			return nil, fmt.Errorf("parse VAULT_TLS_CLIENT_CA: %w", err)
+		if !pool.AppendCertsFromPEM(data) {
+			return nil, fmt.Errorf("parse VAULT_TLS_CLIENT_CA: no valid certificates")
 		}
+		hasCA = true
+		log.Info("TLS: client CA loaded for general mTLS", "ca", clientCAFile)
+	}
+	if scimCAFile != "" {
+		data, err := os.ReadFile(scimCAFile)
+		if err != nil {
+			return nil, fmt.Errorf("read VAULT_SCIM_MTLS_CA: %w", err)
+		}
+		if !pool.AppendCertsFromPEM(data) {
+			return nil, fmt.Errorf("parse VAULT_SCIM_MTLS_CA: no valid certificates")
+		}
+		hasCA = true
+		log.Info("TLS: SCIM mTLS CA loaded (IdP)", "ca", scimCAFile)
+	}
+	if hasCA {
 		cfg.ClientCAs = pool
 		cfg.ClientAuth = tls.VerifyClientCertIfGiven
-		log.Info("TLS: mTLS client CA loaded", "ca", clientCAFile)
 	}
 
 	return cfg, nil
@@ -554,6 +597,21 @@ func parseTrustedProxies(log *slog.Logger) []*net.IPNet {
 			continue
 		}
 		out = append(out, cidr)
+	}
+	return out
+}
+
+// splitCSV trims and returns non-empty entries from a comma-separated string.
+// Used for VAULT_SCIM_MTLS_SAN_DNS and any other plain string-list env var.
+func splitCSV(v string) []string {
+	if v == "" {
+		return nil
+	}
+	var out []string
+	for s := range strings.SplitSeq(v, ",") {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
 	}
 	return out
 }

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/abagile/tokyo3-vault/internal/audit"
@@ -52,6 +53,13 @@ type Config struct {
 	// Disabled by default — admins manage users via /portal/admin/users.
 	// Has no effect when OIDCEnforce is true (local accounts are off entirely).
 	AllowRegistration bool
+	// SCIMAllowedSANDNS is the allow-list of DNS SANs that identify trusted
+	// IdPs for inbound SCIM. When non-empty, the SCIM middleware accepts a
+	// peer client cert (chain validated by tls.Config.ClientCAs) whose DNS SAN
+	// matches one of these names — and the bearer-token check is skipped.
+	// Bearer remains a valid fallback for callers that don't present a cert.
+	// Empty (default) keeps the bearer-only behaviour.
+	SCIMAllowedSANDNS []string
 }
 
 // Server holds shared dependencies for all HTTP handlers.
@@ -70,6 +78,8 @@ type Server struct {
 	cookieKey      []byte            // AES-256-GCM key for portal session cookie; nil disables /portal/*
 	portalTmpl     *tmplManager      // lazy-initialised portal template manager (nil when cookieKey is nil)
 	allowReg       bool              // gates /portal/register; ignored when oidcEnforce is true
+	// scimAllowedSANs lower-cased; empty = inbound SCIM accepts bearer only.
+	scimAllowedSANs []string
 }
 
 // New returns a configured Server.
@@ -94,20 +104,29 @@ func New(st store.Store, kp crypto.KeyProvider, projectKP *crypto.ProjectKeyCach
 		proxies = append(proxies, cfg.TrustedProxies...)
 	}
 
+	allowedSANs := make([]string, 0, len(cfg.SCIMAllowedSANDNS))
+	for _, s := range cfg.SCIMAllowedSANDNS {
+		s = strings.ToLower(strings.TrimSpace(s))
+		if s != "" {
+			allowedSANs = append(allowedSANs, s)
+		}
+	}
+
 	srv := &Server{
-		store:          st,
-		kp:             kp,
-		projectKP:      projectKP,
-		log:            log,
-		oidc:           cfg.OIDC,
-		oidcEnforce:    cfg.OIDCEnforce,
-		audit:          sink,
-		authLimiter:    newRateLimiter(ratePerMin, burst),
-		trustedProxies: proxies,
-		pruneMinCount:  cfg.PruneMinCount,
-		pruneMinAge:    cfg.PruneMinAge,
-		cookieKey:      cfg.CookieKey,
-		allowReg:       cfg.AllowRegistration && !cfg.OIDCEnforce,
+		store:           st,
+		kp:              kp,
+		projectKP:       projectKP,
+		log:             log,
+		oidc:            cfg.OIDC,
+		oidcEnforce:     cfg.OIDCEnforce,
+		audit:           sink,
+		authLimiter:     newRateLimiter(ratePerMin, burst),
+		trustedProxies:  proxies,
+		pruneMinCount:   cfg.PruneMinCount,
+		pruneMinAge:     cfg.PruneMinAge,
+		cookieKey:       cfg.CookieKey,
+		allowReg:        cfg.AllowRegistration && !cfg.OIDCEnforce,
+		scimAllowedSANs: allowedSANs,
 	}
 	if len(cfg.CookieKey) == 32 {
 		tm, err := newTmplManager("base_portal.html")

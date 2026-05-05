@@ -20,6 +20,10 @@ func adminStore() *mockStore {
 		getUserByID: func(_ context.Context, id string) (*model.User, error) {
 			return &model.User{ID: id, Role: model.UserRoleAdmin}, nil
 		},
+		// Match the helper's name: an "admin store" has an admin. Otherwise
+		// SCIM-create tests built on adminStore would silently trip the
+		// bootstrap path and create users as admin instead of member.
+		hasAdminUser: func(_ context.Context) (bool, error) { return true, nil },
 	}
 }
 

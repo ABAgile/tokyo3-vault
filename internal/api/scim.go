@@ -15,8 +15,22 @@ import (
 
 // ── SCIM auth middleware ──────────────────────────────────────────────────────
 
+// scimAuth authenticates inbound SCIM requests. Two paths, tried in order:
+//
+//  1. mTLS — when VAULT_SCIM_MTLS_CA + VAULT_SCIM_MTLS_SAN_DNS are configured,
+//     a peer client cert whose chain validates against ClientCAs (set up in
+//     vaultd's buildServerTLS) AND whose DNS SANs match the allow-list grants
+//     access. No SCIM token mint needed — the cert is the credential.
+//  2. Bearer token — falls back to the legacy /api/v1/scim/tokens flow.
+//
+// Either path is sufficient; both are safe to keep enabled simultaneously
+// (e.g. SaaS callers that can't bring a cert continue to use bearer).
 func (s *Server) scimAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if s.scimMTLSAuthorized(r) {
+			next(w, r)
+			return
+		}
 		raw := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		if raw == "" {
 			writeSCIMError(w, http.StatusUnauthorized, "missing token")
@@ -34,6 +48,35 @@ func (s *Server) scimAuth(next http.HandlerFunc) http.HandlerFunc {
 		}
 		next(w, r)
 	}
+}
+
+// scimMTLSAuthorized reports whether the request presents a peer client cert
+// from a trusted IdP. Returns false (silently) if mTLS isn't configured, no
+// cert was presented, or the cert's DNS SANs don't match the allow-list — the
+// caller then falls through to the bearer-token path.
+//
+// Chain validation is already performed by the TLS layer via ClientCAs (set
+// in cmd/vaultd/main.go buildServerTLS). This function only checks identity:
+// at least one DNS SAN on the leaf must match a configured allow-list entry
+// (case-insensitive). Bare CN is not consulted — modern x509 puts identity in
+// SANs, and refusing CN avoids the well-known CN-poisoning class of bugs.
+func (s *Server) scimMTLSAuthorized(r *http.Request) bool {
+	if len(s.scimAllowedSANs) == 0 {
+		return false
+	}
+	if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
+		return false
+	}
+	leaf := r.TLS.PeerCertificates[0]
+	for _, san := range leaf.DNSNames {
+		san = strings.ToLower(san)
+		for _, allowed := range s.scimAllowedSANs {
+			if san == allowed {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // ── SCIM response helpers ─────────────────────────────────────────────────────
@@ -245,6 +288,17 @@ func (req *scimUserRequest) email() string {
 	return strings.ToLower(strings.TrimSpace(req.UserName))
 }
 
+// handleSCIMCreateUser creates a new SCIM-provisioned user. Default role is
+// `member`; the SCIM spec offers no clean way to express vault's platform-admin
+// concept, and trusting an arbitrary IdP-supplied role attribute would let
+// anyone with SCIM access mint vault admins.
+//
+// First-user bootstrap: when the users table has no admin yet (HasAdminUser
+// returns false), the very first SCIM-provisioned user IS promoted to admin.
+// This mirrors handleSignup's local first-user rule and is the only practical
+// way to bootstrap an admin when VAULT_OIDC_ENFORCE=true (which closes
+// /api/v1/auth/signup). The bootstrap is single-shot — every subsequent SCIM
+// create lands as `member`.
 func (s *Server) handleSCIMCreateUser(w http.ResponseWriter, r *http.Request) {
 	var req scimUserRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -270,9 +324,22 @@ func (s *Server) handleSCIMCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	role := model.UserRoleMember
+	hasAdmin, err := s.store.HasAdminUser(r.Context())
+	if err != nil {
+		s.log.Error("scim create user — check admin", "err", err)
+		writeSCIMError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	bootstrap := !hasAdmin
+	if bootstrap {
+		role = model.UserRoleAdmin
+		s.log.Warn("scim bootstrap: promoting first user to admin", "email", email)
+	}
+
 	// Create new OIDC user without a password. The oidc_issuer/subject will be
 	// set on first OIDC login (JIT provisioning links them automatically).
-	user, err := s.store.CreateUser(r.Context(), email, "", model.UserRoleMember)
+	user, err := s.store.CreateUser(r.Context(), email, "", role)
 	if errors.Is(err, store.ErrConflict) {
 		writeSCIMError(w, http.StatusConflict, "email already exists")
 		return
@@ -293,7 +360,11 @@ func (s *Server) handleSCIMCreateUser(w http.ResponseWriter, r *http.Request) {
 		user.SCIMExternalID = &extID
 	}
 
-	if err := s.logAudit(r, ActionSCIMUserCreate, "", email); err != nil {
+	action := ActionSCIMUserCreate
+	if bootstrap {
+		action = ActionSCIMUserCreateBootstrap
+	}
+	if err := s.logAudit(r, action, "", email); err != nil {
 		writeSCIMError(w, http.StatusInternalServerError, "audit unavailable")
 		return
 	}
