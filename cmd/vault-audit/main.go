@@ -59,7 +59,7 @@ func main() {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(newConsumeCmd(ctx, log), newQueryCmd(ctx), newVersionCmd())
+	root.AddCommand(newConsumeCmd(ctx, log), newQueryCmd(ctx, log), newVersionCmd())
 
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
@@ -241,7 +241,7 @@ func connectConsumerNATS(log *slog.Logger) (*nats.Conn, error) {
 
 // ── query ─────────────────────────────────────────────────────────────────────
 
-func newQueryCmd(ctx context.Context) *cobra.Command {
+func newQueryCmd(ctx context.Context, log *slog.Logger) *cobra.Command {
 	var projectID, envID, action string
 	var limit int
 
@@ -249,7 +249,7 @@ func newQueryCmd(ctx context.Context) *cobra.Command {
 		Use:   "query",
 		Short: "Query the audit database and print matching entries",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runQuery(ctx, projectID, envID, action, limit)
+			return runQuery(ctx, log, projectID, envID, action, limit)
 		},
 	}
 	cmd.Flags().StringVar(&projectID, "project-id", "", "Filter by project UUID")
@@ -259,12 +259,11 @@ func newQueryCmd(ctx context.Context) *cobra.Command {
 	return cmd
 }
 
-func runQuery(ctx context.Context, projectID, envID, action string, limit int) error {
+func runQuery(ctx context.Context, log *slog.Logger, projectID, envID, action string, limit int) error {
 	if limit < 1 || limit > 500 {
 		return fmt.Errorf("--limit must be between 1 and 500")
 	}
 
-	log, _ := base.AppLogger("vault-audit", base.WithStdout())
 	db, err := openAuditDB(log, "")
 	if err != nil {
 		return fmt.Errorf("open audit db: %w", err)

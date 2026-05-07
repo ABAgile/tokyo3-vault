@@ -132,6 +132,8 @@ import (
 	"github.com/nats-io/nats.go"
 )
 
+const appName = "vaultd"
+
 func main() {
 	logNATS, logNATSErr := openLogNATS()
 	if logNATS != nil {
@@ -142,12 +144,12 @@ func main() {
 	if logNATS != nil {
 		writerOpts = append(writerOpts, base.WithAsyncNats(logNATS))
 	}
-	log, _ := base.AppLogger("vaultd", writerOpts...)
+	log, _ := base.AppLogger(appName, writerOpts...)
 
-	if logNATS != nil {
-		log.Info("operational logs shipping to NATS", "subject", "app_log.vaultd")
-	} else if logNATSErr != nil {
+	if logNATSErr != nil {
 		log.Warn("operational log shipping disabled", "err", logNATSErr)
+	} else if logNATS != nil {
+		log.Info("operational logs shipping to NATS", "subject", "app_log."+appName)
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -516,7 +518,8 @@ func buildOIDCProvider(ctx context.Context, log *slog.Logger) (*oidcpkg.Provider
 }
 
 // openLogNATS dials a NATS connection used by AppLogger's WithAsyncNats
-// writer to ship operational log lines to the subject `app_log.vaultd`.
+// writer to ship operational log lines (subject is derived by base from
+// the AppLogger app name as `app_log.<app>`).
 // Returns (nil, nil) when VAULT_NATS_URL is unset (no log shipping). On
 // dial failure returns (nil, err) — main treats this as non-fatal: log
 // shipping is observability, not evidence, and falls back to stdout-only.

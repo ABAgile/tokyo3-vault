@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -69,11 +70,8 @@ func (s *Server) scimMTLSAuthorized(r *http.Request) bool {
 	}
 	leaf := r.TLS.PeerCertificates[0]
 	for _, san := range leaf.DNSNames {
-		san = strings.ToLower(san)
-		for _, allowed := range s.scimAllowedSANs {
-			if san == allowed {
-				return true
-			}
+		if slices.Contains(s.scimAllowedSANs, strings.ToLower(san)) {
+			return true
 		}
 	}
 	return false
