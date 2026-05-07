@@ -34,6 +34,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/abagile/tokyo3-base"
 	"github.com/abagile/tokyo3-base/tlsutil"
 	"github.com/abagile/tokyo3-vault/internal/audit"
 	auditpg "github.com/abagile/tokyo3-vault/internal/audit/postgres"
@@ -47,7 +48,7 @@ import (
 const consumerName = "audit-db-writer"
 
 func main() {
-	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	log, _ := base.AppLogger("vault-audit", base.WithStdout())
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -263,7 +264,7 @@ func runQuery(ctx context.Context, projectID, envID, action string, limit int) e
 		return fmt.Errorf("--limit must be between 1 and 500")
 	}
 
-	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	log, _ := base.AppLogger("vault-audit", base.WithStdout())
 	db, err := openAuditDB(log, "")
 	if err != nil {
 		return fmt.Errorf("open audit db: %w", err)

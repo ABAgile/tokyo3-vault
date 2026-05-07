@@ -352,16 +352,23 @@ All four base vars (`VAULT_OIDC_ISSUER`, `VAULT_OIDC_CLIENT_ID`, `VAULT_OIDC_CLI
 | `VAULT_OIDC_ENFORCE` | `false` | Set to `"true"` to disable local `/auth/login` and `/auth/signup`, making OIDC the only login path |
 | `VAULT_ALLOW_REGISTRATION` | `false` | Set to `"true"` to enable self-service signup at `/portal/register` and a "Create one" link on `/portal/login`. The first registrant is promoted to admin if no admin exists yet. Ignored when `VAULT_OIDC_ENFORCE=true`. |
 
-**Audit — NATS JetStream sink (`vaultd serve`):**
+**NATS — audit sink + operational log shipping (`vaultd serve`):**
 
-If `VAULT_NATS_URL` is unset, audit events are discarded (development only). In production all three NATS variables must be set together for mTLS.
+When `VAULT_NATS_URL` is set, `vaultd` runs **two independent NATS pipelines** sharing the connection config (URL, CERT, KEY, CA) but at different reliability tiers:
 
-`vaultd` publishes synchronously to subject `vault.audit.events` and expects the JetStream stream `vault_audit` to already exist — its publisher credential is PUBLISH-only and does not have stream-management rights. The bundled `docker-compose.yml` provisions the stream via a small `natsbox` service (image `natsio/nats-box`) on first start; for hand-rolled deployments either run `vault-audit consume` once (its `CreateOrUpdateStream` is idempotent) or `nats stream add vault_audit --subjects 'vault.audit.events' --retention limits --storage file --max-age 9600h --deny-delete --deny-purge`. Without a stream, every audit-emitting handler 500s (fail-closed).
+| Pipeline | Subject | Reliability | Backend |
+|---|---|---|---|
+| **Audit events** | `vault.audit.events` | Synchronous, durable, **fail-closed** — every audit-emitting handler 500s if the publish fails | NATS JetStream (stream `vault_audit`, DenyDelete + DenyPurge + FileStorage, 400-day retention) |
+| **Operational logs** | `app_log.vaultd` | Asynchronous, plain `nats.Publish`, **lossy under backpressure** (200-entry channel, drop-on-full) | Plain NATS (no JetStream) |
+
+If `VAULT_NATS_URL` is unset both pipelines are no-ops and `vaultd` logs to stdout only. If the URL is set but the dial for the log-shipping connection fails, that pipeline silently falls back to stdout-only and the audit sink's separate connection is unaffected (different concerns, different `*nats.Conn`). In production all three TLS variables must be set together for mTLS.
+
+The audit pipeline expects the JetStream stream `vault_audit` to already exist — `vaultd`'s publisher credential is PUBLISH-only on `vault.audit.events` and does not have stream-management rights. The bundled `docker-compose.yml` provisions the stream via a small `natsbox` service (image `natsio/nats-box`) on first start; for hand-rolled deployments either run `vault-audit consume` once (its `CreateOrUpdateStream` is idempotent) or `nats stream add vault_audit --subjects 'vault.audit.events' --retention limits --storage file --max-age 9600h --deny-delete --deny-purge`.
 
 | Variable | Default | Description |
 |---|---|---|
-| `VAULT_NATS_URL` | — | NATS server URL; enables JetStream sink when set |
-| `VAULT_NATS_CERT` | — | mTLS client certificate PEM path (publisher credential) |
+| `VAULT_NATS_URL` | — | NATS server URL; enables both pipelines when set |
+| `VAULT_NATS_CERT` | — | mTLS client certificate PEM path (publisher credential, used by both pipelines) |
 | `VAULT_NATS_KEY` | — | mTLS client key PEM path |
 | `VAULT_NATS_CA` | — | CA certificate PEM path for NATS server verification |
 

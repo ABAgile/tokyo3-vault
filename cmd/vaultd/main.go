@@ -115,6 +115,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/abagile/tokyo3-base"
 	bcrypto "github.com/abagile/tokyo3-base/crypto"
 	"github.com/abagile/tokyo3-base/journal"
 	"github.com/abagile/tokyo3-base/journal/jetstream"
@@ -128,10 +129,26 @@ import (
 	"github.com/abagile/tokyo3-vault/internal/store"
 	"github.com/abagile/tokyo3-vault/internal/store/postgres"
 	"github.com/abagile/tokyo3-vault/internal/store/sqlite"
+	"github.com/nats-io/nats.go"
 )
 
 func main() {
-	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	logNATS, logNATSErr := openLogNATS()
+	if logNATS != nil {
+		defer logNATS.Drain()
+	}
+
+	writerOpts := []base.WriterOption{base.WithStdout()}
+	if logNATS != nil {
+		writerOpts = append(writerOpts, base.WithAsyncNats(logNATS))
+	}
+	log, _ := base.AppLogger("vaultd", writerOpts...)
+
+	if logNATS != nil {
+		log.Info("operational logs shipping to NATS", "subject", "app_log.vaultd")
+	} else if logNATSErr != nil {
+		log.Warn("operational log shipping disabled", "err", logNATSErr)
+	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -496,6 +513,35 @@ func buildOIDCProvider(ctx context.Context, log *slog.Logger) (*oidcpkg.Provider
 		return nil, false, fmt.Errorf("init OIDC provider: %w", err)
 	}
 	return provider, enforce, nil
+}
+
+// openLogNATS dials a NATS connection used by AppLogger's WithAsyncNats
+// writer to ship operational log lines to the subject `app_log.vaultd`.
+// Returns (nil, nil) when VAULT_NATS_URL is unset (no log shipping). On
+// dial failure returns (nil, err) — main treats this as non-fatal: log
+// shipping is observability, not evidence, and falls back to stdout-only.
+func openLogNATS() (*nats.Conn, error) {
+	url := os.Getenv("VAULT_NATS_URL")
+	if url == "" {
+		return nil, nil
+	}
+	tlsCfg, err := tlsutil.FromFiles(
+		os.Getenv("VAULT_NATS_CERT"),
+		os.Getenv("VAULT_NATS_KEY"),
+		os.Getenv("VAULT_NATS_CA"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("log shipping tls: %w", err)
+	}
+	var opts []nats.Option
+	if tlsCfg != nil {
+		opts = append(opts, nats.Secure(tlsCfg))
+	}
+	nc, err := nats.Connect(url, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("log shipping dial: %w", err)
+	}
+	return nc, nil
 }
 
 // openAuditSink opens the NATS JetStream publisher used by the serve path.
