@@ -1,28 +1,10 @@
 package audit
 
 import (
-	"context"
 	"encoding/json"
 	"testing"
 	"time"
 )
-
-// TestNoopSink_Log tests that NoopSink.Log always returns nil.
-func TestNoopSink_Log(t *testing.T) {
-	s := NoopSink{}
-	err := s.Log(context.Background(), Entry{ID: "e1", Action: "test.action", OccurredAt: time.Now()})
-	if err != nil {
-		t.Errorf("Log returned non-nil error: %v", err)
-	}
-}
-
-// TestNoopSink_Close tests that NoopSink.Close always returns nil.
-func TestNoopSink_Close(t *testing.T) {
-	s := NoopSink{}
-	if err := s.Close(); err != nil {
-		t.Errorf("Close returned non-nil error: %v", err)
-	}
-}
 
 // TestEntry_JSONMarshal tests that Entry marshals with correct omitempty behavior.
 func TestEntry_JSONMarshal(t *testing.T) {

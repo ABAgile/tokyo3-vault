@@ -86,7 +86,7 @@ type Server struct {
 func New(st store.Store, kp bcrypto.KeyProvider, projectKP *bcrypto.KeyProviderCache, log *slog.Logger, cfg Config) *Server {
 	sink := cfg.Sink
 	if sink == nil {
-		sink = audit.NoopSink{}
+		sink = audit.NoopSink
 	}
 	ratePerMin := cfg.AuthRatePerMin
 	if ratePerMin <= 0 {

@@ -109,7 +109,7 @@ func (r *PEKRotator) rotateProjectPEK(ctx context.Context, p *model.Project) err
 
 	// Audit is best-effort: the rotation already committed to the DB, so a NATS
 	// failure here should not surface as a rotation failure.
-	if err := r.audit.Log(ctx, audit.Entry{
+	if err := r.audit.Append(ctx, audit.Entry{
 		ID:         uuid.NewString(),
 		Action:     actionProjectRotateKey,
 		ProjectID:  p.ID,

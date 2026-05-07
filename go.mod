@@ -4,6 +4,7 @@ go 1.26
 
 require (
 	github.com/BurntSushi/toml v1.6.0
+	github.com/abagile/tokyo3-base v0.2.1
 	github.com/aws/aws-sdk-go-v2 v1.41.6
 	github.com/aws/aws-sdk-go-v2/config v1.32.16
 	github.com/aws/aws-sdk-go-v2/service/kms v1.50.5
@@ -20,7 +21,6 @@ require (
 )
 
 require (
-	github.com/abagile/tokyo3-base v0.2.0
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.15 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.22 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.22 // indirect
@@ -53,5 +53,3 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
-
-replace github.com/abagile/tokyo3-base => ../base

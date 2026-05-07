@@ -95,7 +95,7 @@ func (s *Server) logAuditEnv(r *http.Request, action, projectID, envID, resource
 		e.ActorID = tok.ID
 	}
 
-	if err := s.audit.Log(r.Context(), e); err != nil {
+	if err := s.audit.Append(r.Context(), e); err != nil {
 		s.log.Error("audit write failed — request blocked (fail-closed)",
 			"action", action, "err", err)
 		return err

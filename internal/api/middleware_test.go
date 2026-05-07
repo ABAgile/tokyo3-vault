@@ -29,7 +29,7 @@ func newTestServer(t *testing.T, st *mockStore) *Server {
 		kp:        kp,
 		projectKP: projectKP,
 		log:       slog.Default(),
-		audit:     audit.NoopSink{},
+		audit:     audit.NoopSink,
 	}
 }
 

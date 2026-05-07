@@ -23,7 +23,7 @@ func newPortalAdminTestServer(t *testing.T, st *mockStore) *Server {
 		t.Fatalf("init portal templates: %v", err)
 	}
 	srv.portalTmpl = tm
-	srv.audit = audit.NoopSink{}
+	srv.audit = audit.NoopSink
 	return srv
 }
 

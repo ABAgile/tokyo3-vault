@@ -116,6 +116,8 @@ import (
 	"time"
 
 	bcrypto "github.com/abagile/tokyo3-base/crypto"
+	"github.com/abagile/tokyo3-base/journal"
+	"github.com/abagile/tokyo3-base/journal/jetstream"
 	"github.com/abagile/tokyo3-base/tlsutil"
 	"github.com/abagile/tokyo3-vault/internal/api"
 	"github.com/abagile/tokyo3-vault/internal/audit"
@@ -503,7 +505,7 @@ func openAuditSink(log *slog.Logger) (audit.Sink, error) {
 	url := os.Getenv("VAULT_NATS_URL")
 	if url == "" {
 		log.Warn("VAULT_NATS_URL not set — audit sink is no-op; not for production")
-		return audit.NoopSink{}, nil
+		return audit.NoopSink, nil
 	}
 	tlsCfg, err := tlsutil.FromFiles(
 		os.Getenv("VAULT_NATS_CERT"),
@@ -518,7 +520,15 @@ func openAuditSink(log *slog.Logger) (audit.Sink, error) {
 	} else {
 		log.Warn("audit sink: VAULT_NATS_CERT not set — connecting without mTLS (not for production)")
 	}
-	return audit.NewJetStreamSink(url, tlsCfg)
+	jSink, err := jetstream.New(jetstream.Config{
+		URL:     url,
+		Subject: audit.Subject,
+		TLS:     tlsCfg,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return journal.NewJSONSink[audit.Entry](jSink), nil
 }
 
 // openStore selects SQLite or Postgres based on environment variables.
