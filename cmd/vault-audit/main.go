@@ -34,8 +34,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/abagile/tokyo3-base"
-	"github.com/abagile/tokyo3-base/tlsutil"
+	"github.com/abagile/tokyo3-base/applog"
+	bnats "github.com/abagile/tokyo3-base/nats"
+	btls "github.com/abagile/tokyo3-base/tls"
 	"github.com/abagile/tokyo3-vault/internal/audit"
 	auditpg "github.com/abagile/tokyo3-vault/internal/audit/postgres"
 	auditsqlite "github.com/abagile/tokyo3-vault/internal/audit/sqlite"
@@ -48,7 +49,7 @@ import (
 const consumerName = "audit-db-writer"
 
 func main() {
-	log, _ := base.AppLogger("vault-audit", base.WithStdout())
+	log, _ := applog.AppLogger("vault-audit", applog.WithStdout())
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -74,7 +75,7 @@ func main() {
 // explicit path (query command) or a fallback (consume command).
 func openAuditDB(log *slog.Logger, defaultPath string) (audit.Store, error) {
 	if dsn := os.Getenv("VAULT_AUDIT_DATABASE_URL"); dsn != "" {
-		tlsCfg, err := tlsutil.FromFiles(
+		tlsCfg, err := btls.FromFiles(
 			os.Getenv("VAULT_AUDIT_DB_CERT"),
 			os.Getenv("VAULT_AUDIT_DB_KEY"),
 			os.Getenv("VAULT_AUDIT_DB_CA"),
@@ -221,22 +222,16 @@ func connectConsumerNATS(log *slog.Logger) (*nats.Conn, error) {
 	if url == "" {
 		return nil, fmt.Errorf("VAULT_AUDIT_NATS_URL is required for consume")
 	}
-	tlsCfg, err := tlsutil.FromFiles(
-		os.Getenv("VAULT_AUDIT_NATS_CERT"),
-		os.Getenv("VAULT_AUDIT_NATS_KEY"),
-		os.Getenv("VAULT_AUDIT_NATS_CA"),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("nats consumer TLS: %w", err)
-	}
-	var opts []nats.Option
-	if tlsCfg != nil {
+	cert := os.Getenv("VAULT_AUDIT_NATS_CERT")
+	if cert != "" {
 		log.Info("consume: NATS mTLS enabled", "url", url)
-		opts = append(opts, nats.Secure(tlsCfg))
 	} else {
 		log.Warn("consume: VAULT_AUDIT_NATS_CERT not set — connecting without mTLS (not for production)")
 	}
-	return nats.Connect(url, opts...)
+	return bnats.Dial(url, cert,
+		os.Getenv("VAULT_AUDIT_NATS_KEY"),
+		os.Getenv("VAULT_AUDIT_NATS_CA"),
+	)
 }
 
 // ── query ─────────────────────────────────────────────────────────────────────

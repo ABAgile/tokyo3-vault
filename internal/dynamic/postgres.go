@@ -13,7 +13,7 @@ import (
 	"time"
 
 	bcrypto "github.com/abagile/tokyo3-base/crypto"
-	"github.com/abagile/tokyo3-base/tlsutil"
+	btls "github.com/abagile/tokyo3-base/tls"
 	"github.com/abagile/tokyo3-vault/internal/model"
 	"github.com/jackc/pgx/v5"
 	pgxstdlib "github.com/jackc/pgx/v5/stdlib"
@@ -72,7 +72,7 @@ func decryptConfig(ctx context.Context, kp bcrypto.KeyProvider, backend *model.D
 func execOnTarget(ctx context.Context, cfg pgConfig, query string) error {
 	var db *sql.DB
 	if cfg.ClientCert != "" {
-		tlsCfg, err := tlsutil.FromPEM(cfg.ClientCert, cfg.ClientKey, cfg.CACert)
+		tlsCfg, err := btls.FromPEM(cfg.ClientCert, cfg.ClientKey, cfg.CACert)
 		if err != nil {
 			return fmt.Errorf("build tls config: %w", err)
 		}

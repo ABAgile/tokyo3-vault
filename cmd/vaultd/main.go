@@ -115,11 +115,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/abagile/tokyo3-base"
+	"github.com/abagile/tokyo3-base/applog"
 	bcrypto "github.com/abagile/tokyo3-base/crypto"
 	"github.com/abagile/tokyo3-base/journal"
 	"github.com/abagile/tokyo3-base/journal/jetstream"
-	"github.com/abagile/tokyo3-base/tlsutil"
+	bnats "github.com/abagile/tokyo3-base/nats"
+	btls "github.com/abagile/tokyo3-base/tls"
 	"github.com/abagile/tokyo3-vault/internal/api"
 	"github.com/abagile/tokyo3-vault/internal/audit"
 	"github.com/abagile/tokyo3-vault/internal/build"
@@ -140,11 +141,11 @@ func main() {
 		defer logNATS.Drain()
 	}
 
-	writerOpts := []base.WriterOption{base.WithStdout()}
+	writerOpts := []applog.WriterOption{applog.WithStdout()}
 	if logNATS != nil {
-		writerOpts = append(writerOpts, base.WithAsyncNats(logNATS))
+		writerOpts = append(writerOpts, applog.WithAsyncNats(logNATS))
 	}
-	log, _ := base.AppLogger(appName, writerOpts...)
+	log, _ := applog.AppLogger(appName, writerOpts...)
 
 	if logNATSErr != nil {
 		log.Warn("operational log shipping disabled", "err", logNATSErr)
@@ -392,11 +393,11 @@ func buildServerTLS(log *slog.Logger) (*tls.Config, error) {
 
 	if certFile != "" {
 		log.Info("TLS: using certificate files (hot-reload enabled)", "cert", certFile)
-		loader := tlsutil.NewCertLoader(certFile, keyFile)
+		loader := btls.NewCertLoader(certFile, keyFile)
 		cfg.GetCertificate = loader.GetCertificate
 	} else {
 		log.Warn("TLS: no certificate configured, using self-signed (not for production)")
-		cert, err := tlsutil.SelfSignedCert()
+		cert, err := btls.SelfSignedCert()
 		if err != nil {
 			return nil, fmt.Errorf("generate self-signed cert: %w", err)
 		}
@@ -523,26 +524,24 @@ func buildOIDCProvider(ctx context.Context, log *slog.Logger) (*oidcpkg.Provider
 // Returns (nil, nil) when VAULT_NATS_URL is unset (no log shipping). On
 // dial failure returns (nil, err) — main treats this as non-fatal: log
 // shipping is observability, not evidence, and falls back to stdout-only.
+//
+// Connect timeout 1s (vs the nats.go default 2s) and DrainTimeout 500ms
+// keep startup fast and bound shutdown when the async writer's 200-entry
+// channel still has pending entries at SIGTERM.
 func openLogNATS() (*nats.Conn, error) {
 	url := os.Getenv("VAULT_NATS_URL")
 	if url == "" {
 		return nil, nil
 	}
-	tlsCfg, err := tlsutil.FromFiles(
+	nc, err := bnats.Dial(url,
 		os.Getenv("VAULT_NATS_CERT"),
 		os.Getenv("VAULT_NATS_KEY"),
 		os.Getenv("VAULT_NATS_CA"),
+		nats.Timeout(1*time.Second),
+		nats.DrainTimeout(500*time.Millisecond),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("log shipping tls: %w", err)
-	}
-	var opts []nats.Option
-	if tlsCfg != nil {
-		opts = append(opts, nats.Secure(tlsCfg))
-	}
-	nc, err := nats.Connect(url, opts...)
-	if err != nil {
-		return nil, fmt.Errorf("log shipping dial: %w", err)
+		return nil, fmt.Errorf("log shipping: %w", err)
 	}
 	return nc, nil
 }
@@ -556,7 +555,7 @@ func openAuditSink(log *slog.Logger) (audit.Sink, error) {
 		log.Warn("VAULT_NATS_URL not set — audit sink is no-op; not for production")
 		return audit.NoopSink, nil
 	}
-	tlsCfg, err := tlsutil.FromFiles(
+	tlsCfg, err := btls.FromFiles(
 		os.Getenv("VAULT_NATS_CERT"),
 		os.Getenv("VAULT_NATS_KEY"),
 		os.Getenv("VAULT_NATS_CA"),
@@ -592,7 +591,7 @@ func migrateVaultDB(log *slog.Logger) error {
 		log.Warn("VAULT_ADMIN_DATABASE_URL not set — using VAULT_DATABASE_URL for schema migration (not for production)")
 		adminDSN = os.Getenv("VAULT_DATABASE_URL")
 	}
-	tlsCfg, err := tlsutil.FromFiles(
+	tlsCfg, err := btls.FromFiles(
 		os.Getenv("VAULT_ADMIN_DB_CERT"),
 		os.Getenv("VAULT_ADMIN_DB_KEY"),
 		os.Getenv("VAULT_ADMIN_DB_CA"),
@@ -613,7 +612,7 @@ func openStore(log *slog.Logger) (store.Store, error) {
 		if err := migrateVaultDB(log); err != nil {
 			return nil, fmt.Errorf("vault db migration: %w", err)
 		}
-		tlsCfg, err := tlsutil.FromFiles(
+		tlsCfg, err := btls.FromFiles(
 			os.Getenv("VAULT_DB_CERT"),
 			os.Getenv("VAULT_DB_KEY"),
 			os.Getenv("VAULT_DB_CA"),
