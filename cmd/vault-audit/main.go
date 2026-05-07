@@ -34,7 +34,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/abagile/tokyo3-lcl/tlsutil"
+	"github.com/abagile/tokyo3-base/tlsutil"
 	"github.com/abagile/tokyo3-vault/internal/audit"
 	auditpg "github.com/abagile/tokyo3-vault/internal/audit/postgres"
 	auditsqlite "github.com/abagile/tokyo3-vault/internal/audit/sqlite"

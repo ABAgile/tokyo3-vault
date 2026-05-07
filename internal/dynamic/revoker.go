@@ -6,8 +6,7 @@ import (
 	"log/slog"
 	"time"
 
-	lcrypto "github.com/abagile/tokyo3-lcl/crypto"
-	"github.com/abagile/tokyo3-vault/internal/crypto"
+	bcrypto "github.com/abagile/tokyo3-base/crypto"
 	"github.com/abagile/tokyo3-vault/internal/model"
 	"github.com/abagile/tokyo3-vault/internal/store"
 )
@@ -17,13 +16,13 @@ import (
 // while the server was down.
 type Revoker struct {
 	store     store.Store
-	kp        lcrypto.KeyProvider
-	projectKP *crypto.ProjectKeyCache
+	kp        bcrypto.KeyProvider
+	projectKP *bcrypto.KeyProviderCache
 	log       *slog.Logger
 }
 
 // NewRevoker returns a Revoker backed by the given store and key providers.
-func NewRevoker(st store.Store, kp lcrypto.KeyProvider, projectKP *crypto.ProjectKeyCache, log *slog.Logger) *Revoker {
+func NewRevoker(st store.Store, kp bcrypto.KeyProvider, projectKP *bcrypto.KeyProviderCache, log *slog.Logger) *Revoker {
 	return &Revoker{store: st, kp: kp, projectKP: projectKP, log: log}
 }
 
@@ -74,7 +73,7 @@ func (r *Revoker) revokeLease(ctx context.Context, lease *model.DynamicLease) er
 	if err != nil {
 		return err
 	}
-	projectKP, err := r.projectKP.ForProject(ctx, project.ID, project.EncryptedPEK)
+	projectKP, err := r.projectKP.ForKey(ctx, project.ID, project.EncryptedPEK)
 	if err != nil {
 		return err
 	}

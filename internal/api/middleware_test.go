@@ -8,10 +8,9 @@ import (
 	"testing"
 	"time"
 
-	lcrypto "github.com/abagile/tokyo3-lcl/crypto"
+	bcrypto "github.com/abagile/tokyo3-base/crypto"
 	"github.com/abagile/tokyo3-vault/internal/audit"
 	"github.com/abagile/tokyo3-vault/internal/auth"
-	"github.com/abagile/tokyo3-vault/internal/crypto"
 	"github.com/abagile/tokyo3-vault/internal/model"
 	"github.com/abagile/tokyo3-vault/internal/store"
 )
@@ -23,8 +22,8 @@ func newTestServer(t *testing.T, st *mockStore) *Server {
 	for i := range kek {
 		kek[i] = byte(i + 1)
 	}
-	kp := lcrypto.NewLocalKeyProvider(kek)
-	projectKP := crypto.NewProjectKeyCache(kp, time.Minute)
+	kp := bcrypto.NewLocalKeyProvider(kek)
+	projectKP := bcrypto.NewKeyProviderCache(kp, time.Minute)
 	return &Server{
 		store:     st,
 		kp:        kp,

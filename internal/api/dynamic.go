@@ -5,7 +5,7 @@ import (
 	"errors"
 	"net/http"
 
-	lcrypto "github.com/abagile/tokyo3-lcl/crypto"
+	bcrypto "github.com/abagile/tokyo3-base/crypto"
 	"github.com/abagile/tokyo3-vault/internal/dynamic"
 	"github.com/abagile/tokyo3-vault/internal/store"
 )
@@ -117,13 +117,13 @@ func (s *Server) handleSetDynamicBackend(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	projectKP, err := s.projectKP.ForProject(r.Context(), project.ID, project.EncryptedPEK)
+	projectKP, err := s.projectKP.ForKey(r.Context(), project.ID, project.EncryptedPEK)
 	if err != nil {
 		s.log.Error("load project key", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	encConfig, encConfigDEK, err := lcrypto.EncryptEnvelope(r.Context(), projectKP, configJSON)
+	encConfig, encConfigDEK, err := bcrypto.EncryptEnvelope(r.Context(), projectKP, configJSON)
 	if err != nil {
 		s.log.Error("encrypt backend config", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -382,7 +382,7 @@ func (s *Server) handleIssueCreds(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	projectKP, err := s.projectKP.ForProject(r.Context(), project.ID, project.EncryptedPEK)
+	projectKP, err := s.projectKP.ForKey(r.Context(), project.ID, project.EncryptedPEK)
 	if err != nil {
 		s.log.Error("load project key", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -487,7 +487,7 @@ func (s *Server) handleRevokeDynamicLease(w http.ResponseWriter, r *http.Request
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		projectKP, err := s.projectKP.ForProject(r.Context(), project.ID, project.EncryptedPEK)
+		projectKP, err := s.projectKP.ForKey(r.Context(), project.ID, project.EncryptedPEK)
 		if err != nil {
 			s.log.Error("load project key", "err", err)
 			writeError(w, http.StatusInternalServerError, "internal error")

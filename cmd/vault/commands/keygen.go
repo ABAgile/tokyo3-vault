@@ -3,7 +3,7 @@ package commands
 import (
 	"fmt"
 
-	lcrypto "github.com/abagile/tokyo3-lcl/crypto"
+	bcrypto "github.com/abagile/tokyo3-base/crypto"
 	"github.com/spf13/cobra"
 )
 
@@ -13,7 +13,7 @@ func NewKeygenCmd() *cobra.Command {
 		Use:   "keygen",
 		Short: "Generate a random master key for use as VAULT_MASTER_KEY",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			key, err := lcrypto.GenerateKEK()
+			key, err := bcrypto.GenerateKEK()
 			if err != nil {
 				return err
 			}

@@ -115,12 +115,12 @@ import (
 	"syscall"
 	"time"
 
-	lcrypto "github.com/abagile/tokyo3-lcl/crypto"
-	"github.com/abagile/tokyo3-lcl/tlsutil"
+	bcrypto "github.com/abagile/tokyo3-base/crypto"
+	"github.com/abagile/tokyo3-base/tlsutil"
 	"github.com/abagile/tokyo3-vault/internal/api"
 	"github.com/abagile/tokyo3-vault/internal/audit"
 	"github.com/abagile/tokyo3-vault/internal/build"
-	"github.com/abagile/tokyo3-vault/internal/crypto"
+	"github.com/abagile/tokyo3-vault/internal/crypto/awskms"
 	"github.com/abagile/tokyo3-vault/internal/dynamic"
 	oidcpkg "github.com/abagile/tokyo3-vault/internal/oidc"
 	"github.com/abagile/tokyo3-vault/internal/store"
@@ -171,7 +171,7 @@ func main() {
 			log.Warn("invalid VAULT_PROJECT_KEY_CACHE_TTL, using default", "value", v, "default", cacheT)
 		}
 	}
-	projectKP := crypto.NewProjectKeyCache(kp, cacheT)
+	projectKP := bcrypto.NewKeyProviderCache(kp, cacheT)
 
 	if subcommand == "migrate-keys" {
 		if err := runMigrateKeys(ctx, st, kp, log); err != nil {
@@ -310,7 +310,7 @@ func main() {
 // PEK, wraps it with the server KEK, and re-wraps all per-secret and per-backend
 // DEKs for that project so they are wrapped by the PEK instead of the server KEK.
 // Safe to re-run (idempotent): projects with an existing PEK are skipped.
-func runMigrateKeys(ctx context.Context, st store.Store, kp lcrypto.KeyProvider, log *slog.Logger) error {
+func runMigrateKeys(ctx context.Context, st store.Store, kp bcrypto.KeyProvider, log *slog.Logger) error {
 	projects, err := st.ListProjects(ctx)
 	if err != nil {
 		return fmt.Errorf("list projects: %w", err)
@@ -332,7 +332,7 @@ func runMigrateKeys(ctx context.Context, st store.Store, kp lcrypto.KeyProvider,
 
 		// RotateProjectPEK stores the new PEK and re-wraps all DEKs atomically.
 		// Old DEKs here are wrapped by the server KEK directly (pre-migration).
-		projectKP := crypto.NewProjectKeyProvider(pek)
+		projectKP := bcrypto.NewLocalKeyProvider(pek)
 		err = st.RotateProjectPEK(ctx, p.ID, encPEK, time.Now().UTC(), func(old []byte) ([]byte, error) {
 			dek, err := kp.Unwrap(ctx, old)
 			if err != nil {
@@ -421,7 +421,7 @@ func buildServerTLS(log *slog.Logger) (*tls.Config, error) {
 // which is acceptable for an admin portal.
 func portalCookieKey(log *slog.Logger) ([]byte, error) {
 	if hex := os.Getenv("VAULT_MASTER_KEY"); hex != "" {
-		return lcrypto.ParseKEK(hex)
+		return bcrypto.ParseKEK(hex)
 	}
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
@@ -434,7 +434,7 @@ func portalCookieKey(log *slog.Logger) ([]byte, error) {
 
 // openKeyProvider selects LocalKeyProvider (VAULT_MASTER_KEY) or KMSKeyProvider
 // (VAULT_KMS_KEY_ID). Exactly one must be set; setting both is an error.
-func openKeyProvider(ctx context.Context, log *slog.Logger) (lcrypto.KeyProvider, error) {
+func openKeyProvider(ctx context.Context, log *slog.Logger) (bcrypto.KeyProvider, error) {
 	masterKeyHex := os.Getenv("VAULT_MASTER_KEY")
 	kmsKeyID := os.Getenv("VAULT_KMS_KEY_ID")
 
@@ -443,17 +443,17 @@ func openKeyProvider(ctx context.Context, log *slog.Logger) (lcrypto.KeyProvider
 	}
 	if kmsKeyID != "" {
 		log.Info("using AWS KMS key provider", "key_id", kmsKeyID)
-		return crypto.NewKMSKeyProvider(ctx, kmsKeyID)
+		return awskms.New(ctx, kmsKeyID)
 	}
 	if masterKeyHex == "" {
 		return nil, fmt.Errorf("VAULT_MASTER_KEY or VAULT_KMS_KEY_ID is required")
 	}
-	kek, err := lcrypto.ParseKEK(masterKeyHex)
+	kek, err := bcrypto.ParseKEK(masterKeyHex)
 	if err != nil {
 		return nil, fmt.Errorf("invalid VAULT_MASTER_KEY: %w", err)
 	}
 	log.Info("using local master key provider")
-	return lcrypto.NewLocalKeyProvider(kek), nil
+	return bcrypto.NewLocalKeyProvider(kek), nil
 }
 
 // buildOIDCProvider configures the OIDC provider from environment variables.

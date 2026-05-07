@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/abagile/tokyo3-vault/internal/crypto"
+	bcrypto "github.com/abagile/tokyo3-base/crypto"
 	"github.com/abagile/tokyo3-vault/internal/model"
 	"github.com/abagile/tokyo3-vault/internal/store"
 )
@@ -222,7 +222,7 @@ func (s *Server) rotateProjectPEK(ctx context.Context, p *model.Project) error {
 	if err != nil {
 		return fmt.Errorf("unwrap old PEK: %w", err)
 	}
-	oldProjectKP := crypto.NewProjectKeyProvider(oldPEK)
+	oldProjectKP := bcrypto.NewLocalKeyProvider(oldPEK)
 
 	newPEK := make([]byte, 32)
 	if _, err := rand.Read(newPEK); err != nil {
@@ -232,7 +232,7 @@ func (s *Server) rotateProjectPEK(ctx context.Context, p *model.Project) error {
 	if err != nil {
 		return fmt.Errorf("wrap new PEK: %w", err)
 	}
-	newProjectKP := crypto.NewProjectKeyProvider(newPEK)
+	newProjectKP := bcrypto.NewLocalKeyProvider(newPEK)
 
 	rotatedAt := time.Now().UTC()
 	err = s.store.RotateProjectPEK(ctx, p.ID, newEncPEK, rotatedAt, func(encDEK []byte) ([]byte, error) {

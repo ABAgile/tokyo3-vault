@@ -7,9 +7,8 @@ import (
 	"log/slog"
 	"time"
 
-	lcrypto "github.com/abagile/tokyo3-lcl/crypto"
+	bcrypto "github.com/abagile/tokyo3-base/crypto"
 	"github.com/abagile/tokyo3-vault/internal/audit"
-	"github.com/abagile/tokyo3-vault/internal/crypto"
 	"github.com/abagile/tokyo3-vault/internal/model"
 	"github.com/abagile/tokyo3-vault/internal/store"
 	"github.com/google/uuid"
@@ -23,14 +22,14 @@ const actionProjectRotateKey = "project.rotate_key"
 // PEK in a single transaction, so a crash mid-rotation leaves the DB unchanged.
 type PEKRotator struct {
 	store     store.Store
-	kp        lcrypto.KeyProvider
-	projectKP *crypto.ProjectKeyCache
+	kp        bcrypto.KeyProvider
+	projectKP *bcrypto.KeyProviderCache
 	audit     audit.Sink
 	period    time.Duration
 	log       *slog.Logger
 }
 
-func newPEKRotator(st store.Store, kp lcrypto.KeyProvider, projectKP *crypto.ProjectKeyCache, auditSink audit.Sink, period time.Duration, log *slog.Logger) *PEKRotator {
+func newPEKRotator(st store.Store, kp bcrypto.KeyProvider, projectKP *bcrypto.KeyProviderCache, auditSink audit.Sink, period time.Duration, log *slog.Logger) *PEKRotator {
 	return &PEKRotator{store: st, kp: kp, projectKP: projectKP, audit: auditSink, period: period, log: log}
 }
 
@@ -81,7 +80,7 @@ func (r *PEKRotator) rotateProjectPEK(ctx context.Context, p *model.Project) err
 	if err != nil {
 		return fmt.Errorf("unwrap old PEK: %w", err)
 	}
-	oldProjectKP := crypto.NewProjectKeyProvider(oldPEK)
+	oldProjectKP := bcrypto.NewLocalKeyProvider(oldPEK)
 
 	newPEK := make([]byte, 32)
 	if _, err := rand.Read(newPEK); err != nil {
@@ -91,7 +90,7 @@ func (r *PEKRotator) rotateProjectPEK(ctx context.Context, p *model.Project) err
 	if err != nil {
 		return fmt.Errorf("wrap new PEK: %w", err)
 	}
-	newProjectKP := crypto.NewProjectKeyProvider(newPEK)
+	newProjectKP := bcrypto.NewLocalKeyProvider(newPEK)
 
 	rotatedAt := time.Now().UTC()
 	err = r.store.RotateProjectPEK(ctx, p.ID, newEncPEK, rotatedAt, func(encDEK []byte) ([]byte, error) {
