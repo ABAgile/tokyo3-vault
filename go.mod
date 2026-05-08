@@ -1,6 +1,6 @@
 module github.com/abagile/tokyo3-vault
 
-go 1.26
+go 1.26.3
 
 require (
 	github.com/BurntSushi/toml v1.6.0
