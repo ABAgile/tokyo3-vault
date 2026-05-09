@@ -87,11 +87,11 @@ type mockStore struct {
 	deleteSCIMToken    func(ctx context.Context, id string) error
 
 	// SCIM group roles
-	listSCIMGroupRoles        func(ctx context.Context) ([]*model.SCIMGroupRole, error)
-	listSCIMGroupRolesByGroup func(ctx context.Context, groupID string) ([]*model.SCIMGroupRole, error)
-	getSCIMGroupRole          func(ctx context.Context, id string) (*model.SCIMGroupRole, error)
-	setSCIMGroupRole          func(ctx context.Context, groupID, displayName string, projectID, envID *string, role string) (*model.SCIMGroupRole, error)
-	deleteSCIMGroupRole       func(ctx context.Context, id string) error
+	listSCIMGroupRoles             func(ctx context.Context) ([]*model.SCIMGroupRole, error)
+	listSCIMGroupRolesByExternalID func(ctx context.Context, scimExternalID string) ([]*model.SCIMGroupRole, error)
+	getSCIMGroupRole               func(ctx context.Context, id string) (*model.SCIMGroupRole, error)
+	setSCIMGroupRole               func(ctx context.Context, scimExternalID, displayName string, projectID, envID *string, role string) (*model.SCIMGroupRole, error)
+	deleteSCIMGroupRole            func(ctx context.Context, id string) error
 }
 
 func (m *mockStore) CreateUser(ctx context.Context, email, hash, role string) (*model.User, error) {
@@ -461,9 +461,9 @@ func (m *mockStore) ListSCIMGroupRoles(ctx context.Context) ([]*model.SCIMGroupR
 	}
 	return nil, nil
 }
-func (m *mockStore) ListSCIMGroupRolesByGroup(ctx context.Context, groupID string) ([]*model.SCIMGroupRole, error) {
-	if m.listSCIMGroupRolesByGroup != nil {
-		return m.listSCIMGroupRolesByGroup(ctx, groupID)
+func (m *mockStore) ListSCIMGroupRolesByExternalID(ctx context.Context, scimExternalID string) ([]*model.SCIMGroupRole, error) {
+	if m.listSCIMGroupRolesByExternalID != nil {
+		return m.listSCIMGroupRolesByExternalID(ctx, scimExternalID)
 	}
 	return nil, nil
 }
@@ -473,9 +473,9 @@ func (m *mockStore) GetSCIMGroupRole(ctx context.Context, id string) (*model.SCI
 	}
 	return nil, store.ErrNotFound
 }
-func (m *mockStore) SetSCIMGroupRole(ctx context.Context, groupID, displayName string, projectID, envID *string, role string) (*model.SCIMGroupRole, error) {
+func (m *mockStore) SetSCIMGroupRole(ctx context.Context, scimExternalID, displayName string, projectID, envID *string, role string) (*model.SCIMGroupRole, error) {
 	if m.setSCIMGroupRole != nil {
-		return m.setSCIMGroupRole(ctx, groupID, displayName, projectID, envID, role)
+		return m.setSCIMGroupRole(ctx, scimExternalID, displayName, projectID, envID, role)
 	}
 	return nil, store.ErrNotFound
 }

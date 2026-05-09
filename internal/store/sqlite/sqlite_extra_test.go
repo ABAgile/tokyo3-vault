@@ -265,7 +265,7 @@ func TestSCIMGroupRoles_CRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetSCIMGroupRole: %v", err)
 	}
-	if gr.ID == "" || gr.GroupID != "group-123" {
+	if gr.ID == "" || gr.SCIMExternalID != "group-123" {
 		t.Errorf("unexpected group role: %+v", gr)
 	}
 
@@ -284,10 +284,10 @@ func TestSCIMGroupRoles_CRUD(t *testing.T) {
 		t.Errorf("ListSCIMGroupRoles: len=%d err=%v", len(roles), err)
 	}
 
-	// ListSCIMGroupRolesByGroup.
-	byGroup, err := db.ListSCIMGroupRolesByGroup(ctx, "group-123")
+	// ListSCIMGroupRolesByExternalID.
+	byGroup, err := db.ListSCIMGroupRolesByExternalID(ctx, "group-123")
 	if err != nil || len(byGroup) != 1 {
-		t.Errorf("ListSCIMGroupRolesByGroup: len=%d err=%v", len(byGroup), err)
+		t.Errorf("ListSCIMGroupRolesByExternalID: len=%d err=%v", len(byGroup), err)
 	}
 
 	// DeleteSCIMGroupRole.

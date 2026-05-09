@@ -31,7 +31,7 @@ func TestIsValidGroupRole(t *testing.T) {
 
 // TestHandleCreateSCIMGroupRole tests the SCIM group role creation handler.
 func TestHandleCreateSCIMGroupRole(t *testing.T) {
-	now := model.SCIMGroupRole{ID: "gr-1", GroupID: "grp-123", DisplayName: "Engineers", Role: model.RoleEditor}
+	now := model.SCIMGroupRole{ID: "gr-1", SCIMExternalID: "grp-123", DisplayName: "Engineers", Role: model.RoleEditor}
 	_ = now
 
 	tests := []struct {
@@ -42,42 +42,42 @@ func TestHandleCreateSCIMGroupRole(t *testing.T) {
 	}{
 		{
 			name: "valid with env",
-			body: `{"group_id":"grp-1","project_slug":"myapp","env_slug":"prod","role":"editor"}`,
+			body: `{"scim_external_id":"grp-1","project_slug":"myapp","env_slug":"prod","role":"editor"}`,
 			setup: func(m *mockStore) {
 				m.setSCIMGroupRole = func(_ context.Context, _, _ string, _, _ *string, _ string) (*model.SCIMGroupRole, error) {
-					return &model.SCIMGroupRole{ID: "gr-1", GroupID: "grp-1", Role: model.RoleEditor}, nil
+					return &model.SCIMGroupRole{ID: "gr-1", SCIMExternalID: "grp-1", Role: model.RoleEditor}, nil
 				}
 			},
 			wantStatus: http.StatusCreated,
 		},
 		{
 			name: "valid without env",
-			body: `{"group_id":"grp-2","project_slug":"myapp","role":"viewer"}`,
+			body: `{"scim_external_id":"grp-2","project_slug":"myapp","role":"viewer"}`,
 			setup: func(m *mockStore) {
 				m.setSCIMGroupRole = func(_ context.Context, _, _ string, _, _ *string, _ string) (*model.SCIMGroupRole, error) {
-					return &model.SCIMGroupRole{ID: "gr-2", GroupID: "grp-2", Role: model.RoleViewer}, nil
+					return &model.SCIMGroupRole{ID: "gr-2", SCIMExternalID: "grp-2", Role: model.RoleViewer}, nil
 				}
 			},
 			wantStatus: http.StatusCreated,
 		},
 		{
 			name:       "missing required fields",
-			body:       `{"group_id":"grp-1","role":"editor"}`,
+			body:       `{"scim_external_id":"grp-1","role":"editor"}`,
 			wantStatus: http.StatusBadRequest,
 		},
 		{
 			name:       "invalid role",
-			body:       `{"group_id":"grp-1","project_slug":"myapp","role":"superadmin"}`,
+			body:       `{"scim_external_id":"grp-1","project_slug":"myapp","role":"superadmin"}`,
 			wantStatus: http.StatusBadRequest,
 		},
 		{
 			name:       "project not found",
-			body:       `{"group_id":"grp-1","project_slug":"no-such-project","role":"editor"}`,
+			body:       `{"scim_external_id":"grp-1","project_slug":"no-such-project","role":"editor"}`,
 			wantStatus: http.StatusNotFound,
 		},
 		{
 			name: "env not found",
-			body: `{"group_id":"grp-1","project_slug":"myapp","env_slug":"no-such-env","role":"editor"}`,
+			body: `{"scim_external_id":"grp-1","project_slug":"myapp","env_slug":"no-such-env","role":"editor"}`,
 			setup: func(m *mockStore) {
 				m.getEnvironment = func(_ context.Context, _, slug string) (*model.Environment, error) {
 					return nil, store.ErrNotFound
@@ -186,8 +186,8 @@ func TestHandleListSCIMGroupRoles_WithData(t *testing.T) {
 	st := adminStore()
 	st.listSCIMGroupRoles = func(_ context.Context) ([]*model.SCIMGroupRole, error) {
 		return []*model.SCIMGroupRole{
-			{ID: "gr-1", GroupID: "g1", DisplayName: "Eng", ProjectID: &p, Role: model.RoleEditor},
-			{ID: "gr-2", GroupID: "g2", DisplayName: "Ops", Role: model.RoleViewer},
+			{ID: "gr-1", SCIMExternalID: "g1", DisplayName: "Eng", ProjectID: &p, Role: model.RoleEditor},
+			{ID: "gr-2", SCIMExternalID: "g2", DisplayName: "Ops", Role: model.RoleViewer},
 		}, nil
 	}
 	srv := newTestServer(t, st)

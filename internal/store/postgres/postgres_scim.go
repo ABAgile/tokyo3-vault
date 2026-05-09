@@ -63,29 +63,29 @@ func (s *DB) DeleteSCIMToken(ctx context.Context, id string) error {
 	return nil
 }
 
-func (s *DB) SetSCIMGroupRole(ctx context.Context, groupID, displayName string, projectID, envID *string, role string) (*model.SCIMGroupRole, error) {
+func (s *DB) SetSCIMGroupRole(ctx context.Context, scimExternalID, displayName string, projectID, envID *string, role string) (*model.SCIMGroupRole, error) {
 	r := &model.SCIMGroupRole{
-		ID:          uuid.NewString(),
-		GroupID:     groupID,
-		DisplayName: displayName,
-		ProjectID:   projectID,
-		EnvID:       envID,
-		Role:        role,
-		CreatedAt:   time.Now().UTC(),
+		ID:             uuid.NewString(),
+		SCIMExternalID: scimExternalID,
+		DisplayName:    displayName,
+		ProjectID:      projectID,
+		EnvID:          envID,
+		Role:           role,
+		CreatedAt:      time.Now().UTC(),
 	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO scim_group_roles (id, group_id, display_name, project_id, env_id, role, created_at)
+		`INSERT INTO scim_group_roles (id, scim_external_id, display_name, project_id, env_id, role, created_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7)
-		 ON CONFLICT (group_id, project_id, env_id) DO UPDATE
+		 ON CONFLICT (scim_external_id, project_id, env_id) DO UPDATE
 		     SET display_name = EXCLUDED.display_name, role = EXCLUDED.role`,
-		r.ID, r.GroupID, r.DisplayName, r.ProjectID, r.EnvID, r.Role, r.CreatedAt,
+		r.ID, r.SCIMExternalID, r.DisplayName, r.ProjectID, r.EnvID, r.Role, r.CreatedAt,
 	)
 	return r, err
 }
 
 func (s *DB) ListSCIMGroupRoles(ctx context.Context) ([]*model.SCIMGroupRole, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, group_id, display_name, project_id, env_id, role, created_at FROM scim_group_roles ORDER BY created_at`,
+		`SELECT id, scim_external_id, display_name, project_id, env_id, role, created_at FROM scim_group_roles ORDER BY created_at`,
 	)
 	if err != nil {
 		return nil, err
@@ -94,7 +94,7 @@ func (s *DB) ListSCIMGroupRoles(ctx context.Context) ([]*model.SCIMGroupRole, er
 	var roles []*model.SCIMGroupRole
 	for rows.Next() {
 		r := &model.SCIMGroupRole{}
-		if err := rows.Scan(&r.ID, &r.GroupID, &r.DisplayName, &r.ProjectID, &r.EnvID, &r.Role, &r.CreatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.SCIMExternalID, &r.DisplayName, &r.ProjectID, &r.EnvID, &r.Role, &r.CreatedAt); err != nil {
 			return nil, err
 		}
 		roles = append(roles, r)
@@ -102,9 +102,9 @@ func (s *DB) ListSCIMGroupRoles(ctx context.Context) ([]*model.SCIMGroupRole, er
 	return roles, rows.Err()
 }
 
-func (s *DB) ListSCIMGroupRolesByGroup(ctx context.Context, groupID string) ([]*model.SCIMGroupRole, error) {
+func (s *DB) ListSCIMGroupRolesByExternalID(ctx context.Context, scimExternalID string) ([]*model.SCIMGroupRole, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, group_id, display_name, project_id, env_id, role, created_at FROM scim_group_roles WHERE group_id = $1 ORDER BY created_at`, groupID,
+		`SELECT id, scim_external_id, display_name, project_id, env_id, role, created_at FROM scim_group_roles WHERE scim_external_id = $1 ORDER BY created_at`, scimExternalID,
 	)
 	if err != nil {
 		return nil, err
@@ -113,7 +113,7 @@ func (s *DB) ListSCIMGroupRolesByGroup(ctx context.Context, groupID string) ([]*
 	var roles []*model.SCIMGroupRole
 	for rows.Next() {
 		r := &model.SCIMGroupRole{}
-		if err := rows.Scan(&r.ID, &r.GroupID, &r.DisplayName, &r.ProjectID, &r.EnvID, &r.Role, &r.CreatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.SCIMExternalID, &r.DisplayName, &r.ProjectID, &r.EnvID, &r.Role, &r.CreatedAt); err != nil {
 			return nil, err
 		}
 		roles = append(roles, r)
@@ -124,8 +124,8 @@ func (s *DB) ListSCIMGroupRolesByGroup(ctx context.Context, groupID string) ([]*
 func (s *DB) GetSCIMGroupRole(ctx context.Context, id string) (*model.SCIMGroupRole, error) {
 	r := &model.SCIMGroupRole{}
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, group_id, display_name, project_id, env_id, role, created_at FROM scim_group_roles WHERE id = $1`, id,
-	).Scan(&r.ID, &r.GroupID, &r.DisplayName, &r.ProjectID, &r.EnvID, &r.Role, &r.CreatedAt)
+		`SELECT id, scim_external_id, display_name, project_id, env_id, role, created_at FROM scim_group_roles WHERE id = $1`, id,
+	).Scan(&r.ID, &r.SCIMExternalID, &r.DisplayName, &r.ProjectID, &r.EnvID, &r.Role, &r.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, store.ErrNotFound
 	}

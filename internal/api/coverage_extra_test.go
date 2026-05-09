@@ -1344,7 +1344,7 @@ func TestHandleCreateSCIMToken_StoreError(t *testing.T) {
 
 func TestSyncGroupMembers_ListError(t *testing.T) {
 	st := adminStore()
-	st.listSCIMGroupRolesByGroup = func(_ context.Context, _ string) ([]*model.SCIMGroupRole, error) {
+	st.listSCIMGroupRolesByExternalID = func(_ context.Context, _ string) ([]*model.SCIMGroupRole, error) {
 		return nil, errDB
 	}
 	srv := newTestServer(t, st)
@@ -1354,7 +1354,7 @@ func TestSyncGroupMembers_ListError(t *testing.T) {
 	}{{Value: "u1"}}
 	err := srv.syncGroupMembers(r, "g1", "Eng", members)
 	if err == nil {
-		t.Error("expected error from ListSCIMGroupRolesByGroup failure")
+		t.Error("expected error from ListSCIMGroupRolesByExternalID failure")
 	}
 }
 

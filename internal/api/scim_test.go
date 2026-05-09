@@ -437,8 +437,8 @@ func TestHandleSCIMListUsers_Filter(t *testing.T) {
 
 func TestHandleSCIMListGroups_Filter(t *testing.T) {
 	groups := []*model.SCIMGroupRole{
-		{ID: "g1", DisplayName: "Engineering"},
-		{ID: "g2", DisplayName: "Marketing"},
+		{ID: "row-1", SCIMExternalID: "g1", DisplayName: "Engineering"},
+		{ID: "row-2", SCIMExternalID: "g2", DisplayName: "Marketing"},
 	}
 
 	t.Run("displayName narrows result", func(t *testing.T) {
@@ -1005,7 +1005,7 @@ func TestHandleSCIMListGroups(t *testing.T) {
 		st := &mockStore{
 			listSCIMGroupRoles: func(_ context.Context) ([]*model.SCIMGroupRole, error) {
 				return []*model.SCIMGroupRole{
-					{ID: "gr-1", GroupID: "g1", DisplayName: "Eng", Role: model.RoleEditor, CreatedAt: time.Now().UTC()},
+					{ID: "gr-1", SCIMExternalID: "g1", DisplayName: "Eng", Role: model.RoleEditor, CreatedAt: time.Now().UTC()},
 				}, nil
 			},
 		}
@@ -1046,18 +1046,23 @@ func TestHandleSCIMCreateGroup(t *testing.T) {
 		wantStatus int
 	}{
 		{
-			name:       "valid with members",
-			body:       `{"displayName":"Engineering","members":[{"value":"u1"}]}`,
+			name:       "valid with externalId and members",
+			body:       `{"displayName":"Engineering","externalId":"auth-grp-123","members":[{"value":"u1"}]}`,
 			wantStatus: http.StatusCreated,
 		},
 		{
-			name:       "valid with externalId (used as groupID)",
+			name:       "valid with externalId (no members)",
 			body:       `{"displayName":"Ops","externalId":"okta-grp-123"}`,
 			wantStatus: http.StatusCreated,
 		},
 		{
+			name:       "missing externalId",
+			body:       `{"displayName":"Engineering","members":[{"value":"u1"}]}`,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
 			name:       "missing displayName",
-			body:       `{"members":[]}`,
+			body:       `{"externalId":"auth-grp-1","members":[]}`,
 			wantStatus: http.StatusBadRequest,
 		},
 		{
@@ -1091,28 +1096,30 @@ func TestHandleSCIMGetGroup(t *testing.T) {
 		wantStatus int
 	}{
 		{
-			name: "found",
+			name: "found (mappings exist for this scim_external_id)",
 			setup: func(m *mockStore) {
-				m.getSCIMGroupRole = func(_ context.Context, id string) (*model.SCIMGroupRole, error) {
-					return &model.SCIMGroupRole{ID: id, DisplayName: "Eng", CreatedAt: time.Now().UTC()}, nil
+				m.listSCIMGroupRolesByExternalID = func(_ context.Context, gid string) ([]*model.SCIMGroupRole, error) {
+					return []*model.SCIMGroupRole{
+						{ID: "gr-1", SCIMExternalID: gid, DisplayName: "Eng", Role: model.RoleEditor, CreatedAt: time.Now().UTC()},
+					}, nil
 				}
 			},
-			id:         "gr-1",
+			id:         "auth-grp-1",
 			wantStatus: http.StatusOK,
 		},
 		{
-			name:       "not found",
+			name:       "not found (no mappings for this scim_external_id)",
 			id:         "no-such",
 			wantStatus: http.StatusNotFound,
 		},
 		{
 			name: "db error",
 			setup: func(m *mockStore) {
-				m.getSCIMGroupRole = func(_ context.Context, _ string) (*model.SCIMGroupRole, error) {
+				m.listSCIMGroupRolesByExternalID = func(_ context.Context, _ string) ([]*model.SCIMGroupRole, error) {
 					return nil, errDB
 				}
 			},
-			id:         "gr-1",
+			id:         "auth-grp-1",
 			wantStatus: http.StatusInternalServerError,
 		},
 	}
@@ -1180,23 +1187,33 @@ func TestHandleSCIMPatchGroup(t *testing.T) {
 		wantStatus int
 	}{
 		{
-			name: "replace displayName (group exists in store)",
+			name: "replace displayName (mappings exist for this scim_external_id)",
 			body: `{"Operations":[{"op":"replace","path":"displayName","value":"New Name"}]}`,
 			setup: func(m *mockStore) {
-				m.getSCIMGroupRole = func(_ context.Context, id string) (*model.SCIMGroupRole, error) {
-					return &model.SCIMGroupRole{ID: id, DisplayName: "Old Name"}, nil
+				m.listSCIMGroupRolesByExternalID = func(_ context.Context, gid string) ([]*model.SCIMGroupRole, error) {
+					return []*model.SCIMGroupRole{{ID: "gr-1", SCIMExternalID: gid, DisplayName: "Old Name"}}, nil
 				}
 			},
 			wantStatus: http.StatusOK,
 		},
 		{
-			name:       "replace displayName (group not found is ok)",
+			name:       "replace displayName (no mappings yet is ok)",
 			body:       `{"Operations":[{"op":"replace","path":"displayName","value":"New Name"}]}`,
 			wantStatus: http.StatusOK,
 		},
 		{
-			name:       "add member op",
+			name:       "add members op",
 			body:       `{"Operations":[{"op":"add","path":"members","value":[{"value":"u2"}]}]}`,
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "replace members op",
+			body:       `{"Operations":[{"op":"replace","path":"members","value":[{"value":"u3"}]}]}`,
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "remove member op (acknowledged but not applied)",
+			body:       `{"Operations":[{"op":"remove","path":"members[value eq \"u2\"]"}]}`,
 			wantStatus: http.StatusOK,
 		},
 		{
@@ -1213,8 +1230,8 @@ func TestHandleSCIMPatchGroup(t *testing.T) {
 				tc.setup(st)
 			}
 			srv := newTestServer(t, st)
-			r := httptest.NewRequest(http.MethodPatch, "/scim/v2/Groups/gr-1", strings.NewReader(tc.body))
-			r.SetPathValue("id", "gr-1")
+			r := httptest.NewRequest(http.MethodPatch, "/scim/v2/Groups/auth-grp-1", strings.NewReader(tc.body))
+			r.SetPathValue("id", "auth-grp-1")
 			r = withToken(r, adminTok())
 			w := httptest.NewRecorder()
 			srv.handleSCIMPatchGroup(w, r)
@@ -1228,40 +1245,20 @@ func TestHandleSCIMPatchGroup(t *testing.T) {
 // ── handleSCIMDeleteGroup ─────────────────────────────────────────────────────
 
 func TestHandleSCIMDeleteGroup(t *testing.T) {
+	// DELETE is acknowledged with 204 unconditionally — admin owns the
+	// scim_group_roles policy, so the SCIM surface never auto-removes it.
 	tests := []struct {
 		name       string
-		setup      func(*mockStore)
 		wantStatus int
 	}{
-		{
-			name:       "success",
-			wantStatus: http.StatusNoContent,
-		},
-		{
-			name: "not found is still 204 (idempotent)",
-			setup: func(m *mockStore) {
-				m.deleteSCIMGroupRole = func(_ context.Context, _ string) error { return store.ErrNotFound }
-			},
-			wantStatus: http.StatusNoContent,
-		},
-		{
-			name: "db error → 500",
-			setup: func(m *mockStore) {
-				m.deleteSCIMGroupRole = func(_ context.Context, _ string) error { return errDB }
-			},
-			wantStatus: http.StatusInternalServerError,
-		},
+		{name: "always 204 (no-op)", wantStatus: http.StatusNoContent},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			st := adminStore()
-			if tc.setup != nil {
-				tc.setup(st)
-			}
-			srv := newTestServer(t, st)
-			r := httptest.NewRequest(http.MethodDelete, "/scim/v2/Groups/gr-1", nil)
-			r.SetPathValue("id", "gr-1")
+			srv := newTestServer(t, adminStore())
+			r := httptest.NewRequest(http.MethodDelete, "/scim/v2/Groups/auth-grp-1", nil)
+			r.SetPathValue("id", "auth-grp-1")
 			w := httptest.NewRecorder()
 			srv.handleSCIMDeleteGroup(w, r)
 			if w.Code != tc.wantStatus {
@@ -1289,9 +1286,9 @@ func TestSyncGroupMembers(t *testing.T) {
 func TestSyncGroupMembers_WithRoles(t *testing.T) {
 	p := testProjID
 	st := adminStore()
-	st.listSCIMGroupRolesByGroup = func(_ context.Context, _ string) ([]*model.SCIMGroupRole, error) {
+	st.listSCIMGroupRolesByExternalID = func(_ context.Context, _ string) ([]*model.SCIMGroupRole, error) {
 		return []*model.SCIMGroupRole{
-			{ID: "gr-1", GroupID: "g1", ProjectID: &p, Role: model.RoleEditor},
+			{ID: "gr-1", SCIMExternalID: "g1", ProjectID: &p, Role: model.RoleEditor},
 		}, nil
 	}
 	srv := newTestServer(t, st)

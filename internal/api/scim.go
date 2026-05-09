@@ -578,13 +578,28 @@ func (s *Server) handleSCIMListGroups(w http.ResponseWriter, r *http.Request) {
 		writeSCIMError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	base := requestBaseURL(r)
-	resources := make([]any, 0, len(roles))
+	// One SCIM Group corresponds to a (possibly empty) set of scim_group_roles
+	// rows that share the same scim_external_id (the IdP's group UUID). Dedupe
+	// by scim_external_id so the SCIM resource id is the upstream-stable
+	// identifier auth pushes on PUT/PATCH/DELETE.
+	type groupView struct{ id, name string }
+	seen := make(map[string]groupView, len(roles))
+	order := make([]string, 0, len(roles))
 	for _, gr := range roles {
-		if filter != nil && !groupMatchesFilter(gr, filter) {
+		if _, ok := seen[gr.SCIMExternalID]; ok {
 			continue
 		}
-		resources = append(resources, scimGroupResource(gr.ID, gr.DisplayName, "", base, nil))
+		seen[gr.SCIMExternalID] = groupView{id: gr.SCIMExternalID, name: gr.DisplayName}
+		order = append(order, gr.SCIMExternalID)
+	}
+	base := requestBaseURL(r)
+	resources := make([]any, 0, len(order))
+	for _, gid := range order {
+		v := seen[gid]
+		if filter != nil && !groupMatchesFilter(v.id, v.name, filter) {
+			continue
+		}
+		resources = append(resources, scimGroupResource(v.id, v.name, v.id, base, nil))
 	}
 	writeSCIMJSON(w, http.StatusOK, map[string]any{
 		"schemas":      []string{scimListSchema},
@@ -595,12 +610,12 @@ func (s *Server) handleSCIMListGroups(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func groupMatchesFilter(gr *model.SCIMGroupRole, f *scimFilter) bool {
+func groupMatchesFilter(id, displayName string, f *scimFilter) bool {
 	switch f.Attribute {
 	case "id":
-		return gr.ID == f.Value
+		return id == f.Value
 	case "displayName":
-		return gr.DisplayName == f.Value
+		return displayName == f.Value
 	}
 	return false
 }
@@ -615,58 +630,66 @@ func (s *Server) handleSCIMCreateGroup(w http.ResponseWriter, r *http.Request) {
 		writeSCIMError(w, http.StatusBadRequest, "displayName is required")
 		return
 	}
-	groupID := req.ExternalID
+	// externalId is the upstream group's stable UUID; it becomes the SCIM
+	// resource id and the lookup key against scim_group_roles.scim_external_id.
+	// A missing externalId means the upstream client can't address the group on
+	// follow-up updates, so reject.
+	groupID := strings.TrimSpace(req.ExternalID)
 	if groupID == "" {
-		groupID = uuid.NewString()
+		writeSCIMError(w, http.StatusBadRequest, "externalId is required")
+		return
 	}
-	// Group without a role mapping is valid — membership will be synced via PATCH.
-	base := requestBaseURL(r)
-	var memberIDs []string
-	for _, m := range req.Members {
-		memberIDs = append(memberIDs, m.Value)
-	}
-	if err := s.logAudit(r, ActionSCIMGroupSync, "", req.DisplayName); err != nil {
+	// syncGroupMembers is a no-op until an admin wires up a scim_group_roles
+	// row for this groupID via /portal/admin/scim-group-roles. Vault never
+	// auto-creates role mappings — the group→project/role policy is admin-owned.
+	if err := s.syncGroupMembers(r, groupID, req.DisplayName, req.Members); err != nil {
 		writeSCIMError(w, http.StatusInternalServerError, "audit unavailable")
 		return
 	}
-	writeSCIMJSON(w, http.StatusCreated, scimGroupResource(groupID, req.DisplayName, req.ExternalID, base, memberIDs))
+	memberIDs := make([]string, 0, len(req.Members))
+	for _, m := range req.Members {
+		memberIDs = append(memberIDs, m.Value)
+	}
+	writeSCIMJSON(w, http.StatusCreated, scimGroupResource(groupID, req.DisplayName, groupID, requestBaseURL(r), memberIDs))
 }
 
 func (s *Server) handleSCIMGetGroup(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	gr, err := s.store.GetSCIMGroupRole(r.Context(), id)
-	if errors.Is(err, store.ErrNotFound) {
-		writeSCIMError(w, http.StatusNotFound, "group not found")
-		return
-	}
+	groupID := r.PathValue("id")
+	roles, err := s.store.ListSCIMGroupRolesByExternalID(r.Context(), groupID)
 	if err != nil {
 		s.log.Error("scim get group", "err", err)
 		writeSCIMError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	writeSCIMJSON(w, http.StatusOK, scimGroupResource(gr.ID, gr.DisplayName, "", requestBaseURL(r), nil))
+	if len(roles) == 0 {
+		writeSCIMError(w, http.StatusNotFound, "group not found")
+		return
+	}
+	writeSCIMJSON(w, http.StatusOK, scimGroupResource(groupID, roles[0].DisplayName, groupID, requestBaseURL(r), nil))
 }
 
 func (s *Server) handleSCIMReplaceGroup(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
+	// Path id is the upstream group's UUID (= scim_group_roles.scim_external_id),
+	// not a row PK — auth's outbound provisioner addresses groups by their own ID.
+	groupID := r.PathValue("id")
 	var req scimGroupRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeSCIMError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	if err := s.syncGroupMembers(r, id, req.DisplayName, req.Members); err != nil {
+	if err := s.syncGroupMembers(r, groupID, req.DisplayName, req.Members); err != nil {
 		writeSCIMError(w, http.StatusInternalServerError, "audit unavailable")
 		return
 	}
-	var memberIDs []string
+	memberIDs := make([]string, 0, len(req.Members))
 	for _, m := range req.Members {
 		memberIDs = append(memberIDs, m.Value)
 	}
-	writeSCIMJSON(w, http.StatusOK, scimGroupResource(id, req.DisplayName, req.ExternalID, requestBaseURL(r), memberIDs))
+	writeSCIMJSON(w, http.StatusOK, scimGroupResource(groupID, req.DisplayName, groupID, requestBaseURL(r), memberIDs))
 }
 
 func (s *Server) handleSCIMPatchGroup(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
+	groupID := r.PathValue("id")
 	var body struct {
 		Operations []struct {
 			Op    string `json:"op"`
@@ -679,47 +702,88 @@ func (s *Server) handleSCIMPatchGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	displayName := ""
-	gr, err := s.store.GetSCIMGroupRole(r.Context(), id)
-	if err == nil {
-		displayName = gr.DisplayName
+	if roles, err := s.store.ListSCIMGroupRolesByExternalID(r.Context(), groupID); err == nil && len(roles) > 0 {
+		displayName = roles[0].DisplayName
+	}
+	var addedMembers []struct {
+		Value string `json:"value"`
 	}
 	for _, op := range body.Operations {
 		switch strings.ToLower(op.Op) {
 		case "replace":
-			if strings.ToLower(op.Path) == "displayname" {
+			switch strings.ToLower(op.Path) {
+			case "displayname":
 				if dn, ok := op.Value.(string); ok {
 					displayName = dn
 				}
+			case "members":
+				addedMembers = append(addedMembers, parsePatchMembers(op.Value)...)
 			}
-		case "add", "remove":
-			// Member add/remove — sync membership for the affected users.
-			// We re-read the full group and let syncGroupMembers handle the diff.
+		case "add":
+			if strings.ToLower(op.Path) == "members" {
+				addedMembers = append(addedMembers, parsePatchMembers(op.Value)...)
+			}
+		case "remove":
+			// syncGroupMembers can only add memberships, not revoke them.
+			// Removal-by-PATCH is therefore acknowledged but not applied;
+			// admins must clean up project_members manually if needed.
 		}
 	}
-	if err := s.logAudit(r, ActionSCIMGroupSync, "", displayName); err != nil {
+	if err := s.syncGroupMembers(r, groupID, displayName, addedMembers); err != nil {
 		writeSCIMError(w, http.StatusInternalServerError, "audit unavailable")
 		return
 	}
-	writeSCIMJSON(w, http.StatusOK, scimGroupResource(id, displayName, "", requestBaseURL(r), nil))
+	writeSCIMJSON(w, http.StatusOK, scimGroupResource(groupID, displayName, groupID, requestBaseURL(r), nil))
 }
 
-func (s *Server) handleSCIMDeleteGroup(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if err := s.store.DeleteSCIMGroupRole(r.Context(), id); err != nil && !errors.Is(err, store.ErrNotFound) {
-		s.log.Error("scim delete group", "err", err)
-		writeSCIMError(w, http.StatusInternalServerError, "internal error")
-		return
+// parsePatchMembers extracts {value: "user-id"} entries from a SCIM PATCH op
+// value, which IdPs serialise as either []any of map[string]any or a single
+// map[string]any. Returns nil for any other shape so unrelated PATCH ops slip
+// through harmlessly.
+func parsePatchMembers(v any) []struct {
+	Value string `json:"value"`
+} {
+	switch x := v.(type) {
+	case []any:
+		out := make([]struct {
+			Value string `json:"value"`
+		}, 0, len(x))
+		for _, item := range x {
+			if m, ok := item.(map[string]any); ok {
+				if id, ok := m["value"].(string); ok && id != "" {
+					out = append(out, struct {
+						Value string `json:"value"`
+					}{Value: id})
+				}
+			}
+		}
+		return out
+	case map[string]any:
+		if id, ok := x["value"].(string); ok && id != "" {
+			return []struct {
+				Value string `json:"value"`
+			}{{Value: id}}
+		}
 	}
+	return nil
+}
+
+func (s *Server) handleSCIMDeleteGroup(w http.ResponseWriter, _ *http.Request) {
+	// scim_group_roles entries are admin-owned policy and not auto-removable
+	// from the SCIM surface — deleting a group upstream must not silently
+	// drop role bindings here. Acknowledge the request (idempotent 204) and
+	// leave existing project memberships in place; admins curate them via
+	// /portal/admin/scim-group-roles.
 	w.WriteHeader(http.StatusNoContent)
 }
 
 // syncGroupMembers applies the project memberships implied by group→role mappings.
 // For each member in the group, any configured scim_group_roles row is used to
 // add the user to the corresponding vault project as the specified role.
-func (s *Server) syncGroupMembers(r *http.Request, groupID, displayName string, members []struct {
+func (s *Server) syncGroupMembers(r *http.Request, scimExternalID, displayName string, members []struct {
 	Value string `json:"value"`
 }) error {
-	roles, err := s.store.ListSCIMGroupRolesByGroup(r.Context(), groupID)
+	roles, err := s.store.ListSCIMGroupRolesByExternalID(r.Context(), scimExternalID)
 	if err != nil {
 		s.log.Error("scim sync group members — list roles", "err", err)
 		return err
@@ -837,18 +901,18 @@ func (s *Server) handleCreateSCIMGroupRole(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var req struct {
-		GroupID     string `json:"group_id"`
-		DisplayName string `json:"display_name"`
-		ProjectSlug string `json:"project_slug"`
-		EnvSlug     string `json:"env_slug"`
-		Role        string `json:"role"`
+		SCIMExternalID string `json:"scim_external_id"`
+		DisplayName    string `json:"display_name"`
+		ProjectSlug    string `json:"project_slug"`
+		EnvSlug        string `json:"env_slug"`
+		Role           string `json:"role"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	if req.GroupID == "" || req.ProjectSlug == "" || req.Role == "" {
-		writeError(w, http.StatusBadRequest, "group_id, project_slug, and role are required")
+	if req.SCIMExternalID == "" || req.ProjectSlug == "" || req.Role == "" {
+		writeError(w, http.StatusBadRequest, "scim_external_id, project_slug, and role are required")
 		return
 	}
 	if !isValidGroupRole(req.Role) {
@@ -871,9 +935,9 @@ func (s *Server) handleCreateSCIMGroupRole(w http.ResponseWriter, r *http.Reques
 	}
 	displayName := req.DisplayName
 	if displayName == "" {
-		displayName = req.GroupID
+		displayName = req.SCIMExternalID
 	}
-	gr, err := s.store.SetSCIMGroupRole(r.Context(), req.GroupID, displayName, &p.ID, envID, req.Role)
+	gr, err := s.store.SetSCIMGroupRole(r.Context(), req.SCIMExternalID, displayName, &p.ID, envID, req.Role)
 	if err != nil {
 		s.log.Error("scim group role — set", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -937,11 +1001,11 @@ func (s *Server) handleDeleteSCIMGroupRole(w http.ResponseWriter, r *http.Reques
 
 func scimGroupRoleToResponse(gr *model.SCIMGroupRole) map[string]any {
 	r := map[string]any{
-		"id":           gr.ID,
-		"group_id":     gr.GroupID,
-		"display_name": gr.DisplayName,
-		"role":         gr.Role,
-		"created_at":   fmtAPITime(gr.CreatedAt),
+		"id":               gr.ID,
+		"scim_external_id": gr.SCIMExternalID,
+		"display_name":     gr.DisplayName,
+		"role":             gr.Role,
+		"created_at":       fmtAPITime(gr.CreatedAt),
 	}
 	if gr.ProjectID != nil {
 		r["project_id"] = *gr.ProjectID

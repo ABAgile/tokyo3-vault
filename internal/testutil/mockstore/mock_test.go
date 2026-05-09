@@ -99,7 +99,7 @@ func TestStub_AllMethods(t *testing.T) {
 	// SCIM group roles
 	s.SetSCIMGroupRole(ctx, "", "", nil, nil, "")
 	s.ListSCIMGroupRoles(ctx)
-	s.ListSCIMGroupRolesByGroup(ctx, "")
+	s.ListSCIMGroupRolesByExternalID(ctx, "")
 	s.GetSCIMGroupRole(ctx, "")
 	s.DeleteSCIMGroupRole(ctx, "")
 

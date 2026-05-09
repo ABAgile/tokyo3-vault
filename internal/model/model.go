@@ -39,13 +39,13 @@ type SCIMToken struct {
 }
 
 type SCIMGroupRole struct {
-	ID          string
-	GroupID     string
-	DisplayName string
-	ProjectID   *string
-	EnvID       *string
-	Role        string
-	CreatedAt   time.Time
+	ID             string
+	SCIMExternalID string
+	DisplayName    string
+	ProjectID      *string
+	EnvID          *string
+	Role           string
+	CreatedAt      time.Time
 }
 
 // Token covers both user session tokens (UserID set, ProjectID nil) and

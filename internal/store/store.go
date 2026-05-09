@@ -179,9 +179,9 @@ type SCIMStore interface {
 	ListSCIMTokens(ctx context.Context) ([]*model.SCIMToken, error)
 	DeleteSCIMToken(ctx context.Context, id string) error
 
-	SetSCIMGroupRole(ctx context.Context, groupID, displayName string, projectID, envID *string, role string) (*model.SCIMGroupRole, error)
+	SetSCIMGroupRole(ctx context.Context, scimExternalID, displayName string, projectID, envID *string, role string) (*model.SCIMGroupRole, error)
 	ListSCIMGroupRoles(ctx context.Context) ([]*model.SCIMGroupRole, error)
-	ListSCIMGroupRolesByGroup(ctx context.Context, groupID string) ([]*model.SCIMGroupRole, error)
+	ListSCIMGroupRolesByExternalID(ctx context.Context, scimExternalID string) ([]*model.SCIMGroupRole, error)
 	GetSCIMGroupRole(ctx context.Context, id string) (*model.SCIMGroupRole, error)
 	DeleteSCIMGroupRole(ctx context.Context, id string) error
 }

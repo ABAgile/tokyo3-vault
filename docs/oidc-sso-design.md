@@ -70,15 +70,15 @@ CREATE TABLE scim_tokens (
 );
 
 CREATE TABLE scim_group_roles (
-    id TEXT PRIMARY KEY, group_id TEXT NOT NULL, display_name TEXT NOT NULL,
+    id TEXT PRIMARY KEY, scim_external_id TEXT NOT NULL, display_name TEXT NOT NULL,
     project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
     env_id TEXT REFERENCES environments(id) ON DELETE CASCADE,
     role TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE (group_id, project_id, env_id)
+    UNIQUE (scim_external_id, project_id, env_id)
 );
 ```
 
-`active = false` means deprovisioned by SCIM. All existing tokens are deleted when a user is deactivated; new logins are blocked. `scim_group_roles` maps IdP group IDs to vault project roles and drives automatic project membership on SCIM group sync.
+`active = false` means deprovisioned by SCIM. All existing tokens are deleted when a user is deactivated; new logins are blocked. `scim_group_roles` maps the IdP's `scim_external_id` (the SCIM group's stable upstream ID) to vault project roles and drives automatic project membership on SCIM group sync.
 
 ---
 
@@ -105,13 +105,13 @@ type SCIMToken struct {
 }
 
 type SCIMGroupRole struct {
-    ID          string
-    GroupID     string
-    DisplayName string
-    ProjectID   *string
-    EnvID       *string
-    Role        string
-    CreatedAt   time.Time
+    ID             string
+    SCIMExternalID string  // IdP-assigned group ID; stable upstream identifier
+    DisplayName    string
+    ProjectID      *string
+    EnvID          *string
+    Role           string
+    CreatedAt      time.Time
 }
 ```
 
@@ -138,9 +138,9 @@ ListSCIMTokens(ctx) ([]*model.SCIMToken, error)
 DeleteSCIMToken(ctx, id string) error
 
 // SCIM group→role mappings
-SetSCIMGroupRole(ctx, groupID, displayName string, projectID, envID *string, role string) (*model.SCIMGroupRole, error)
+SetSCIMGroupRole(ctx, scimExternalID, displayName string, projectID, envID *string, role string) (*model.SCIMGroupRole, error)
 ListSCIMGroupRoles(ctx) ([]*model.SCIMGroupRole, error)
-ListSCIMGroupRolesByGroup(ctx, groupID string) ([]*model.SCIMGroupRole, error)
+ListSCIMGroupRolesByExternalID(ctx, scimExternalID string) ([]*model.SCIMGroupRole, error)
 GetSCIMGroupRole(ctx, id string) (*model.SCIMGroupRole, error)
 DeleteSCIMGroupRole(ctx, id string) error
 ```
@@ -384,7 +384,7 @@ DELETE /api/v1/scim/group-roles/{id}   — remove mapping
 **Create group-role request body:**
 ```json
 {
-  "group_id": "idp-group-uuid",
+  "scim_external_id": "idp-group-uuid",
   "display_name": "Engineering",
   "project_slug": "my-project",
   "env_slug": "production",

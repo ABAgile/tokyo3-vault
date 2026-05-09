@@ -26,7 +26,7 @@
       <tbody>
         {{range .Mappings}}
         <tr>
-          <td>{{.DisplayName}} <span class="text-muted mono" style="font-size:12px">{{.GroupID}}</span></td>
+          <td>{{.DisplayName}} <span class="text-muted mono" style="font-size:12px">{{.SCIMExternalID}}</span></td>
           <td>{{.ProjectName}}</td>
           <td>{{if .EnvName}}{{.EnvName}}{{else}}<span class="text-muted">(any)</span>{{end}}</td>
           <td>{{.Role}}</td>

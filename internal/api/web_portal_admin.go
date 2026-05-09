@@ -245,9 +245,9 @@ func (s *Server) handlePortalAdminSCIMTokenDelete(w http.ResponseWriter, r *http
 // ── Admin: SCIM group → role mappings ─────────────────────────────────────────
 
 type scimGroupRoleView struct {
-	ID, GroupID, DisplayName string
-	ProjectName, EnvName     string
-	Role                     string
+	ID, SCIMExternalID, DisplayName string
+	ProjectName, EnvName            string
+	Role                            string
 }
 
 func (s *Server) handlePortalAdminSCIMGroupRoles(w http.ResponseWriter, r *http.Request) {
@@ -281,7 +281,7 @@ func (s *Server) handlePortalAdminSCIMGroupRoles(w http.ResponseWriter, r *http.
 	views := make([]scimGroupRoleView, 0, len(rows))
 	for _, gr := range rows {
 		v := scimGroupRoleView{
-			ID: gr.ID, GroupID: gr.GroupID, DisplayName: gr.DisplayName, Role: gr.Role,
+			ID: gr.ID, SCIMExternalID: gr.SCIMExternalID, DisplayName: gr.DisplayName, Role: gr.Role,
 		}
 		if gr.ProjectID != nil {
 			if p := projectByID[*gr.ProjectID]; p != nil {
@@ -304,7 +304,7 @@ func (s *Server) handlePortalAdminSCIMGroupRoles(w http.ResponseWriter, r *http.
 }
 
 type scimGroupRoleForm struct {
-	DisplayName, GroupID, ProjectSlug, EnvSlug, Role string
+	DisplayName, SCIMExternalID, ProjectSlug, EnvSlug, Role string
 }
 
 func (s *Server) handlePortalAdminSCIMGroupRoleNew(w http.ResponseWriter, r *http.Request) {
@@ -326,14 +326,14 @@ func (s *Server) handlePortalAdminSCIMGroupRoleNew(w http.ResponseWriter, r *htt
 	}
 	_ = r.ParseForm()
 	form := scimGroupRoleForm{
-		DisplayName: strings.TrimSpace(r.FormValue("display_name")),
-		GroupID:     strings.TrimSpace(r.FormValue("group_id")),
-		ProjectSlug: strings.TrimSpace(r.FormValue("project_slug")),
-		EnvSlug:     strings.TrimSpace(r.FormValue("env_slug")),
-		Role:        r.FormValue("role"),
+		DisplayName:    strings.TrimSpace(r.FormValue("display_name")),
+		SCIMExternalID: strings.TrimSpace(r.FormValue("scim_external_id")),
+		ProjectSlug:    strings.TrimSpace(r.FormValue("project_slug")),
+		EnvSlug:        strings.TrimSpace(r.FormValue("env_slug")),
+		Role:           r.FormValue("role"),
 	}
-	if form.GroupID == "" || form.ProjectSlug == "" {
-		render(form, "Group ID and project are required.")
+	if form.SCIMExternalID == "" || form.ProjectSlug == "" {
+		render(form, "SCIM external ID and project are required.")
 		return
 	}
 	if !isValidGroupRole(form.Role) {
@@ -365,9 +365,9 @@ func (s *Server) handlePortalAdminSCIMGroupRoleNew(w http.ResponseWriter, r *htt
 	}
 	displayName := form.DisplayName
 	if displayName == "" {
-		displayName = form.GroupID
+		displayName = form.SCIMExternalID
 	}
-	gr, err := s.store.SetSCIMGroupRole(r.Context(), form.GroupID, displayName, &p.ID, envID, form.Role)
+	gr, err := s.store.SetSCIMGroupRole(r.Context(), form.SCIMExternalID, displayName, &p.ID, envID, form.Role)
 	if err != nil {
 		s.log.Error("set scim group role", "err", err)
 		render(form, "Save failed.")

@@ -200,7 +200,7 @@ func (Stub) SetSCIMGroupRole(_ context.Context, _, _ string, _, _ *string, _ str
 	return nil, store.ErrNotFound
 }
 func (Stub) ListSCIMGroupRoles(_ context.Context) ([]*model.SCIMGroupRole, error) { return nil, nil }
-func (Stub) ListSCIMGroupRolesByGroup(_ context.Context, _ string) ([]*model.SCIMGroupRole, error) {
+func (Stub) ListSCIMGroupRolesByExternalID(_ context.Context, _ string) ([]*model.SCIMGroupRole, error) {
 	return nil, nil
 }
 func (Stub) GetSCIMGroupRole(_ context.Context, _ string) (*model.SCIMGroupRole, error) {
