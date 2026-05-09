@@ -51,7 +51,7 @@ NATS_PORT     ?= 34222
 # Docker Compose project name (defaults to directory basename, matching Compose behaviour).
 # Used to derive the shared named volume name for pre-population via tar pipe (no bind mounts).
 COMPOSE_PROJECT := $(notdir $(CURDIR))
-SHARED_VOLUME   := $(COMPOSE_PROJECT)_shared-data
+SHARED_VOLUME   := $(COMPOSE_PROJECT)_shared_data
 
 # ── Phony targets ─────────────────────────────────────────────────────────────
 
@@ -116,41 +116,41 @@ build-darwin: $(BIN_DIR)
 _gen-env: build-server build-cli
 	@if [ ! -f .env ]; then \
 	    KEY=$$($(VAULT_BIN) keygen); \
-	    echo "VAULT_MASTER_KEY=$$KEY"                                                                                                                             > .env; \
-	    echo "VAULT_ADDR=$(VAULT_ADDR)"                                                                                                                           >> .env; \
-	    echo "POSTGRES_PORT=$(POSTGRES_PORT)"                                                                                                                     >> .env; \
-	    echo "VAULT_ADMIN_PASSWORD=changeme"                                                                                                                      >> .env; \
-	    echo "VAULT_APP_PASSWORD=changeme"                                                                                                                        >> .env; \
-	    echo "VAULT_ADMIN_DATABASE_URL=postgres://$${VAULT_ADMIN_DB_USERNAME:-vault_admin}:changeme@db.localhost:$(POSTGRES_PORT)/vault?sslmode=disable"          >> .env; \
-	    echo "VAULT_DATABASE_URL=postgres://$${VAULT_APP_USERNAME:-vault_app}:changeme@db.localhost:$(POSTGRES_PORT)/vault?sslmode=disable"                       >> .env; \
-	    echo "NATS_PORT=$(NATS_PORT)"                                                                                                                             >> .env; \
-	    echo "VAULT_NATS_URL=nats://nats.localhost:$(NATS_PORT)"                                                                                                  >> .env; \
-	    echo "AUDIT_DB_PORT=$(AUDIT_DB_PORT)"                                                                                                                     >> .env; \
-	    echo "VAULT_AUDIT_PASSWORD=changeme"                                                                                                                      >> .env; \
-	    echo "VAULT_AUDIT_NATS_URL=nats://nats.localhost:$(NATS_PORT)"                                                                                            >> .env; \
-	    echo "VAULT_AUDIT_DATABASE_URL=postgres://$${VAULT_AUDIT_USERNAME:-vault_audit}:changeme@audit-db.localhost:$(AUDIT_DB_PORT)/vault_audit?sslmode=disable" >> .env; \
-	    echo "VAULT_ALLOW_REGISTRATION=true"                                                                                                                      >> .env; \
-	    echo ""                                                                                                                                                  >> .env; \
-	    echo "# OIDC SSO via auth — paste CLIENT_ID/SECRET from \`authd\`'s /admin/clients (POST) or"                                                            >> .env; \
-	    echo "# /portal/admin/clients/new. Leave both blank to keep OIDC disabled. When CLIENT_ID is"                                                            >> .env; \
-	    echo "# set, run-mtls auto-defaults VAULT_OIDC_ISSUER + VAULT_OIDC_REDIRECT_URI to the values"                                                           >> .env; \
-	    echo "# below — override here if your auth/vault hosts/ports differ."                                                                                   >> .env; \
-	    echo "VAULT_OIDC_CLIENT_ID="                                                                                                                              >> .env; \
-	    echo "VAULT_OIDC_CLIENT_SECRET="                                                                                                                          >> .env; \
-	    echo "# VAULT_OIDC_ISSUER=https://auth.localhost:8443"                                                                                                    >> .env; \
-	    echo "# VAULT_OIDC_REDIRECT_URI=https://vault.localhost:8443/api/v1/auth/oidc/callback"                                                                   >> .env; \
-	    echo "VAULT_OIDC_ENFORCE=false"                                                                                                                           >> .env; \
+	    echo "VAULT_MASTER_KEY=$$KEY"                                                                                                                                 > .env; \
+	    echo "VAULT_ADDR=$(VAULT_ADDR)"                                                                                                                              >> .env; \
+	    echo "POSTGRES_PORT=$(POSTGRES_PORT)"                                                                                                                        >> .env; \
+	    echo "VAULT_ADMIN_DB_PASSWORD=changeme"                                                                                                                      >> .env; \
+	    echo "VAULT_DB_PASSWORD=changeme"                                                                                                                            >> .env; \
+	    echo "VAULT_ADMIN_DATABASE_URL=postgres://$${VAULT_ADMIN_DB_USERNAME:-vault_admin}:changeme@db.localhost:$(POSTGRES_PORT)/vault?sslmode=disable"             >> .env; \
+	    echo "VAULT_DATABASE_URL=postgres://$${VAULT_DB_USERNAME:-vault_app}:changeme@db.localhost:$(POSTGRES_PORT)/vault?sslmode=disable"                          >> .env; \
+	    echo "AUDIT_DB_PORT=$(AUDIT_DB_PORT)"                                                                                                                        >> .env; \
+	    echo "VAULT_AUDIT_DB_PASSWORD=changeme"                                                                                                                      >> .env; \
+	    echo "VAULT_AUDIT_DATABASE_URL=postgres://$${VAULT_AUDIT_DB_USERNAME:-vault_audit}:changeme@audit-db.localhost:$(AUDIT_DB_PORT)/vault_audit?sslmode=disable" >> .env; \
+	    echo "NATS_PORT=$(NATS_PORT)"                                                                                                                                >> .env; \
+	    echo "VAULT_NATS_URL=nats://nats.localhost:$(NATS_PORT)"                                                                                                     >> .env; \
+	    echo "VAULT_AUDIT_NATS_URL=nats://nats.localhost:$(NATS_PORT)"                                                                                               >> .env; \
+	    echo "VAULT_ALLOW_REGISTRATION=true"                                                                                                                         >> .env; \
+	    echo ""                                                                                                                                                     >> .env; \
+	    echo "# OIDC SSO via auth — paste CLIENT_ID/SECRET from \`authd\`'s /admin/clients (POST) or"                                                               >> .env; \
+	    echo "# /portal/admin/clients/new. Leave both blank to keep OIDC disabled. When CLIENT_ID is"                                                               >> .env; \
+	    echo "# set, run-mtls auto-defaults VAULT_OIDC_ISSUER + VAULT_OIDC_REDIRECT_URI to the values"                                                              >> .env; \
+	    echo "# below — override here if your auth/vault hosts/ports differ."                                                                                      >> .env; \
+	    echo "VAULT_OIDC_CLIENT_ID="                                                                                                                                 >> .env; \
+	    echo "VAULT_OIDC_CLIENT_SECRET="                                                                                                                             >> .env; \
+	    echo "# VAULT_OIDC_ISSUER=https://auth.localhost:8443"                                                                                                       >> .env; \
+	    echo "# VAULT_OIDC_REDIRECT_URI=https://vault.localhost:8443/api/v1/auth/oidc/callback"                                                                      >> .env; \
+	    echo "VAULT_OIDC_ENFORCE=false"                                                                                                                              >> .env; \
 	    echo "  generated .env"; \
 	fi
 
-# Push local postgres/ scripts into shared-data:/shared/pg-scripts (no bind mount needed).
+# Push local postgres/ scripts into shared_data:/shared/pg-scripts (no bind mount needed).
 # Re-runs on every invoke so changes to init scripts are always picked up.
 _sync-pg-scripts:
 	@docker volume create $(SHARED_VOLUME) 2>&1 >/dev/null || true
 	@tar -cf - -C postgres . | docker run --rm -i -v $(SHARED_VOLUME):/shared alpine:3.21 sh -c "mkdir -p /shared/pg-scripts && tar -xf - -C /shared/pg-scripts && chmod +x /shared/pg-scripts/*.sh"
 
 # Generate leaf certs if absent, then push local certs/ + mkcert's root CA
-# into shared-data:/shared/certs (root CA staged as ca.crt for compose mounts;
+# into shared_data:/shared/certs (root CA staged as ca.crt for compose mounts;
 # removed locally after the volume copy so certs/ stays free of the CA).
 _sync-certs:
 	@if [ ! -f certs/vaultd-server.crt ]; then bash certs/gen.sh; fi
@@ -186,10 +186,11 @@ run-mtls: _gen-env _sync-pg-scripts _sync-certs
 	    VAULT_DB_CERT=certs/vaultd-app-db-client.crt \
 	    VAULT_DB_KEY=certs/vaultd-app-db-client.key \
 	    VAULT_DB_CA=$$CA_PEM \
-	    VAULT_DATABASE_URL=postgres://$${VAULT_APP_USERNAME:-vault_app}@db.localhost:$(POSTGRES_PORT)/vault?sslmode=verify-full \
+	    VAULT_DATABASE_URL=postgres://$${VAULT_DB_USERNAME:-vault_app}@db.localhost:$(POSTGRES_PORT)/vault?sslmode=verify-full \
 	    VAULT_NATS_CERT=certs/vaultd-nats-client.crt \
 	    VAULT_NATS_KEY=certs/vaultd-nats-client.key \
 	    VAULT_NATS_CA=$$CA_PEM \
+	    VAULT_NATS_URL=tls://nats.localhost:$(NATS_PORT) \
 	    VAULT_SCIM_MTLS_CA=$$CA_PEM \
 	    VAULT_SCIM_MTLS_SAN_DNS=$${VAULT_SCIM_MTLS_SAN_DNS:-auth.localhost} \
 	    $(VAULTD_BIN)
@@ -204,13 +205,14 @@ run-audit-mtls: build-audit _gen-env _sync-pg-scripts _sync-certs
 	@docker compose -f docker-compose.yml -f docker-compose.mtls.yml up -d nats audit-db --wait 2>/dev/null || true
 	@CA_PEM=$$(mkcert -CAROOT)/rootCA.pem; \
 	    export $$(grep -v '^#' .env | xargs) && \
-	    VAULT_AUDIT_NATS_CERT=certs/vault-audit-nats-client.crt \
-	    VAULT_AUDIT_NATS_KEY=certs/vault-audit-nats-client.key \
-	    VAULT_AUDIT_NATS_CA=$$CA_PEM \
 	    VAULT_AUDIT_DB_CERT=certs/vault-audit-db-client.crt \
 	    VAULT_AUDIT_DB_KEY=certs/vault-audit-db-client.key \
 	    VAULT_AUDIT_DB_CA=$$CA_PEM \
-	    VAULT_AUDIT_DATABASE_URL=postgres://$${VAULT_AUDIT_USERNAME:-vault_audit}@audit-db.localhost:$(AUDIT_DB_PORT)/vault_audit?sslmode=verify-full \
+	    VAULT_AUDIT_DATABASE_URL=postgres://$${VAULT_AUDIT_DB_USERNAME:-vault_audit}@audit-db.localhost:$(AUDIT_DB_PORT)/vault_audit?sslmode=verify-full \
+	    VAULT_AUDIT_NATS_CERT=certs/vault-audit-nats-client.crt \
+	    VAULT_AUDIT_NATS_KEY=certs/vault-audit-nats-client.key \
+	    VAULT_AUDIT_NATS_CA=$$CA_PEM \
+	    VAULT_AUDIT_NATS_URL=tls://nats.localhost:$(NATS_PORT) \
 	    $(AUDIT_BIN) consume
 
 ## keygen: Print a fresh random master key
@@ -288,7 +290,7 @@ docker-up-mtls: _sync-pg-scripts _sync-certs
 docker-down:
 	docker compose -f docker-compose.yml -f docker-compose.mtls.yml down
 
-## docker-down-all: Stop services AND remove named volumes (db, audit-db, NATS, shared-data)
+## docker-down-all: Stop services AND remove named volumes (db, audit-db, NATS, shared_data)
 docker-down-all:
 	docker compose -f docker-compose.yml -f docker-compose.mtls.yml down -v --remove-orphans
 

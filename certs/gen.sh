@@ -18,7 +18,7 @@ set -euo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # Load .env from the repo root if present — mirrors docker compose behaviour so
-# VAULT_ADMIN_DB_USERNAME / VAULT_APP_USERNAME / VAULT_AUDIT_USERNAME stay in sync with the DSNs.
+# VAULT_ADMIN_DB_USERNAME / VAULT_DB_USERNAME / VAULT_AUDIT_DB_USERNAME stay in sync with the DSNs.
 REPO_ROOT="$(cd "$DIR/.." && pwd)"
 if [[ -f "$REPO_ROOT/.env" ]]; then
   set -a
@@ -27,8 +27,8 @@ if [[ -f "$REPO_ROOT/.env" ]]; then
   set +a
 fi
 ADMIN_USERNAME="${VAULT_ADMIN_DB_USERNAME:-vault_admin}"
-APP_USERNAME="${VAULT_APP_USERNAME:-vault_app}"
-AUDIT_USERNAME="${VAULT_AUDIT_USERNAME:-vault_audit}"
+APP_USERNAME="${VAULT_DB_USERNAME:-vault_app}"
+AUDIT_USERNAME="${VAULT_AUDIT_DB_USERNAME:-vault_audit}"
 
 step() { printf '  %-34s' "$1..."; }
 ok()   { echo "ok"; }

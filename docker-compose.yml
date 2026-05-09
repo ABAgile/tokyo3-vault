@@ -7,15 +7,15 @@
 #   VAULT_AUDIT_DB_CERT / VAULT_AUDIT_DB_KEY / VAULT_AUDIT_DB_CA  (audit DB mTLS)
 #
 # Required env vars (set in shell or .env file):
-#   VAULT_MASTER_KEY         64-char hex key  (vault keygen)
-#   VAULT_ADMIN_PASSWORD     main vault DB admin password (DDL owner, runs migrations)
-#   VAULT_APP_PASSWORD       main vault DB app password (DML-only)
-#   VAULT_AUDIT_PASSWORD     audit DB password (audit owner)
+#   VAULT_MASTER_KEY            64-char hex key  (vault keygen)
+#   VAULT_ADMIN_DB_PASSWORD     main vault DB admin password (DDL owner, runs migrations)
+#   VAULT_DB_PASSWORD           main vault DB app password (DML-only)
+#   VAULT_AUDIT_DB_PASSWORD     audit DB password (audit owner)
 #
 # Optional (usernames default to vault_admin / vault_app / vault_audit):
 #   VAULT_ADMIN_DB_USERNAME  main vault DB admin username (default: vault_admin)
-#   VAULT_APP_USERNAME       main vault DB app username   (default: vault_app)
-#   VAULT_AUDIT_USERNAME     audit DB username            (default: vault_audit)
+#   VAULT_DB_USERNAME        main vault DB app username   (default: vault_app)
+#   VAULT_AUDIT_DB_USERNAME  audit DB username            (default: vault_audit)
 #
 # Note: DB credentials and usernames above are only applied on first startup when
 # the data volume is empty (postgres initdb). Changing them after the volume is
@@ -36,13 +36,13 @@ services:
     environment:
       PG_INIT_SCRIPT:     /shared/pg-scripts/db-init.sh
       POSTGRES_USER:      ${VAULT_ADMIN_DB_USERNAME:-vault_admin}
-      POSTGRES_PASSWORD:  ${VAULT_ADMIN_PASSWORD:?VAULT_ADMIN_PASSWORD is required}
+      POSTGRES_PASSWORD:  ${VAULT_ADMIN_DB_PASSWORD:?VAULT_ADMIN_DB_PASSWORD is required}
       POSTGRES_DB:        vault
-      VAULT_APP_USERNAME: ${VAULT_APP_USERNAME:-vault_app}
-      VAULT_APP_PASSWORD: ${VAULT_APP_PASSWORD:?VAULT_APP_PASSWORD is required}
+      VAULT_DB_USERNAME: ${VAULT_DB_USERNAME:-vault_app}
+      VAULT_DB_PASSWORD: ${VAULT_DB_PASSWORD:?VAULT_DB_PASSWORD is required}
     volumes:
-      - shared-data:/shared:ro
-      - db-data:/var/lib/postgresql/data
+      - shared_data:/shared:ro
+      - db_data:/var/lib/postgresql/data
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${VAULT_ADMIN_DB_USERNAME:-vault_admin} -d vault"]
@@ -58,15 +58,15 @@ services:
       - "${AUDIT_DB_PORT:-5434}:5432"
     environment:
       PG_INIT_SCRIPT:    /shared/pg-scripts/audit-db-init.sh
-      POSTGRES_USER:     ${VAULT_AUDIT_USERNAME:-vault_audit}
-      POSTGRES_PASSWORD: ${VAULT_AUDIT_PASSWORD:?VAULT_AUDIT_PASSWORD is required}
+      POSTGRES_USER:     ${VAULT_AUDIT_DB_USERNAME:-vault_audit}
+      POSTGRES_PASSWORD: ${VAULT_AUDIT_DB_PASSWORD:?VAULT_AUDIT_DB_PASSWORD is required}
       POSTGRES_DB:       vault_audit
     volumes:
-      - shared-data:/shared:ro
-      - audit-db-data:/var/lib/postgresql/data
+      - shared_data:/shared:ro
+      - audit_db_data:/var/lib/postgresql/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${VAULT_AUDIT_USERNAME:-vault_audit} -d vault_audit"]
+      test: ["CMD-SHELL", "pg_isready -U ${VAULT_AUDIT_DB_USERNAME:-vault_audit} -d vault_audit"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -78,7 +78,7 @@ services:
     ports:
       - "${NATS_PORT:-4222}:4222"
     volumes:
-      - nats-data:/data
+      - nats_data:/data
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8222/healthz"]
@@ -136,9 +136,9 @@ services:
     environment:
       VAULT_MASTER_KEY:         ${VAULT_MASTER_KEY:?VAULT_MASTER_KEY is required}
       # Admin DSN: schema migration only (DDL privileges).
-      VAULT_ADMIN_DATABASE_URL: postgres://${VAULT_ADMIN_DB_USERNAME:-vault_admin}:${VAULT_ADMIN_PASSWORD}@db:5432/vault?sslmode=disable
+      VAULT_ADMIN_DATABASE_URL: postgres://${VAULT_ADMIN_DB_USERNAME:-vault_admin}:${VAULT_ADMIN_DB_PASSWORD}@db:5432/vault?sslmode=disable
       # Runtime DSN: DML-only after schema is in place.
-      VAULT_DATABASE_URL:       postgres://${VAULT_APP_USERNAME:-vault_app}:${VAULT_APP_PASSWORD}@db:5432/vault?sslmode=disable
+      VAULT_DATABASE_URL:       postgres://${VAULT_DB_USERNAME:-vault_app}:${VAULT_DB_PASSWORD}@db:5432/vault?sslmode=disable
       VAULT_ADDR:               :443
       # Audit sink: publish events to NATS JetStream (fail-closed).
       VAULT_NATS_URL:           nats://nats:4222
@@ -164,7 +164,7 @@ services:
     environment:
       VAULT_AUDIT_NATS_URL:      nats://nats:4222
       # Single DSN: vault_audit owner has DDL + INSERT + SELECT rights.
-      VAULT_AUDIT_DATABASE_URL:  postgres://${VAULT_AUDIT_USERNAME:-vault_audit}:${VAULT_AUDIT_PASSWORD}@audit-db:5432/vault_audit?sslmode=disable
+      VAULT_AUDIT_DATABASE_URL:  postgres://${VAULT_AUDIT_DB_USERNAME:-vault_audit}:${VAULT_AUDIT_DB_PASSWORD}@audit-db:5432/vault_audit?sslmode=disable
     depends_on:
       audit-db:
         condition: service_healthy
@@ -175,7 +175,7 @@ services:
     restart: unless-stopped
 
 volumes:
-  shared-data:
-  db-data:
-  audit-db-data:
-  nats-data:
+  shared_data:
+  db_data:
+  audit_db_data:
+  nats_data:

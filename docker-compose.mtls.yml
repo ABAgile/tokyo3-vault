@@ -9,7 +9,7 @@
 #
 # Prerequisites:
 #   1. make docker-up-mtls        # auto-generates leaf certs (signed by mkcert's
-#                                 # root) and populates shared-data volume.
+#                                 # root) and populates shared_data volume.
 #                                 # The root CA is mkcert's, kept at $(mkcert -CAROOT)
 #                                 # — _sync-certs stages it into /shared/certs/ca.crt
 #                                 # for the mounts referenced below.
@@ -21,15 +21,15 @@
 #   pg_hba_cert.conf replaces the default pg_hba.conf. All TCP connections must
 #   use TLS with a client cert whose CN matches the connecting role name:
 #     vaultd-admin-db-client.crt  CN=${VAULT_ADMIN_DB_USERNAME:-vault_admin}  → VAULT_ADMIN_DATABASE_URL
-#     vaultd-app-db-client.crt    CN=${VAULT_APP_USERNAME:-vault_app}          → VAULT_DATABASE_URL
-#     vault-audit-db-client.crt   CN=${VAULT_AUDIT_USERNAME:-vault_audit}      → VAULT_AUDIT_DATABASE_URL
-#   If any username env var is changed from its default, remove the shared-data
+#     vaultd-app-db-client.crt    CN=${VAULT_DB_USERNAME:-vault_app}          → VAULT_DATABASE_URL
+#     vault-audit-db-client.crt   CN=${VAULT_AUDIT_DB_USERNAME:-vault_audit}  → VAULT_AUDIT_DATABASE_URL
+#   If any username env var is changed from its default, remove the shared_data
 #   volume and re-run to regenerate certs with the correct CNs.
 
 services:
 
   # ── Main vault database: enable server TLS + cert auth ────────────────────
-  # shared-data:/shared is already mounted by the base file (for pg-scripts).
+  # shared_data:/shared is already mounted by the base file (for pg-scripts).
   db:
     environment:
       POSTGRES_SSL_CERT: /shared/certs/db-server.crt
@@ -37,7 +37,7 @@ services:
       POSTGRES_SSL_CA:   /shared/certs/ca.crt
 
   # ── Audit database: enable server TLS + cert auth ─────────────────────────
-  # shared-data:/shared is already mounted by the base file (for pg-scripts).
+  # shared_data:/shared is already mounted by the base file (for pg-scripts).
   audit-db:
     environment:
       POSTGRES_SSL_CERT: /shared/certs/audit-db-server.crt
@@ -57,7 +57,7 @@ services:
       - "-m"
       - "8222"
     volumes:
-      - shared-data:/shared:ro
+      - shared_data:/shared:ro
 
   # ── nats-box: TLS context + stream provisioner ────────────────────────────
   # Reuses vault-audit-nats-client.crt for both stream provisioning and
@@ -88,38 +88,41 @@ services:
             --defaults
         exec tail -f /dev/null
     volumes:
-      - shared-data:/shared:ro
+      - shared_data:/shared:ro
 
   # ── vaultd: HTTPS + mTLS certs for NATS and Postgres ─────────────────────
   vaultd:
     environment:
       VAULT_API_CERT:           /shared/certs/vaultd-server.crt
       VAULT_API_KEY:            /shared/certs/vaultd-server.key
-      VAULT_NATS_CERT:          /shared/certs/vaultd-nats-client.crt
-      VAULT_NATS_KEY:           /shared/certs/vaultd-nats-client.key
-      VAULT_NATS_CA:            /shared/certs/ca.crt
       VAULT_ADMIN_DB_CERT:      /shared/certs/vaultd-admin-db-client.crt
       VAULT_ADMIN_DB_KEY:       /shared/certs/vaultd-admin-db-client.key
       VAULT_ADMIN_DB_CA:        /shared/certs/ca.crt
+      # Cert auth: no password; cert CN authenticates the role.
+      VAULT_ADMIN_DATABASE_URL: postgres://${VAULT_ADMIN_DB_USERNAME:-vault_admin}@db:5432/vault?sslmode=verify-full
       VAULT_DB_CERT:            /shared/certs/vaultd-app-db-client.crt
       VAULT_DB_KEY:             /shared/certs/vaultd-app-db-client.key
       VAULT_DB_CA:              /shared/certs/ca.crt
       # Cert auth: no password; cert CN authenticates the role.
-      VAULT_ADMIN_DATABASE_URL: postgres://${VAULT_ADMIN_DB_USERNAME:-vault_admin}@db:5432/vault?sslmode=verify-full
-      VAULT_DATABASE_URL:       postgres://${VAULT_APP_USERNAME:-vault_app}@db:5432/vault?sslmode=verify-full
+      VAULT_DATABASE_URL:       postgres://${VAULT_DB_USERNAME:-vault_app}@db:5432/vault?sslmode=verify-full
+      VAULT_NATS_CERT:          /shared/certs/vaultd-nats-client.crt
+      VAULT_NATS_KEY:           /shared/certs/vaultd-nats-client.key
+      VAULT_NATS_CA:            /shared/certs/ca.crt
+      VAULT_NATS_URL:           tls://nats:4222
     volumes:
-      - shared-data:/shared:ro
+      - shared_data:/shared:ro
 
   # ── vault-audit: mTLS certs for NATS and audit DB ─────────────────────────
   vault-audit:
     environment:
-      VAULT_AUDIT_NATS_CERT:    /shared/certs/vault-audit-nats-client.crt
-      VAULT_AUDIT_NATS_KEY:     /shared/certs/vault-audit-nats-client.key
-      VAULT_AUDIT_NATS_CA:      /shared/certs/ca.crt
       VAULT_AUDIT_DB_CERT:      /shared/certs/vault-audit-db-client.crt
       VAULT_AUDIT_DB_KEY:       /shared/certs/vault-audit-db-client.key
       VAULT_AUDIT_DB_CA:        /shared/certs/ca.crt
       # Cert auth: no password; cert CN authenticates the role.
-      VAULT_AUDIT_DATABASE_URL: postgres://${VAULT_AUDIT_USERNAME:-vault_audit}@audit-db:5432/vault_audit?sslmode=verify-full
+      VAULT_AUDIT_DATABASE_URL: postgres://${VAULT_AUDIT_DB_USERNAME:-vault_audit}@audit-db:5432/vault_audit?sslmode=verify-full
+      VAULT_AUDIT_NATS_CERT:    /shared/certs/vault-audit-nats-client.crt
+      VAULT_AUDIT_NATS_KEY:     /shared/certs/vault-audit-nats-client.key
+      VAULT_AUDIT_NATS_CA:      /shared/certs/ca.crt
+      VAULT_AUDIT_NATS_URL:     tls://nats:4222
     volumes:
-      - shared-data:/shared:ro
+      - shared_data:/shared:ro
