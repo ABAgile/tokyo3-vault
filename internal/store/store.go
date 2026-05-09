@@ -83,22 +83,41 @@ type ProjectStore interface {
 	ListProjectsByMember(ctx context.Context, userID string) ([]*model.Project, error)
 	DeleteProject(ctx context.Context, slug string) error
 
-	// AddProjectMember upserts a project-level (envID nil) or env-specific (envID non-nil) membership.
+	// AddProjectMember upserts the admin-managed (source_scim_external_id IS NULL)
+	// row at the project level (envID nil) or env-specific level (envID non-nil).
+	// Use UpsertSCIMProjectMember for SCIM-sourced rows.
 	AddProjectMember(ctx context.Context, projectID, userID, role string, envID *string) error
-	// GetProjectMember returns the project-level (env_id IS NULL) membership row only.
-	// Used for owner checks and unscoped auth. Returns ErrNotFound if absent.
+	// GetProjectMember returns the highest-role project-level (env_id IS NULL)
+	// membership row across all provenance sources (admin + each SCIM group),
+	// max-merging the role rank. Used for project-wide checks (requireOwner,
+	// requireWrite with envID="", and unscoped authorize). Returns ErrNotFound
+	// if no row exists.
 	GetProjectMember(ctx context.Context, projectID, userID string) (*model.ProjectMember, error)
-	// GetProjectMemberForEnv returns the most-specific membership for a user in a given
-	// project+env: env-specific row (env_id = envID) preferred over project-level (env_id IS NULL).
-	// Returns ErrNotFound if neither exists.
+	// GetProjectMemberForEnv returns the most-specific, highest-role membership
+	// for a user in a given project+env: env-specific row preferred over
+	// project-level, then max-merged across provenance sources within the
+	// chosen layer. Returns ErrNotFound if neither layer has a row.
 	GetProjectMemberForEnv(ctx context.Context, projectID, envID, userID string) (*model.ProjectMember, error)
-	// ListProjectMembers returns all membership rows for a project (project-level and env-level).
+	// ListProjectMembers returns every membership row for a project — both
+	// admin-added (source NULL) and SCIM-sourced rows; multiple rows per user
+	// are possible. Callers that want effective roles must aggregate.
 	ListProjectMembers(ctx context.Context, projectID string) ([]*model.ProjectMember, error)
-	// ListProjectMembersWithAccess returns membership rows that grant access to the given
-	// project+env: project-level rows (env_id IS NULL) and env-specific rows for this env.
+	// ListProjectMembersWithAccess returns membership rows that grant access to
+	// the given project+env (project-level rows + env-specific rows for envID),
+	// across all provenance sources. Multiple rows per user are possible.
 	ListProjectMembersWithAccess(ctx context.Context, projectID, envID string) ([]*model.ProjectMember, error)
+	// UpdateProjectMember updates only the admin row (source_scim_external_id IS NULL).
 	UpdateProjectMember(ctx context.Context, projectID, userID, role string, envID *string) error
+	// RemoveProjectMember removes only the admin row (source_scim_external_id IS NULL).
 	RemoveProjectMember(ctx context.Context, projectID, userID string, envID *string) error
+	// UpsertSCIMProjectMember inserts or updates a SCIM-sourced row keyed by
+	// (project, user, env, scimExternalID). One row per source group; coexists
+	// with admin rows and with rows from other groups.
+	UpsertSCIMProjectMember(ctx context.Context, scimExternalID, projectID, userID, role string, envID *string) error
+	// RemoveSCIMProjectMembersExcept deletes every row produced by the given
+	// scimExternalID that targets (projectID, envID) except those for users
+	// in keepUserIDs. Used by diff-based PUT sync to drop leavers.
+	RemoveSCIMProjectMembersExcept(ctx context.Context, scimExternalID, projectID string, envID *string, keepUserIDs []string) error
 
 	CreateEnvironment(ctx context.Context, projectID, name, slug string) (*model.Environment, error)
 	GetEnvironment(ctx context.Context, projectID, slug string) (*model.Environment, error)

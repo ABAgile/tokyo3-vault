@@ -311,6 +311,96 @@ func TestProjectMembers_CRUD(t *testing.T) {
 	}
 }
 
+// Asserts the SCIM-sourced provenance path: UpsertSCIMProjectMember coexists
+// with admin rows, multiple SCIM groups produce distinct rows, max-merge
+// returns the highest role, RemoveSCIMProjectMembersExcept drops only the
+// matching source group's leavers, and the admin Update/Remove path leaves
+// SCIM rows untouched.
+func TestProjectMembers_SCIMProvenance(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	u, _ := db.CreateUser(ctx, "scim@example.com", "h", model.UserRoleMember)
+	u2, _ := db.CreateUser(ctx, "scim2@example.com", "h", model.UserRoleMember)
+	p, _ := db.CreateProject(ctx, "SCIM App", "scim-app")
+
+	// Two distinct SCIM groups grant overlapping access.
+	if err := db.UpsertSCIMProjectMember(ctx, "grp-a", p.ID, u.ID, model.RoleViewer, nil); err != nil {
+		t.Fatalf("UpsertSCIMProjectMember grp-a: %v", err)
+	}
+	if err := db.UpsertSCIMProjectMember(ctx, "grp-b", p.ID, u.ID, model.RoleEditor, nil); err != nil {
+		t.Fatalf("UpsertSCIMProjectMember grp-b: %v", err)
+	}
+	// Plus an admin row at viewer.
+	if err := db.AddProjectMember(ctx, p.ID, u.ID, model.RoleViewer, nil); err != nil {
+		t.Fatalf("AddProjectMember: %v", err)
+	}
+
+	// Max-merge: editor (from grp-b) wins.
+	got, err := db.GetProjectMember(ctx, p.ID, u.ID)
+	if err != nil {
+		t.Fatalf("GetProjectMember: %v", err)
+	}
+	if got.Role != model.RoleEditor {
+		t.Errorf("max-merge role = %q, want %q", got.Role, model.RoleEditor)
+	}
+
+	// ListProjectMembers returns all three rows.
+	all, _ := db.ListProjectMembers(ctx, p.ID)
+	if len(all) != 3 {
+		t.Errorf("ListProjectMembers len = %d, want 3", len(all))
+	}
+
+	// UpsertSCIMProjectMember is idempotent on (project, user, source).
+	if err := db.UpsertSCIMProjectMember(ctx, "grp-a", p.ID, u.ID, model.RoleOwner, nil); err != nil {
+		t.Fatalf("UpsertSCIMProjectMember idempotent: %v", err)
+	}
+	got, _ = db.GetProjectMember(ctx, p.ID, u.ID)
+	if got.Role != model.RoleOwner {
+		t.Errorf("after grp-a→owner upsert, max-merge role = %q, want owner", got.Role)
+	}
+
+	// Add a second user via grp-a to exercise the diff-delete.
+	if err := db.UpsertSCIMProjectMember(ctx, "grp-a", p.ID, u2.ID, model.RoleViewer, nil); err != nil {
+		t.Fatalf("UpsertSCIMProjectMember u2: %v", err)
+	}
+
+	// Diff: drop u from grp-a (keep only u2).
+	if err := db.RemoveSCIMProjectMembersExcept(ctx, "grp-a", p.ID, nil, []string{u2.ID}); err != nil {
+		t.Fatalf("RemoveSCIMProjectMembersExcept: %v", err)
+	}
+	all, _ = db.ListProjectMembers(ctx, p.ID)
+	// Surviving: admin row for u, grp-b row for u, grp-a row for u2 = 3.
+	if len(all) != 3 {
+		t.Errorf("after diff, ListProjectMembers len = %d, want 3", len(all))
+	}
+	// u still has access via grp-b (editor); admin path is viewer.
+	got, _ = db.GetProjectMember(ctx, p.ID, u.ID)
+	if got.Role != model.RoleEditor {
+		t.Errorf("after grp-a leaver removal, u max-merge = %q, want editor (grp-b survives)", got.Role)
+	}
+
+	// Admin RemoveProjectMember does NOT touch SCIM rows.
+	if err := db.RemoveProjectMember(ctx, p.ID, u.ID, nil); err != nil {
+		t.Fatalf("RemoveProjectMember admin: %v", err)
+	}
+	got, err = db.GetProjectMember(ctx, p.ID, u.ID)
+	if err != nil {
+		t.Fatalf("after admin remove, u still has SCIM row: %v", err)
+	}
+	if got.Role != model.RoleEditor {
+		t.Errorf("after admin remove, u max-merge = %q, want editor", got.Role)
+	}
+
+	// Drop the source-group rows entirely (empty keep list).
+	if err := db.RemoveSCIMProjectMembersExcept(ctx, "grp-b", p.ID, nil, nil); err != nil {
+		t.Fatalf("RemoveSCIMProjectMembersExcept empty keep: %v", err)
+	}
+	if _, err := db.GetProjectMember(ctx, p.ID, u.ID); err != store.ErrNotFound {
+		t.Errorf("after grp-b cleared, u remains: err = %v, want ErrNotFound", err)
+	}
+}
+
 // ── Environments ──────────────────────────────────────────────────────────────
 
 func TestEnvironments_CRUD(t *testing.T) {

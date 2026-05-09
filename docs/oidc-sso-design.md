@@ -78,7 +78,7 @@ CREATE TABLE scim_group_roles (
 );
 ```
 
-`active = false` means deprovisioned by SCIM. All existing tokens are deleted when a user is deactivated; new logins are blocked. `scim_group_roles` maps the IdP's `scim_external_id` (the SCIM group's stable upstream ID) to vault project roles and drives automatic project membership on SCIM group sync.
+`active = false` means deprovisioned by SCIM. All existing tokens are deleted when a user is deactivated; new logins are blocked. `scim_group_roles` maps the IdP's `scim_external_id` (the SCIM group's stable upstream ID) to vault project roles. SCIM group sync then upserts/diffs `project_members` rows tagged with `source_scim_external_id` for provenance, so PUT-style replacement removes only that source group's grants and overlapping grants from other groups (or admin rows) survive.
 
 ---
 

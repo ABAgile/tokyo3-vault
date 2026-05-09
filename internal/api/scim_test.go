@@ -1278,7 +1278,7 @@ func TestSyncGroupMembers(t *testing.T) {
 	}{
 		{Value: "u1"},
 	}
-	if err := srv.syncGroupMembers(r, "g1", "Eng", members); err != nil {
+	if err := srv.syncGroupMembers(r, "g1", "Eng", members, true); err != nil {
 		t.Errorf("syncGroupMembers: %v", err)
 	}
 }
@@ -1298,7 +1298,7 @@ func TestSyncGroupMembers_WithRoles(t *testing.T) {
 	}{
 		{Value: "u1"},
 	}
-	if err := srv.syncGroupMembers(r, "g1", "Eng", members); err != nil {
+	if err := srv.syncGroupMembers(r, "g1", "Eng", members, true); err != nil {
 		t.Errorf("syncGroupMembers with roles: %v", err)
 	}
 }

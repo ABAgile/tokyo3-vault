@@ -1352,7 +1352,7 @@ func TestSyncGroupMembers_ListError(t *testing.T) {
 	members := []struct {
 		Value string `json:"value"`
 	}{{Value: "u1"}}
-	err := srv.syncGroupMembers(r, "g1", "Eng", members)
+	err := srv.syncGroupMembers(r, "g1", "Eng", members, true)
 	if err == nil {
 		t.Error("expected error from ListSCIMGroupRolesByExternalID failure")
 	}

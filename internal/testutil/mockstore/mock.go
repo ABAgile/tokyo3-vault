@@ -103,6 +103,12 @@ func (Stub) ListProjectMembersWithAccess(_ context.Context, _, _ string) ([]*mod
 }
 func (Stub) UpdateProjectMember(_ context.Context, _, _, _ string, _ *string) error { return nil }
 func (Stub) RemoveProjectMember(_ context.Context, _, _ string, _ *string) error    { return nil }
+func (Stub) UpsertSCIMProjectMember(_ context.Context, _, _, _, _ string, _ *string) error {
+	return nil
+}
+func (Stub) RemoveSCIMProjectMembersExcept(_ context.Context, _, _ string, _ *string, _ []string) error {
+	return nil
+}
 
 // ── Environments ──────────────────────────────────────────────────────────────
 

@@ -642,7 +642,7 @@ func (s *Server) handleSCIMCreateGroup(w http.ResponseWriter, r *http.Request) {
 	// syncGroupMembers is a no-op until an admin wires up a scim_group_roles
 	// row for this groupID via /portal/admin/scim-group-roles. Vault never
 	// auto-creates role mappings — the group→project/role policy is admin-owned.
-	if err := s.syncGroupMembers(r, groupID, req.DisplayName, req.Members); err != nil {
+	if err := s.syncGroupMembers(r, groupID, req.DisplayName, req.Members, true); err != nil {
 		writeSCIMError(w, http.StatusInternalServerError, "audit unavailable")
 		return
 	}
@@ -677,7 +677,7 @@ func (s *Server) handleSCIMReplaceGroup(w http.ResponseWriter, r *http.Request) 
 		writeSCIMError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	if err := s.syncGroupMembers(r, groupID, req.DisplayName, req.Members); err != nil {
+	if err := s.syncGroupMembers(r, groupID, req.DisplayName, req.Members, true); err != nil {
 		writeSCIMError(w, http.StatusInternalServerError, "audit unavailable")
 		return
 	}
@@ -729,7 +729,7 @@ func (s *Server) handleSCIMPatchGroup(w http.ResponseWriter, r *http.Request) {
 			// admins must clean up project_members manually if needed.
 		}
 	}
-	if err := s.syncGroupMembers(r, groupID, displayName, addedMembers); err != nil {
+	if err := s.syncGroupMembers(r, groupID, displayName, addedMembers, false); err != nil {
 		writeSCIMError(w, http.StatusInternalServerError, "audit unavailable")
 		return
 	}
@@ -777,24 +777,45 @@ func (s *Server) handleSCIMDeleteGroup(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// syncGroupMembers applies the project memberships implied by group→role mappings.
-// For each member in the group, any configured scim_group_roles row is used to
-// add the user to the corresponding vault project as the specified role.
+// syncGroupMembers reconciles project memberships against the desired member
+// set for a SCIM group, scoped by source (scim_external_id). For each
+// configured scim_group_roles row that maps this group to a (project, env, role):
+//
+//   - Each desired member is upserted as a SCIM-sourced project_members row.
+//   - When replace is true (PUT semantics), prior SCIM-sourced rows from this
+//     same source group whose user is no longer in the desired set are deleted,
+//     so removal-by-omission propagates. When replace is false (PATCH "add"
+//     semantics), only upserts happen — additive only.
+//
+// Members are scoped to this group's provenance, so admin-added rows and rows
+// from other SCIM groups are never touched. The effective role visible to
+// authorize/requireWrite is max-merged across all surviving rows.
 func (s *Server) syncGroupMembers(r *http.Request, scimExternalID, displayName string, members []struct {
 	Value string `json:"value"`
-}) error {
+}, replace bool) error {
 	roles, err := s.store.ListSCIMGroupRolesByExternalID(r.Context(), scimExternalID)
 	if err != nil {
 		s.log.Error("scim sync group members — list roles", "err", err)
 		return err
 	}
+	keep := make([]string, 0, len(members))
+	for _, m := range members {
+		if m.Value != "" {
+			keep = append(keep, m.Value)
+		}
+	}
 	for _, gr := range roles {
 		if gr.ProjectID == nil {
 			continue
 		}
-		for _, m := range members {
-			if addErr := s.store.AddProjectMember(r.Context(), *gr.ProjectID, m.Value, gr.Role, gr.EnvID); addErr != nil {
-				s.log.Warn("scim sync — add member", "user", m.Value, "project", *gr.ProjectID, "err", addErr)
+		for _, uid := range keep {
+			if err := s.store.UpsertSCIMProjectMember(r.Context(), scimExternalID, *gr.ProjectID, uid, gr.Role, gr.EnvID); err != nil {
+				s.log.Warn("scim sync — upsert member", "user", uid, "project", *gr.ProjectID, "err", err)
+			}
+		}
+		if replace {
+			if err := s.store.RemoveSCIMProjectMembersExcept(r.Context(), scimExternalID, *gr.ProjectID, gr.EnvID, keep); err != nil {
+				s.log.Warn("scim sync — remove leavers", "project", *gr.ProjectID, "err", err)
 			}
 		}
 	}

@@ -102,12 +102,20 @@ type Environment struct {
 // ProjectMember records a user's role in a project or a specific environment.
 // EnvID nil means project-level access (all environments). Non-nil means access
 // is scoped to that single environment only.
+//
+// SourceSCIMExternalID is the provenance of the row: nil for admin-added rows
+// (managed via /portal/admin/projects/{p}/members), non-nil when the row was
+// produced by SCIM group sync (the value is the source group's external ID).
+// Multiple rows may exist for the same (project, user [, env]) when several
+// SCIM groups grant overlapping access; the effective role is the max across
+// all matching rows.
 type ProjectMember struct {
-	ProjectID string
-	UserID    string
-	EnvID     *string // nil = project-level; non-nil = env-specific
-	Role      string  // RoleViewer | RoleEditor | RoleOwner
-	CreatedAt time.Time
+	ProjectID            string
+	UserID               string
+	EnvID                *string // nil = project-level; non-nil = env-specific
+	Role                 string  // RoleViewer | RoleEditor | RoleOwner
+	SourceSCIMExternalID *string // nil = admin-added; non-nil = SCIM group sync
+	CreatedAt            time.Time
 }
 
 // ── Secret types ─────────────────────────────────────────────────────────────

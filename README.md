@@ -1229,6 +1229,8 @@ By default, project membership grants access to **all** environments in the proj
 
 A user can hold both a project-level row and one or more env-specific rows in the same project. For any given environment, the most-specific row takes precedence — for **both reads and writes**: an env-scoped `editor` row grants writes inside that env even with no project-level row, and an env-scoped `viewer` row demotes a project-level `editor` to read-only inside that env. Operations that span environments (create env, delete env, member management, project key rotation, project deletion) are gated on the project-level row only — env-scoped roles do not unlock them.
 
+A user can also hold multiple rows for the same `(project, env)` from different provenance sources: one **admin row** (`source_scim_external_id IS NULL`, managed via the portal/API) plus one row per SCIM group that grants overlapping access (`source_scim_external_id` = the source group's external ID). The effective role is the **max** across these rows — granting the user the highest privilege any of them provides. Admin `Update`/`Remove` operations only affect the admin row; SCIM-sourced rows are reconciled by group sync. PUT-style SCIM Group syncs replace the member set scoped to that source group (removal-by-omission), so leaving an upstream group revokes that group's grant only — other rows survive.
+
 `owner` role cannot be env-scoped — project ownership is inherently project-wide. Use `vault access list --project <p> --env <e>` to see every identity (members, tokens, principals) with effective access to a specific environment.
 
 ---
