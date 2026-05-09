@@ -155,8 +155,20 @@ func (s *Server) jitProvision(r *http.Request, issuer, subject, email string) (*
 		return nil, err
 	}
 
-	// 3. New user — JIT provision with member role.
-	user, err = s.store.CreateOIDCUser(ctx, email, issuer, subject, model.UserRoleMember)
+	// 3. New user — JIT provision. First user (no admin in system) is
+	// promoted to admin so OIDC-only deployments can still bootstrap an
+	// admin without depending on /auth/signup or SCIM. Mirrors the rule in
+	// handleSignup, portal register, and handleSCIMCreateUser.
+	role := model.UserRoleMember
+	hasAdmin, err := s.store.HasAdminUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !hasAdmin {
+		role = model.UserRoleAdmin
+		s.log.Warn("oidc jit bootstrap: promoting first user to admin", "email", email)
+	}
+	user, err = s.store.CreateOIDCUser(ctx, email, issuer, subject, role)
 	if err != nil {
 		return nil, err
 	}
