@@ -23,13 +23,13 @@
 //
 // TLS (server always uses HTTPS):
 //
-//	VAULT_TLS_CERT        Path to server TLS certificate PEM (tbot: tls.crt).
+//	VAULT_API_CERT        Path to server TLS certificate PEM (tbot: tls.crt).
 //	                      Hot-reloaded on each handshake when the file changes.
-//	VAULT_TLS_KEY         Path to server TLS private key PEM (tbot: tls.key).
-//	                      Must be set when VAULT_TLS_CERT is set.
-//	                      If neither VAULT_TLS_CERT nor VAULT_TLS_KEY is set,
+//	VAULT_API_KEY         Path to server TLS private key PEM (tbot: tls.key).
+//	                      Must be set when VAULT_API_CERT is set.
+//	                      If neither VAULT_API_CERT nor VAULT_API_KEY is set,
 //	                      an ephemeral self-signed certificate is generated (dev only).
-//	VAULT_TLS_CLIENT_CA   Path to CA certificate PEM used to verify client certificates.
+//	VAULT_API_CLIENT_CA   Path to CA certificate PEM used to verify client certificates.
 //	                      When set, enables mTLS: clients may authenticate via SPIFFE cert
 //	                      instead of a Bearer token.
 //
@@ -38,7 +38,7 @@
 //
 //	VAULT_SCIM_MTLS_CA       Path to CA bundle PEM that signs the IdP's client
 //	                         cert. Merged into the same ClientCAs pool as
-//	                         VAULT_TLS_CLIENT_CA — either may be omitted.
+//	                         VAULT_API_CLIENT_CA — either may be omitted.
 //	VAULT_SCIM_MTLS_SAN_DNS  Comma-separated allow-list of DNS SANs that
 //	                         identify the IdP. Required alongside
 //	                         VAULT_SCIM_MTLS_CA. The peer cert's SAN must match
@@ -372,21 +372,21 @@ func runMigrateKeys(ctx context.Context, st store.Store, kp bcrypto.KeyProvider,
 
 // buildServerTLS constructs the server tls.Config.
 // Cert source priority:
-//  1. VAULT_TLS_CERT + VAULT_TLS_KEY files (tbot hot-reload via GetCertificate)
+//  1. VAULT_API_CERT + VAULT_API_KEY files (tbot hot-reload via GetCertificate)
 //  2. Auto-generated self-signed cert (dev fallback, logs a warning)
 //
-// Client-cert verification is enabled if VAULT_TLS_CLIENT_CA (general client
+// Client-cert verification is enabled if VAULT_API_CLIENT_CA (general client
 // auth) and/or VAULT_SCIM_MTLS_CA (IdP-only, for inbound SCIM) is set. Both
 // CAs are merged into the same ClientCAs pool — the per-route middleware then
 // decides which trust path is acceptable for that route.
 func buildServerTLS(log *slog.Logger) (*tls.Config, error) {
-	certFile := os.Getenv("VAULT_TLS_CERT")
-	keyFile := os.Getenv("VAULT_TLS_KEY")
-	clientCAFile := os.Getenv("VAULT_TLS_CLIENT_CA")
+	certFile := os.Getenv("VAULT_API_CERT")
+	keyFile := os.Getenv("VAULT_API_KEY")
+	clientCAFile := os.Getenv("VAULT_API_CLIENT_CA")
 	scimCAFile := os.Getenv("VAULT_SCIM_MTLS_CA")
 
 	if (certFile == "") != (keyFile == "") {
-		return nil, fmt.Errorf("VAULT_TLS_CERT and VAULT_TLS_KEY must both be set or both unset")
+		return nil, fmt.Errorf("VAULT_API_CERT and VAULT_API_KEY must both be set or both unset")
 	}
 
 	cfg := &tls.Config{}
@@ -409,10 +409,10 @@ func buildServerTLS(log *slog.Logger) (*tls.Config, error) {
 	if clientCAFile != "" {
 		data, err := os.ReadFile(clientCAFile)
 		if err != nil {
-			return nil, fmt.Errorf("read VAULT_TLS_CLIENT_CA: %w", err)
+			return nil, fmt.Errorf("read VAULT_API_CLIENT_CA: %w", err)
 		}
 		if !pool.AppendCertsFromPEM(data) {
-			return nil, fmt.Errorf("parse VAULT_TLS_CLIENT_CA: no valid certificates")
+			return nil, fmt.Errorf("parse VAULT_API_CLIENT_CA: no valid certificates")
 		}
 		hasCA = true
 		log.Info("TLS: client CA loaded for general mTLS", "ca", clientCAFile)

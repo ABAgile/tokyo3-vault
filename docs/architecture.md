@@ -182,9 +182,9 @@ Key relationships:
 | `VAULT_DATABASE_URL` | one of two | — | Postgres DSN (DML-only `vault_app` role) |
 | `VAULT_DB_PATH` | one of two | `vault.db` | SQLite file path |
 | `VAULT_ADDR` | no | `:8443` | Listen address |
-| `VAULT_TLS_CERT` | no | — | TLS certificate PEM (hot-reloaded) |
-| `VAULT_TLS_KEY` | no | — | TLS private key PEM |
-| `VAULT_TLS_CLIENT_CA` | no | — | CA PEM for mTLS client verification |
+| `VAULT_API_CERT` | no | — | TLS certificate PEM (hot-reloaded) |
+| `VAULT_API_KEY` | no | — | TLS private key PEM |
+| `VAULT_API_CLIENT_CA` | no | — | CA PEM for mTLS client verification |
 | `VAULT_DB_CERT` | no | — | Client cert for vault→Postgres TLS |
 | `VAULT_DB_KEY` | no | — | Client key for vault→Postgres TLS |
 | `VAULT_DB_CA` | no | — | CA cert to verify Postgres server |

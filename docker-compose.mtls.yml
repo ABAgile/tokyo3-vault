@@ -1,7 +1,7 @@
 # docker-compose.mtls.yml — mTLS overlay
 #
 # Enables TLS on all inter-service connections:
-#   vaultd HTTPS API        VAULT_TLS_CERT / VAULT_TLS_KEY
+#   vaultd HTTPS API        VAULT_API_CERT / VAULT_API_KEY
 #   NATS server TLS + mTLS  --tls / --tlsverify + client certs on both sides
 #   vaultd → postgres       client cert + cert auth (no password in DSN)
 #   vault-audit → NATS      client cert
@@ -93,8 +93,8 @@ services:
   # ── vaultd: HTTPS + mTLS certs for NATS and Postgres ─────────────────────
   vaultd:
     environment:
-      VAULT_TLS_CERT:           /shared/certs/vaultd-server.crt
-      VAULT_TLS_KEY:            /shared/certs/vaultd-server.key
+      VAULT_API_CERT:           /shared/certs/vaultd-server.crt
+      VAULT_API_KEY:            /shared/certs/vaultd-server.key
       VAULT_NATS_CERT:          /shared/certs/vaultd-nats-client.crt
       VAULT_NATS_KEY:           /shared/certs/vaultd-nats-client.key
       VAULT_NATS_CA:            /shared/certs/ca.crt

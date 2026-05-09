@@ -75,7 +75,7 @@ The ephemeral token carries the principal's `ProjectID`, `EnvID`, and `ReadOnly`
 
 `cert_principals.user_id` records who registered the mapping (the "registered by" user) but is not used for authorization decisions.
 
-Certificate chain verification is handled by Go's TLS stack. Set `VAULT_TLS_CLIENT_CA` to a CA PEM file to enable `tls.VerifyClientCertIfGiven`; without it, client certificates are not requested.
+Certificate chain verification is handled by Go's TLS stack. Set `VAULT_API_CLIENT_CA` to a CA PEM file to enable `tls.VerifyClientCertIfGiven`; without it, client certificates are not requested.
 
 ### Password security
 
@@ -283,8 +283,8 @@ The audit consumer uses `INSERT ... ON CONFLICT (id) DO NOTHING` so JetStream at
 
 - The server always uses HTTPS (`ListenAndServeTLS`).
 - If no cert files are configured, an ephemeral self-signed ECDSA P-256 certificate is generated — development only; a warning is logged.
-- When `VAULT_TLS_CERT` / `VAULT_TLS_KEY` are set, `CertLoader.GetCertificate` is used: the certificate is re-read from disk on each TLS handshake when the mtime changes. This supports cert rotation via `tbot` or any certificate manager without a server restart.
-- `VAULT_TLS_CLIENT_CA` enables `tls.VerifyClientCertIfGiven`: client certificates are optional but verified against the CA when present, enabling SPIFFE authentication for workloads that can present a cert.
+- When `VAULT_API_CERT` / `VAULT_API_KEY` are set, `CertLoader.GetCertificate` is used: the certificate is re-read from disk on each TLS handshake when the mtime changes. This supports cert rotation via `tbot` or any certificate manager without a server restart.
+- `VAULT_API_CLIENT_CA` enables `tls.VerifyClientCertIfGiven`: client certificates are optional but verified against the CA when present, enabling SPIFFE authentication for workloads that can present a cert.
 
 ### CLI TLS configuration
 

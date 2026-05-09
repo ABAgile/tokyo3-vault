@@ -176,9 +176,9 @@ run-mtls: _gen-env _sync-pg-scripts _sync-certs
 	        : "$${VAULT_OIDC_REDIRECT_URI:=https://vault.localhost:8443/api/v1/auth/oidc/callback}"; \
 	        export VAULT_OIDC_ISSUER VAULT_OIDC_REDIRECT_URI; \
 	    fi; \
-	    VAULT_TLS_CERT=certs/vaultd-server.crt \
-	    VAULT_TLS_KEY=certs/vaultd-server.key \
-	    VAULT_TLS_CLIENT_CA=$$CA_PEM \
+	    VAULT_API_CERT=certs/vaultd-server.crt \
+	    VAULT_API_KEY=certs/vaultd-server.key \
+	    VAULT_API_CLIENT_CA=$$CA_PEM \
 	    VAULT_ADMIN_DB_CERT=certs/vaultd-admin-db-client.crt \
 	    VAULT_ADMIN_DB_KEY=certs/vaultd-admin-db-client.key \
 	    VAULT_ADMIN_DB_CA=$$CA_PEM \

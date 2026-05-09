@@ -35,7 +35,7 @@ Two identifier types are supported:
   --spiffe-id  URI SAN with spiffe:// scheme (SPIFFE workload identity, e.g. from Teleport tbot)
   --email-san  Email SAN (rfc822Name) for human users with corporate PKI certificates
 
-When the vault server is configured with VAULT_TLS_CLIENT_CA, any client presenting
+When the vault server is configured with VAULT_API_CLIENT_CA, any client presenting
 a certificate signed by that CA whose SAN matches a registered principal is authorized
 without a bearer token. SPIFFE URI SANs are checked before email SANs.
 

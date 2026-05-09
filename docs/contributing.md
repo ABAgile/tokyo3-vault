@@ -170,8 +170,8 @@ VAULT_ADMIN_DATABASE_URL=postgres://vault_admin:<admin-pw>@db:5432/vault
 VAULT_DATABASE_URL=postgres://vault_app:<app-pw>@db:5432/vault
 
 # Server TLS
-VAULT_TLS_CERT=/etc/vault/tls.crt
-VAULT_TLS_KEY=/etc/vault/tls.key
+VAULT_API_CERT=/etc/vault/tls.crt
+VAULT_API_KEY=/etc/vault/tls.key
 
 # Audit sink (vaultd publisher)
 VAULT_NATS_URL=nats://nats:4222
@@ -205,9 +205,9 @@ VAULT_DB_KEY=/etc/vault/db-app.key
 VAULT_DB_CA=/etc/vault/db-ca.crt
 
 # Server TLS + optional inbound mTLS from workloads (enables SPIFFE auth)
-VAULT_TLS_CERT=/etc/vault/tls.crt
-VAULT_TLS_KEY=/etc/vault/tls.key
-VAULT_TLS_CLIENT_CA=/etc/vault/client-ca.crt
+VAULT_API_CERT=/etc/vault/tls.crt
+VAULT_API_KEY=/etc/vault/tls.key
+VAULT_API_CLIENT_CA=/etc/vault/client-ca.crt
 
 # Audit sink over mTLS
 VAULT_NATS_URL=tls://nats:4222
@@ -239,7 +239,7 @@ The audit DB is always Postgres in production (set `VAULT_AUDIT_DATABASE_URL`). 
 
 ### TLS certificate rotation
 
-When `VAULT_TLS_CERT` and `VAULT_TLS_KEY` are set, the server re-reads the files on each TLS handshake when the mtime changes. Update the files in-place (e.g. via `tbot` or `certbot`) and the new certificate takes effect on the next connection — no restart required.
+When `VAULT_API_CERT` and `VAULT_API_KEY` are set, the server re-reads the files on each TLS handshake when the mtime changes. Update the files in-place (e.g. via `tbot` or `certbot`) and the new certificate takes effect on the next connection — no restart required.
 
 ### KMS cost optimization
 

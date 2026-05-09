@@ -89,14 +89,14 @@ VAULT_MASTER_KEY=<key> VAULT_DB_PATH=vault.db vaultd
 VAULT_KMS_KEY_ID=<key-id-or-arn> VAULT_DATABASE_URL="postgres://user:pass@host/dbname" vaultd
 ```
 
-The server always uses HTTPS and listens on `:8443` by default. When no `VAULT_TLS_CERT`/`VAULT_TLS_KEY` are provided, a self-signed certificate is auto-generated — suitable for development with `vault login --server https://localhost:8443 --insecure`. Set `VAULT_ADDR` to change the listen address.
+The server always uses HTTPS and listens on `:8443` by default. When no `VAULT_API_CERT`/`VAULT_API_KEY` are provided, a self-signed certificate is auto-generated — suitable for development with `vault login --server https://vault.localhost:8443 --insecure`. Set `VAULT_ADDR` to change the listen address.
 
 ### 3. Create the first user
 
 The first account created on a fresh server is automatically promoted to server admin.
 
 ```sh
-vault signup --server https://localhost:8443
+vault signup --server https://vault.localhost:8443
 # prompts for email and password
 ```
 
@@ -108,15 +108,15 @@ Subsequent `vault signup` calls create regular member accounts.
 
 ```sh
 # Email/password
-vault login --server https://localhost:8443
+vault login --server https://vault.localhost:8443
 
 # Or via SSO if VAULT_OIDC_* is configured (auth, Authentik, Okta, ...):
-vault login --oidc --server https://localhost:8443
+vault login --oidc --server https://vault.localhost:8443
 # Opens the system browser, captures the session token via a loopback
 # listener on 127.0.0.1, persists to ~/.vault/config
 
 # Headless / SSH:
-vault login --oidc --manual --server https://localhost:8443
+vault login --oidc --manual --server https://vault.localhost:8443
 # Prints the authorization URL; paste the redirected URL back when prompted.
 ```
 
@@ -316,10 +316,10 @@ In local-key mode (`VAULT_MASTER_KEY` set), the master KEK doubles as the portal
 
 | Variable | Default | Description |
 |---|---|---|
-| `VAULT_TLS_CERT` | — | Path to PEM-encoded server certificate. If set, `VAULT_TLS_KEY` is also required. The cert is hot-reloaded per-handshake when the file changes, so certificate rotation (e.g. by a SPIFFE/SPIRE agent) never requires a restart. |
-| `VAULT_TLS_KEY` | — | Path to PEM-encoded private key paired with `VAULT_TLS_CERT`. |
-| `VAULT_TLS_CLIENT_CA` | — | Path to a PEM-encoded CA certificate. When set, the server requests a client certificate during the TLS handshake and verifies it against this CA. Used to enable SPIFFE/mTLS authentication (see [SPIFFE/mTLS Principals](#spiFFEmtls-principals)). |
-| `VAULT_SCIM_MTLS_CA` | — | Path to a PEM-encoded CA bundle for the IdP's client certificate (inbound SCIM). Merged into the same `ClientCAs` pool as `VAULT_TLS_CLIENT_CA`; either may be set independently. |
+| `VAULT_API_CERT` | — | Path to PEM-encoded server certificate. If set, `VAULT_API_KEY` is also required. The cert is hot-reloaded per-handshake when the file changes, so certificate rotation (e.g. by a SPIFFE/SPIRE agent) never requires a restart. |
+| `VAULT_API_KEY` | — | Path to PEM-encoded private key paired with `VAULT_API_CERT`. |
+| `VAULT_API_CLIENT_CA` | — | Path to a PEM-encoded CA certificate. When set, the server requests a client certificate during the TLS handshake and verifies it against this CA. Used to enable SPIFFE/mTLS authentication (see [SPIFFE/mTLS Principals](#spiFFEmtls-principals)). |
+| `VAULT_SCIM_MTLS_CA` | — | Path to a PEM-encoded CA bundle for the IdP's client certificate (inbound SCIM). Merged into the same `ClientCAs` pool as `VAULT_API_CLIENT_CA`; either may be set independently. |
 | `VAULT_SCIM_MTLS_SAN_DNS` | — | Comma-separated allow-list of DNS SANs that identify trusted IdPs for inbound SCIM. Required alongside `VAULT_SCIM_MTLS_CA`. The SCIM middleware accepts a peer cert whose DNS SAN matches one of these (case-insensitive) and skips the bearer-token check entirely — **no SCIM token mint needed**. CN is deliberately not consulted. Without these, inbound SCIM stays bearer-only. |
 
 **PostgreSQL TLS — client certificate auth for vault's own database connection:**
@@ -822,7 +822,7 @@ vault tokens delete <token-id>
 
 SPIFFE principals are an alternative to machine tokens for workloads that already carry a SPIFFE X.509 certificate (SVID) issued by a SPIFFE/SPIRE deployment or any compatible CA. Instead of distributing a long-lived token, you register a SPIFFE ID once; any valid cert signed by the trusted CA whose URI SAN matches that ID is automatically authorized — no re-enrollment when the cert rotates.
 
-**Prerequisites:** start vaultd with `VAULT_TLS_CLIENT_CA` pointing to the SPIFFE CA bundle, so the server requests and verifies client certificates during the TLS handshake.
+**Prerequisites:** start vaultd with `VAULT_API_CLIENT_CA` pointing to the SPIFFE CA bundle, so the server requests and verifies client certificates during the TLS handshake.
 
 #### `vault principals register <description>`
 
@@ -870,7 +870,7 @@ vault principals revoke <principal-id>
 
 **How it works:**
 
-When `VAULT_TLS_CLIENT_CA` is set, the TLS layer verifies the client certificate against the trusted CA. The auth middleware then extracts the first URI SAN with a `spiffe://` scheme from the verified cert and looks it up in the registered principals table. A match grants the same authorization scope as a machine token (project/env scoping, read-only flag, optional expiry). Bearer token auth is still supported — workloads without a client cert fall through to the `Authorization: Bearer` header as before.
+When `VAULT_API_CLIENT_CA` is set, the TLS layer verifies the client certificate against the trusted CA. The auth middleware then extracts the first URI SAN with a `spiffe://` scheme from the verified cert and looks it up in the registered principals table. A match grants the same authorization scope as a machine token (project/env scoping, read-only flag, optional expiry). Bearer token auth is still supported — workloads without a client cert fall through to the `Authorization: Bearer` header as before.
 
 SPIFFE/SPIRE issues short-lived SVIDs that rotate automatically; because authorization is tied to the SPIFFE ID rather than a specific certificate, rotation is transparent — no vault restart, no re-enrollment, no token redistribution required.
 

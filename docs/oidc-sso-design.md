@@ -609,5 +609,5 @@ GetCertPrincipalByEmailSAN(ctx context.Context, emailSAN string) (*model.CertPri
 ### Security notes
 
 - The `email_san` value on the registered principal must exactly match the cert's `rfc822Name` SAN (case-sensitive byte comparison at the DB layer).
-- Certificate trust is still enforced by `VAULT_TLS_CLIENT_CA` — any cert that reaches the SAN-matching step has already been verified against the trusted CA.
+- Certificate trust is still enforced by `VAULT_API_CLIENT_CA` — any cert that reaches the SAN-matching step has already been verified against the trusted CA.
 - Active-user check applies to both SPIFFE and email SAN principals.

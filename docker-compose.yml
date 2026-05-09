@@ -125,8 +125,8 @@ services:
     restart: unless-stopped
 
   # ── API server ────────────────────────────────────────────────────────────
-  # Exposes HTTPS on ${VAULT_PORT:-8443}. Browse https://localhost:8443; the
-  # CLI uses --server https://localhost:8443. Use mkcert (via certs/gen.sh)
+  # Exposes HTTPS on ${VAULT_PORT:-8443}. Browse https://vault.localhost:8443;
+  # the CLI uses --server https://vault.localhost:8443. Use mkcert (via certs/gen.sh)
   # to issue a browser-trusted server cert.
   vaultd:
     build: .
