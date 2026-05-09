@@ -309,10 +309,28 @@ func (s *Server) handleSCIMCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if user already exists (IdP re-sending a create for an existing user).
+	// Check if user already exists (IdP re-sending a create for an existing user,
+	// or a JIT-provisioned OIDC user that the IdP is now SCIM-tracking).
 	existing, err := s.store.GetUserByEmail(r.Context(), email)
 	if err == nil {
-		// Already exists — return existing resource.
+		// Backfill scim_external_id when the IdP supplies it and the existing
+		// row doesn't already have it (or has a stale value). Without this,
+		// users created via OIDC JIT first stay invisible to SCIM filter
+		// queries and to SCIM Group sync, even after the IdP starts
+		// provisioning them.
+		if req.ExternalID != "" && (existing.SCIMExternalID == nil || *existing.SCIMExternalID != req.ExternalID) {
+			if err := s.store.SetUserSCIMExternalID(r.Context(), existing.ID, req.ExternalID); err != nil {
+				s.log.Error("scim create user — backfill externalId on existing user", "err", err)
+				writeSCIMError(w, http.StatusInternalServerError, "internal error")
+				return
+			}
+			ext := req.ExternalID
+			existing.SCIMExternalID = &ext
+			if err := s.logAudit(r, ActionSCIMUserUpdate, "", email); err != nil {
+				writeSCIMError(w, http.StatusInternalServerError, "audit unavailable")
+				return
+			}
+		}
 		writeSCIMJSON(w, http.StatusOK, scimUserResource(existing, requestBaseURL(r)))
 		return
 	}
@@ -458,7 +476,8 @@ func (s *Server) handleSCIMPatchUser(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		path := strings.ToLower(op.Path)
-		if path == "active" || path == "" {
+		switch path {
+		case "active", "":
 			// op.Value may be a full object map (Okta) or a bare bool (others).
 			active := extractActiveBool(op.Value)
 			if active != nil {
@@ -468,6 +487,27 @@ func (s *Server) handleSCIMPatchUser(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				user.Active = *active
+			}
+		case "externalid":
+			// Backfill / update scim_external_id. Rare via PATCH (most IdPs
+			// send externalId only on POST/PUT), but spec-permitted and useful
+			// for re-linking a JIT'd row.
+			ext, ok := op.Value.(string)
+			if !ok || ext == "" {
+				continue
+			}
+			if user.SCIMExternalID != nil && *user.SCIMExternalID == ext {
+				continue
+			}
+			if err := s.store.SetUserSCIMExternalID(r.Context(), user.ID, ext); err != nil {
+				s.log.Error("scim patch user — set externalId", "err", err)
+				writeSCIMError(w, http.StatusInternalServerError, "internal error")
+				return
+			}
+			user.SCIMExternalID = &ext
+			if err := s.logAudit(r, ActionSCIMUserUpdate, "", user.Email); err != nil {
+				writeSCIMError(w, http.StatusInternalServerError, "audit unavailable")
+				return
 			}
 		}
 	}

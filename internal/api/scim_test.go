@@ -542,6 +542,84 @@ func TestHandleSCIMCreateUser_PersistsExternalID(t *testing.T) {
 	}
 }
 
+// ── handleSCIMCreateUser — backfill externalId on existing JIT'd user ─────────
+//
+// When a user appeared first via OIDC JIT (no SCIM externalId), and the IdP
+// later starts SCIM-tracking them, the POST /scim/v2/Users matches by email.
+// The handler must backfill scim_external_id so downstream operations
+// (filter by externalId, SCIM Group sync) can find the user.
+func TestHandleSCIMCreateUser_BackfillsExternalIDOnExisting(t *testing.T) {
+	upstreamID := "upstream-uuid"
+	staleID := "old-id"
+	tests := []struct {
+		name           string
+		existingExtID  *string
+		body           string
+		wantBackfilled bool
+		wantValue      string
+	}{
+		{
+			name:           "JIT'd user, no externalId yet → backfill",
+			existingExtID:  nil,
+			body:           `{"userName":"j@example.com","externalId":"upstream-uuid"}`,
+			wantBackfilled: true,
+			wantValue:      "upstream-uuid",
+		},
+		{
+			name:           "existing user already has matching externalId → no-op",
+			existingExtID:  &upstreamID,
+			body:           `{"userName":"j@example.com","externalId":"upstream-uuid"}`,
+			wantBackfilled: false,
+		},
+		{
+			name:           "existing user has stale externalId → update",
+			existingExtID:  &staleID,
+			body:           `{"userName":"j@example.com","externalId":"new-id"}`,
+			wantBackfilled: true,
+			wantValue:      "new-id",
+		},
+		{
+			name:           "no externalId in payload → no-op",
+			existingExtID:  nil,
+			body:           `{"userName":"j@example.com"}`,
+			wantBackfilled: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var (
+				calls   int
+				seenExt string
+			)
+			st := adminStore()
+			st.getUserByEmail = func(_ context.Context, _ string) (*model.User, error) {
+				return &model.User{ID: "u-jit", Email: "j@example.com", SCIMExternalID: tc.existingExtID, Active: true, CreatedAt: time.Now().UTC()}, nil
+			}
+			st.setUserSCIMExternalID = func(_ context.Context, _, ext string) error {
+				calls++
+				seenExt = ext
+				return nil
+			}
+			srv := newTestServer(t, st)
+			w := scimCall(t, srv, srv.handleSCIMCreateUser, http.MethodPost, "/scim/v2/Users", tc.body, "")
+			if w.Code != http.StatusOK {
+				t.Fatalf("status = %d, body = %s", w.Code, w.Body)
+			}
+			if tc.wantBackfilled {
+				if calls != 1 {
+					t.Errorf("SetUserSCIMExternalID calls = %d, want 1", calls)
+				}
+				if seenExt != tc.wantValue {
+					t.Errorf("backfilled externalId = %q, want %q", seenExt, tc.wantValue)
+				}
+			} else if calls != 0 {
+				t.Errorf("SetUserSCIMExternalID called %d times, want 0", calls)
+			}
+		})
+	}
+}
+
 // ── handleSCIMCreateUser ──────────────────────────────────────────────────────
 
 func TestHandleSCIMCreateUser(t *testing.T) {
@@ -857,6 +935,12 @@ func TestHandleSCIMPatchUser(t *testing.T) {
 		{
 			name:       "non-replace op ignored",
 			body:       `{"Operations":[{"op":"add","path":"emails","value":[]}]}`,
+			setup:      existingUser,
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "replace externalId backfills",
+			body:       `{"Operations":[{"op":"replace","path":"externalId","value":"upstream-uuid"}]}`,
 			setup:      existingUser,
 			wantStatus: http.StatusOK,
 		},
