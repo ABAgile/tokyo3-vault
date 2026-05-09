@@ -36,22 +36,28 @@
     <table style="margin-bottom:18px">
       <tbody>
         <tr><td class="text-muted" style="width:120px">Email</td><td>{{.User.Email}}</td></tr>
-        <tr><td class="text-muted">Role</td><td>{{.User.Role}} <span class="text-muted" style="font-size:12px">(role changes are CLI-only)</span></td></tr>
         <tr><td class="text-muted">Created</td><td class="text-muted">{{.User.CreatedAt.Format "Jan 2, 2006"}}</td></tr>
       </tbody>
     </table>
 
-    <form method="POST" action="/portal/admin/users/{{.User.ID}}/active" style="margin-bottom:18px">
-      <input type="hidden" name="active" value="{{if .User.Active}}0{{else}}1{{end}}">
-      <button type="submit" class="btn {{if .User.Active}}btn-danger{{else}}btn-primary{{end}} btn-sm">
-        {{if .User.Active}}Deactivate user{{else}}Reactivate user{{end}}
-      </button>
-      <span class="text-muted" style="font-size:12px;margin-left:8px">Deactivation also revokes all the user's tokens.</span>
+    <div class="separator"></div>
+
+    <form method="POST" action="/portal/admin/users/{{.User.ID}}/role" style="margin-bottom:18px"
+          onsubmit="return confirm('Change this user\'s role?')">
+      <h3 style="font-size:14px;font-weight:600;margin-bottom:12px">Role</h3>
+      <div class="form-group" style="margin-bottom:8px">
+        <select id="role" name="role">
+          <option value="member" {{if eq .User.Role "member"}}selected{{end}}>Member</option>
+          <option value="admin"  {{if eq .User.Role "admin"}}selected{{end}}>Server admin</option>
+        </select>
+      </div>
+      <button type="submit" class="btn btn-primary btn-sm">Save role</button>
+      <span class="text-muted" style="font-size:12px;margin-left:8px">Demoting the last admin is rejected to keep vault administrable.</span>
     </form>
 
     <div class="separator"></div>
 
-    <form method="POST" action="/portal/admin/users/{{.User.ID}}/password">
+    <form method="POST" action="/portal/admin/users/{{.User.ID}}/password" style="margin-bottom:18px">
       <h3 style="font-size:14px;font-weight:600;margin-bottom:12px">Reset password</h3>
       <div class="form-group">
         <label for="password">New password</label>
@@ -62,6 +68,17 @@
         <button type="submit" class="btn btn-primary btn-sm">Reset password</button>
         <a href="/portal/admin/users" class="btn btn-secondary btn-sm">Back</a>
       </div>
+    </form>
+
+    <div class="separator"></div>
+
+    <form method="POST" action="/portal/admin/users/{{.User.ID}}/active">
+      <h3 style="font-size:14px;font-weight:600;margin-bottom:12px">{{if .User.Active}}Deactivate user{{else}}Reactivate user{{end}}</h3>
+      <input type="hidden" name="active" value="{{if .User.Active}}0{{else}}1{{end}}">
+      <button type="submit" class="btn {{if .User.Active}}btn-danger{{else}}btn-primary{{end}} btn-sm">
+        {{if .User.Active}}Deactivate user{{else}}Reactivate user{{end}}
+      </button>
+      <span class="text-muted" style="font-size:12px;margin-left:8px">Deactivation also revokes all the user's tokens.</span>
     </form>
   {{end}}
 

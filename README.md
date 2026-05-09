@@ -257,7 +257,7 @@ vaultd serves a server-rendered admin portal at `/portal/*` on the same TLS list
 **What it covers**
 
 - **Self-service** — sign in (local password or OIDC SSO via auth), change password, list/revoke your own machine tokens.
-- **Admin → Users** — create users, deactivate (revokes all the user's tokens, matching SCIM deprovision semantics), reset password. Role changes remain CLI-only.
+- **Admin → Users** — create users, promote/demote between member and admin (last-admin demotion is rejected to keep vault administrable), deactivate (revokes all the user's tokens, matching SCIM deprovision semantics), reset password.
 - **Admin → Projects** — full project lifecycle: create, delete, rotate envelope key, manage environments + members. The "Danger zone" on a project page hosts the destructive actions behind confirm dialogs.
 - **Admin → Secrets** — per-environment secret browser: create a new secret, edit (set a new version), list keys + version count + last-modified, reveal current value, view version history, reveal any historical version, roll back, delete. Bulk import via `.env` upload and download of a project+env's secrets as a `.env` file. Every set / reveal / export key is audit-logged with a masked preview; reveal and create/edit submissions POST (never GET) so values cannot leak through URLs, history, or referrer headers. **Rollback is forward-only**: rolling back to v3 creates a new v(max+1) whose content is a copy of v3's, then sets that as current. Version numbers never decrease, so version history is monotonic and easy to audit (`secret.set` / `secret.rollback` / `secret.delete`).
 - **Admin → SCIM Tokens** — issue/delete the bearer tokens auth uses to push users and groups to vault.

@@ -201,6 +201,70 @@ func TestHandleResetUserPassword_UserNotFound(t *testing.T) {
 	}
 }
 
+// ── handleSetUserRole ─────────────────────────────────────────────────────────
+
+func TestHandleSetUserRole(t *testing.T) {
+	type tc struct {
+		name        string
+		body        string
+		targetRole  string
+		adminCount  int
+		adminCountE error
+		setRoleE    error
+		wantStatus  int
+		wantSet     bool
+	}
+	cases := []tc{
+		{name: "promote member to admin", body: `{"role":"admin"}`, targetRole: "member", adminCount: 1, wantStatus: http.StatusOK, wantSet: true},
+		{name: "demote admin when other admin exists", body: `{"role":"member"}`, targetRole: "admin", adminCount: 2, wantStatus: http.StatusOK, wantSet: true},
+		{name: "demote last admin → 409", body: `{"role":"member"}`, targetRole: "admin", adminCount: 1, wantStatus: http.StatusConflict},
+		{name: "no-op when role unchanged", body: `{"role":"admin"}`, targetRole: "admin", wantStatus: http.StatusOK},
+		{name: "invalid role", body: `{"role":"superuser"}`, targetRole: "member", wantStatus: http.StatusBadRequest},
+		{name: "invalid JSON", body: `{bad`, targetRole: "member", wantStatus: http.StatusBadRequest},
+		{name: "count error → 500", body: `{"role":"member"}`, targetRole: "admin", adminCountE: errDB, wantStatus: http.StatusInternalServerError},
+		{name: "set error → 500", body: `{"role":"admin"}`, targetRole: "member", adminCount: 1, setRoleE: errDB, wantStatus: http.StatusInternalServerError},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var setCalled bool
+			st := &mockStore{
+				getUserByID: func(_ context.Context, id string) (*model.User, error) {
+					if id == "admin-user-id" {
+						return &model.User{ID: id, Role: model.UserRoleAdmin}, nil
+					}
+					return &model.User{ID: id, Email: "t@example.com", Role: c.targetRole}, nil
+				},
+				countAdminUsers: func(_ context.Context) (int, error) { return c.adminCount, c.adminCountE },
+				setUserRole: func(_ context.Context, _, _ string) error {
+					setCalled = true
+					return c.setRoleE
+				},
+			}
+			srv := newTestServer(t, st)
+			w := call(t, srv.handleSetUserRole, http.MethodPut, "/", c.body, adminTok(), "user_id", "target-uid")
+			if w.Code != c.wantStatus {
+				t.Fatalf("status = %d, want %d; body: %s", w.Code, c.wantStatus, w.Body)
+			}
+			if c.wantSet && !setCalled {
+				t.Error("SetUserRole was not called")
+			}
+		})
+	}
+}
+
+func TestHandleSetUserRole_NonAdminRejected(t *testing.T) {
+	st := &mockStore{
+		getUserByID: func(_ context.Context, id string) (*model.User, error) {
+			return &model.User{ID: id, Role: model.UserRoleMember}, nil
+		},
+	}
+	srv := newTestServer(t, st)
+	w := call(t, srv.handleSetUserRole, http.MethodPut, "/", `{"role":"admin"}`, ownerTok(), "user_id", "u1")
+	if w.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want 403", w.Code)
+	}
+}
+
 func TestHandleResetUserPassword_NonAdminRejected(t *testing.T) {
 	st := &mockStore{
 		getUserByID: func(_ context.Context, id string) (*model.User, error) {

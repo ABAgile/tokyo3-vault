@@ -206,6 +206,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/v1/users", s.auth(s.handleCreateUser))
 	mux.HandleFunc("GET /api/v1/users/lookup", s.auth(s.handleLookupUser))
 	mux.HandleFunc("PUT /api/v1/users/{user_id}/password", s.auth(s.handleResetUserPassword))
+	mux.HandleFunc("PUT /api/v1/users/{user_id}/role", s.auth(s.handleSetUserRole))
 
 	// Project members
 	mux.HandleFunc("GET /api/v1/projects/{project}/members", s.auth(s.handleListMembers))
@@ -273,6 +274,7 @@ func (s *Server) Routes() http.Handler {
 		mux.HandleFunc("POST /portal/admin/users/new", s.portalAdminAuth(s.handlePortalAdminUserNew))
 		mux.HandleFunc("GET /portal/admin/users/{id}/edit", s.portalAdminAuth(s.handlePortalAdminUserEdit))
 		mux.HandleFunc("POST /portal/admin/users/{id}/active", s.portalAdminAuth(s.handlePortalAdminUserSetActive))
+		mux.HandleFunc("POST /portal/admin/users/{id}/role", s.portalAdminAuth(s.handlePortalAdminUserSetRole))
 		mux.HandleFunc("POST /portal/admin/users/{id}/password", s.portalAdminAuth(s.handlePortalAdminUserResetPassword))
 
 		mux.HandleFunc("GET /portal/admin/projects", s.portalAdminAuth(s.handlePortalAdminProjects))

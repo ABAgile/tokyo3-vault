@@ -36,6 +36,7 @@ const (
 
 	ActionUserCreate    = "user.create"
 	ActionUserSetActive = "user.set_active"
+	ActionUserSetRole   = "user.set_role"
 
 	ActionMemberAdd    = "member.add"
 	ActionMemberUpdate = "member.update"

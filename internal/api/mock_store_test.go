@@ -26,6 +26,8 @@ type mockStore struct {
 	listUsers                    func(ctx context.Context) ([]*model.User, error)
 	hasAdminUser                 func(ctx context.Context) (bool, error)
 	updateUserPassword           func(ctx context.Context, userID, hash string) error
+	setUserRole                  func(ctx context.Context, userID, role string) error
+	countAdminUsers              func(ctx context.Context) (int, error)
 	deleteAllTokensForUser       func(ctx context.Context, userID string) error
 	createToken                  func(ctx context.Context, t *model.Token) error
 	getTokenByHash               func(ctx context.Context, hash string) (*model.Token, error)
@@ -141,6 +143,18 @@ func (m *mockStore) UpdateUserPassword(ctx context.Context, userID, hash string)
 		return m.updateUserPassword(ctx, userID, hash)
 	}
 	return nil
+}
+func (m *mockStore) SetUserRole(ctx context.Context, userID, role string) error {
+	if m.setUserRole != nil {
+		return m.setUserRole(ctx, userID, role)
+	}
+	return nil
+}
+func (m *mockStore) CountAdminUsers(ctx context.Context) (int, error) {
+	if m.countAdminUsers != nil {
+		return m.countAdminUsers(ctx)
+	}
+	return 1, nil
 }
 func (m *mockStore) DeleteAllTokensForUser(ctx context.Context, userID string) error {
 	if m.deleteAllTokensForUser != nil {

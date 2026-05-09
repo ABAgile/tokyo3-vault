@@ -43,6 +43,8 @@ func (Stub) HasAdminUser(_ context.Context) (bool, error)                { retur
 func (Stub) UpdateUserPassword(_ context.Context, _, _ string) error     { return nil }
 func (Stub) SetUserOIDCIdentity(_ context.Context, _, _, _ string) error { return nil }
 func (Stub) SetUserActive(_ context.Context, _ string, _ bool) error     { return nil }
+func (Stub) SetUserRole(_ context.Context, _, _ string) error            { return nil }
+func (Stub) CountAdminUsers(_ context.Context) (int, error)              { return 0, nil }
 func (Stub) DeleteAllTokensForUser(_ context.Context, _ string) error    { return nil }
 
 // ── Tokens ────────────────────────────────────────────────────────────────────

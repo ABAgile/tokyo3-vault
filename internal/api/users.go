@@ -146,6 +146,68 @@ func (s *Server) handleResetUserPassword(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// handleSetUserRole lets a server admin promote/demote another (or themselves)
+// between member and admin. Rejects the demotion that would leave the system
+// with zero admins (last-admin guard) so vault stays administrable.
+func (s *Server) handleSetUserRole(w http.ResponseWriter, r *http.Request) {
+	if !s.requireServerAdmin(w, r) {
+		return
+	}
+	var req struct {
+		Role string `json:"role"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if req.Role != model.UserRoleAdmin && req.Role != model.UserRoleMember {
+		writeError(w, http.StatusBadRequest, "role must be member or admin")
+		return
+	}
+	targetUserID := r.PathValue("user_id")
+	target, err := s.store.GetUserByID(r.Context(), targetUserID)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "user not found")
+		return
+	}
+	if err != nil {
+		s.log.Error("get user for role change", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if target.Role == req.Role {
+		writeJSON(w, http.StatusOK, userToResponse(target))
+		return
+	}
+	if target.Role == model.UserRoleAdmin && req.Role == model.UserRoleMember {
+		count, err := s.store.CountAdminUsers(r.Context())
+		if err != nil {
+			s.log.Error("count admins", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if count <= 1 {
+			writeError(w, http.StatusConflict, "cannot demote the last admin — promote another user first")
+			return
+		}
+	}
+	if err := s.store.SetUserRole(r.Context(), targetUserID, req.Role); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "user not found")
+			return
+		}
+		s.log.Error("set user role", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	target.Role = req.Role
+	if err := s.logAudit(r, ActionUserSetRole, "", target.Email); err != nil {
+		writeError(w, http.StatusInternalServerError, "audit unavailable")
+		return
+	}
+	writeJSON(w, http.StatusOK, userToResponse(target))
+}
+
 // handleLookupUser resolves an email address to a user ID.
 // Any authenticated token may call this (used by "vault members add --email").
 func (s *Server) handleLookupUser(w http.ResponseWriter, r *http.Request) {

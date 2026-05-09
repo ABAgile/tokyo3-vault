@@ -151,6 +151,55 @@ func (s *Server) handlePortalAdminUserSetActive(w http.ResponseWriter, r *http.R
 	flashRedirect(w, r, "/portal/admin/users/"+id+"/edit", "success", flash)
 }
 
+// handlePortalAdminUserSetRole is the portal counterpart of /api/v1/users/{id}/role.
+// Same last-admin guard as the JSON API. Self-promotion is allowed and a no-op
+// when current==target; self-demotion is allowed only when another admin
+// exists.
+func (s *Server) handlePortalAdminUserSetRole(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	user, err := s.store.GetUserByID(r.Context(), id)
+	if err != nil {
+		flashRedirect(w, r, "/portal/admin/users", "error", "User not found.")
+		return
+	}
+	_ = r.ParseForm()
+	role := r.FormValue("role")
+	if role != model.UserRoleAdmin && role != model.UserRoleMember {
+		flashRedirect(w, r, "/portal/admin/users/"+id+"/edit", "error", "Role must be member or admin.")
+		return
+	}
+	if user.Role == role {
+		flashRedirect(w, r, "/portal/admin/users/"+id+"/edit", "success", "Role unchanged.")
+		return
+	}
+	if user.Role == model.UserRoleAdmin && role == model.UserRoleMember {
+		count, err := s.store.CountAdminUsers(r.Context())
+		if err != nil {
+			s.log.Error("count admins", "err", err)
+			flashRedirect(w, r, "/portal/admin/users/"+id+"/edit", "error", "Update failed.")
+			return
+		}
+		if count <= 1 {
+			flashRedirect(w, r, "/portal/admin/users/"+id+"/edit", "error", "Cannot demote the last admin — promote another user first.")
+			return
+		}
+	}
+	if err := s.store.SetUserRole(r.Context(), id, role); err != nil {
+		s.log.Error("set user role", "err", err)
+		flashRedirect(w, r, "/portal/admin/users/"+id+"/edit", "error", "Update failed.")
+		return
+	}
+	if err := s.logAuditEnv(r, ActionUserSetRole, "", "", user.Email, portalMeta(map[string]any{"from": user.Role, "to": role})); err != nil {
+		http.Error(w, "audit unavailable", http.StatusInternalServerError)
+		return
+	}
+	verb := "promoted to admin"
+	if role == model.UserRoleMember {
+		verb = "demoted to member"
+	}
+	flashRedirect(w, r, "/portal/admin/users/"+id+"/edit", "success", "User "+verb+".")
+}
+
 func (s *Server) handlePortalAdminUserResetPassword(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	user, err := s.store.GetUserByID(r.Context(), id)

@@ -52,6 +52,12 @@ type UserStore interface {
 	SetUserOIDCIdentity(ctx context.Context, userID, issuer, subject string) error
 	// SetUserActive sets the active flag. Callers should delete all tokens when deactivating.
 	SetUserActive(ctx context.Context, userID string, active bool) error
+	// SetUserRole updates the server-level role (UserRoleAdmin | UserRoleMember).
+	// Callers must enforce policy (e.g. last-admin guard); this is a raw setter.
+	SetUserRole(ctx context.Context, userID, role string) error
+	// CountAdminUsers returns the number of users with role = UserRoleAdmin.
+	// Used by the role-change handler's last-admin guard.
+	CountAdminUsers(ctx context.Context) (int, error)
 }
 
 // TokenStore covers bearer token issuance, lookup, and deletion.

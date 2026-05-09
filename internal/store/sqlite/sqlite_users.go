@@ -188,6 +188,24 @@ func (s *DB) SetUserActive(ctx context.Context, userID string, active bool) erro
 	return err
 }
 
+func (s *DB) SetUserRole(ctx context.Context, userID, role string) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE users SET role = ? WHERE id = ?`, role, userID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *DB) CountAdminUsers(ctx context.Context) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users WHERE role = 'admin'`).Scan(&n)
+	return n, err
+}
+
 func (s *DB) DeleteAllTokensForUser(ctx context.Context, userID string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM tokens WHERE user_id = ?`, userID)
 	return err
