@@ -67,7 +67,8 @@ func (s *Server) handleCreateEnv(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	if !s.requireWrite(w, r, tok, p.ID) {
+	// Env doesn't exist yet — only the project-level row is meaningful here.
+	if !s.requireWrite(w, r, tok, p.ID, "") {
 		return
 	}
 
@@ -126,7 +127,9 @@ func (s *Server) handleDeleteEnv(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	if !s.requireWrite(w, r, tok, p.ID) {
+	// Env deletion is destructive lifecycle — gate on project-level role only,
+	// not on env-scoped editor (don't let an env-editor delete their own env).
+	if !s.requireWrite(w, r, tok, p.ID, "") {
 		return
 	}
 	envSlug := r.PathValue("env")

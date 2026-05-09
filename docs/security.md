@@ -125,7 +125,7 @@ Roles are per-project, per-user. A `project_members` row with `env_id IS NULL` g
 |-------|---------|--------|
 | `requireServerAdmin` | `/users` admin routes | Token's user must have `role = admin` in `users` table |
 | `requireOwner` | Member management | Project-level role = owner; machine tokens always rejected |
-| `requireWrite` | Secret/env create+delete | Editor+ role; read-only tokens rejected |
+| `requireWrite` | Secret/env-scoped writes (secrets, dynamic, envfile) | Editor+ role; read-only tokens rejected. Env-aware: when called with an `envID`, picks the env-scoped row over the project-level row (most-specific wins, matching `authorize`). Env-spanning routes (create/delete env, member mgmt) call it with `envID=""` and check the project-level row only. |
 | `requireWritable` | Global writes (no projectID) | Read-only token check only |
 | `requireUnscoped` | Project/token creation | Scoped machine tokens cannot create projects or tokens |
 | `authorize` | All project access | Scope check for machine tokens; membership lookup for users |

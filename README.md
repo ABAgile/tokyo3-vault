@@ -1227,7 +1227,7 @@ The user who creates a project is automatically its `owner`.
 
 By default, project membership grants access to **all** environments in the project. Pass `--env-id` when adding or updating a member to restrict their access to a single environment. This mirrors the scoping model of machine tokens and SPIFFE principals.
 
-A user can hold both a project-level row and one or more env-specific rows in the same project. For any given environment, the most-specific row takes precedence: an env-scoped `editor` row overrides a project-level `viewer` row for that environment.
+A user can hold both a project-level row and one or more env-specific rows in the same project. For any given environment, the most-specific row takes precedence — for **both reads and writes**: an env-scoped `editor` row grants writes inside that env even with no project-level row, and an env-scoped `viewer` row demotes a project-level `editor` to read-only inside that env. Operations that span environments (create env, delete env, member management, project key rotation, project deletion) are gated on the project-level row only — env-scoped roles do not unlock them.
 
 `owner` role cannot be env-scoped — project ownership is inherently project-wide. Use `vault access list --project <p> --env <e>` to see every identity (members, tokens, principals) with effective access to a specific environment.
 

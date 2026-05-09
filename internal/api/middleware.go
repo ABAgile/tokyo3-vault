@@ -189,12 +189,18 @@ func (s *Server) requireUnscoped(w http.ResponseWriter, tok *model.Token) bool {
 	return true
 }
 
-// requireWrite checks that the token can perform write operations on projectID.
+// requireWrite checks that the token can perform write operations on projectID,
+// optionally scoped to envID.
 //
 //   - Any token with ReadOnly=true is rejected immediately.
-//   - Scoped machine tokens (ProjectID set): ReadOnly check is sufficient (scope already verified).
-//   - User / unscoped tokens: must have editor role or higher in the project.
-func (s *Server) requireWrite(w http.ResponseWriter, r *http.Request, tok *model.Token, projectID string) bool {
+//   - Scoped machine tokens (ProjectID set): ReadOnly check is sufficient
+//     (scope already verified by the auth layer).
+//   - User / unscoped tokens: must have editor role or higher. When envID is
+//     non-empty, the env-scoped membership row wins over the project-level row
+//     (most-specific wins, mirroring authorize). When envID is empty, only the
+//     project-level row is consulted — use this form for routes that span envs
+//     (create env, delete env, member management).
+func (s *Server) requireWrite(w http.ResponseWriter, r *http.Request, tok *model.Token, projectID, envID string) bool {
 	if tok != nil && tok.ReadOnly {
 		writeError(w, http.StatusForbidden, "token is read-only")
 		return false
@@ -203,11 +209,13 @@ func (s *Server) requireWrite(w http.ResponseWriter, r *http.Request, tok *model
 		// Scoped machine token that is not read-only: write already authorized by scope.
 		return true
 	}
-	return s.requireProjectRole(w, r, projectID, model.RoleEditor)
+	return s.requireProjectRole(w, r, projectID, envID, model.RoleEditor)
 }
 
-// requireOwner checks that the token's user is the owner of projectID.
-// Scoped machine tokens are always rejected — ownership is a human concept.
+// requireOwner checks that the token's user is the owner of projectID. Owner
+// authority is project-level only — env-scoped owner rows do not unlock
+// project-wide operations like member management or key rotation. Scoped
+// machine tokens are always rejected — ownership is a human concept.
 func (s *Server) requireOwner(w http.ResponseWriter, r *http.Request, tok *model.Token, projectID string) bool {
 	if tok == nil {
 		writeError(w, http.StatusUnauthorized, "unauthenticated")
@@ -217,7 +225,7 @@ func (s *Server) requireOwner(w http.ResponseWriter, r *http.Request, tok *model
 		writeError(w, http.StatusForbidden, "only project owners can perform this action")
 		return false
 	}
-	return s.requireProjectRole(w, r, projectID, model.RoleOwner)
+	return s.requireProjectRole(w, r, projectID, "", model.RoleOwner)
 }
 
 // requireServerAdmin returns false and writes 403 if the token's user is not a server admin.
@@ -240,9 +248,12 @@ func (s *Server) requireServerAdmin(w http.ResponseWriter, r *http.Request) bool
 	return true
 }
 
-// requireProjectRole verifies the token's user has at least minRole in the project.
-// Server admins bypass the membership check and are treated as owners of every project.
-func (s *Server) requireProjectRole(w http.ResponseWriter, r *http.Request, projectID, minRole string) bool {
+// requireProjectRole verifies the token's user has at least minRole in the
+// project, optionally scoped to envID. When envID is non-empty, the
+// env-specific membership row wins over the project-level row (most-specific
+// wins, matching authorize). When envID is empty, only the project-level row
+// is consulted. Server admins bypass the membership check entirely.
+func (s *Server) requireProjectRole(w http.ResponseWriter, r *http.Request, projectID, envID, minRole string) bool {
 	tok := tokenFromCtx(r)
 	if tok == nil || tok.UserID == nil {
 		writeError(w, http.StatusForbidden, "forbidden")
@@ -252,7 +263,15 @@ func (s *Server) requireProjectRole(w http.ResponseWriter, r *http.Request, proj
 	if s.isServerAdmin(r.Context(), *tok.UserID) {
 		return true
 	}
-	m, err := s.store.GetProjectMember(r.Context(), projectID, *tok.UserID)
+	var (
+		m   *model.ProjectMember
+		err error
+	)
+	if envID != "" {
+		m, err = s.store.GetProjectMemberForEnv(r.Context(), projectID, envID, *tok.UserID)
+	} else {
+		m, err = s.store.GetProjectMember(r.Context(), projectID, *tok.UserID)
+	}
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusForbidden, "not a member of this project")
 		return false

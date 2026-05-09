@@ -235,6 +235,122 @@ func TestAuthMiddlewareValidToken(t *testing.T) {
 	}
 }
 
+// ── requireWrite — env-aware most-specific-wins ───────────────────────────────
+
+// Asserts that requireWrite picks the env-scoped row when envID is supplied
+// and falls back to the project-level row otherwise — matching authorize.
+// Covers:
+//   - env-scoped editor: write allowed in env (the bug this change fixes)
+//   - env-scoped viewer: write denied even if project-level row would allow it
+//   - envID="": only project-level row consulted (backwards compat path)
+func TestRequireWrite_EnvAware(t *testing.T) {
+	const (
+		projID = "project-uuid"
+		envID  = "env-uuid"
+		userID = "user-uuid"
+	)
+
+	mkStore := func(projectRole string, envRole *string) *mockStore {
+		return &mockStore{
+			getUserByID: func(_ context.Context, id string) (*model.User, error) {
+				return &model.User{ID: id, Role: model.UserRoleMember}, nil
+			},
+			getProjectMember: func(_ context.Context, pID, uID string) (*model.ProjectMember, error) {
+				if pID != projID || uID != userID || projectRole == "" {
+					return nil, store.ErrNotFound
+				}
+				return &model.ProjectMember{ProjectID: pID, UserID: uID, Role: projectRole}, nil
+			},
+			getProjectMemberForEnv: func(_ context.Context, pID, eID, uID string) (*model.ProjectMember, error) {
+				if pID != projID || uID != userID {
+					return nil, store.ErrNotFound
+				}
+				if envRole != nil && eID == envID {
+					return &model.ProjectMember{ProjectID: pID, EnvID: &eID, UserID: uID, Role: *envRole}, nil
+				}
+				if projectRole != "" {
+					return &model.ProjectMember{ProjectID: pID, UserID: uID, Role: projectRole}, nil
+				}
+				return nil, store.ErrNotFound
+			},
+		}
+	}
+	editor := model.RoleEditor
+	viewer := model.RoleViewer
+
+	tests := []struct {
+		name        string
+		projectRole string
+		envRole     *string
+		envIDArg    string
+		wantOK      bool
+		wantCode    int
+	}{
+		{
+			name:        "env-scoped editor writes in their env",
+			projectRole: "",
+			envRole:     &editor,
+			envIDArg:    envID,
+			wantOK:      true,
+		},
+		{
+			name:        "env-scoped viewer denied write in their env",
+			projectRole: "",
+			envRole:     &viewer,
+			envIDArg:    envID,
+			wantOK:      false,
+			wantCode:    http.StatusForbidden,
+		},
+		{
+			name:        "project editor demoted by env-viewer row",
+			projectRole: model.RoleEditor,
+			envRole:     &viewer,
+			envIDArg:    envID,
+			wantOK:      false,
+			wantCode:    http.StatusForbidden,
+		},
+		{
+			name:        "project editor unaffected by env row in other env",
+			projectRole: model.RoleEditor,
+			envRole:     &editor,
+			envIDArg:    "different-env",
+			wantOK:      true,
+		},
+		{
+			name:        "envID empty falls back to project-level row",
+			projectRole: model.RoleEditor,
+			envRole:     &viewer,
+			envIDArg:    "",
+			wantOK:      true,
+		},
+		{
+			name:        "envID empty + only env-scoped row → 403",
+			projectRole: "",
+			envRole:     &editor,
+			envIDArg:    "",
+			wantOK:      false,
+			wantCode:    http.StatusForbidden,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := newTestServer(t, mkStore(tc.projectRole, tc.envRole))
+			tok := userToken(userID)
+			r := httptest.NewRequest(http.MethodPut, "/", nil)
+			r = withToken(r, tok)
+			w := httptest.NewRecorder()
+			got := srv.requireWrite(w, r, tok, projID, tc.envIDArg)
+			if got != tc.wantOK {
+				t.Errorf("requireWrite = %v, want %v (HTTP %d)", got, tc.wantOK, w.Code)
+			}
+			if !tc.wantOK && tc.wantCode != 0 && w.Code != tc.wantCode {
+				t.Errorf("status = %d, want %d", w.Code, tc.wantCode)
+			}
+		})
+	}
+}
+
 // ── authorize ─────────────────────────────────────────────────────────────────
 
 func TestAuthorize(t *testing.T) {

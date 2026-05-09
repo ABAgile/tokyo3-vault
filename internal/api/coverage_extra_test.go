@@ -1041,7 +1041,7 @@ func TestRequireProjectRole_DBError(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	r = withToken(r, ownerTok())
 	w := httptest.NewRecorder()
-	got := srv.requireProjectRole(w, r, testProjID, model.RoleViewer)
+	got := srv.requireProjectRole(w, r, testProjID, "", model.RoleViewer)
 	if got {
 		t.Error("expected false on DB error")
 	}

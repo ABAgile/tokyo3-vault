@@ -229,7 +229,7 @@ func (s *Server) handleSetSecret(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) writeSetSecret(w http.ResponseWriter, r *http.Request, project *model.Project, envID, key, value string) {
 	tok := tokenFromCtx(r)
-	if !s.requireWrite(w, r, tok, project.ID) {
+	if !s.requireWrite(w, r, tok, project.ID, envID) {
 		return
 	}
 	sv, err := s.upsertSecret(r, project, envID, key, nil, value, tokenCreatedBy(tok), "")
@@ -251,7 +251,7 @@ func (s *Server) handleDeleteSecret(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !s.requireWrite(w, r, tokenFromCtx(r), project.ID) {
+	if !s.requireWrite(w, r, tokenFromCtx(r), project.ID, envID) {
 		return
 	}
 	key := strings.ToUpper(r.PathValue("key"))
@@ -306,7 +306,7 @@ func (s *Server) handleRollbackSecret(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !s.requireWrite(w, r, tokenFromCtx(r), project.ID) {
+	if !s.requireWrite(w, r, tokenFromCtx(r), project.ID, envID) {
 		return
 	}
 	key := strings.ToUpper(r.PathValue("key"))
@@ -372,7 +372,7 @@ func (s *Server) handleImportSecrets(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !s.requireWrite(w, r, tokenFromCtx(r), dstProject.ID) {
+	if !s.requireWrite(w, r, tokenFromCtx(r), dstProject.ID, dstEnvID) {
 		return
 	}
 
@@ -552,7 +552,7 @@ func (s *Server) handleUploadEnvfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tok := tokenFromCtx(r)
-	if !s.requireWrite(w, r, tok, project.ID) {
+	if !s.requireWrite(w, r, tok, project.ID, envID) {
 		return
 	}
 	body, err := io.ReadAll(r.Body)

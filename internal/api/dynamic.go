@@ -77,7 +77,7 @@ func (s *Server) handleSetDynamicBackend(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	if !s.requireWrite(w, r, tokenFromCtx(r), project.ID) {
+	if !s.requireWrite(w, r, tokenFromCtx(r), project.ID, envID) {
 		return
 	}
 
@@ -187,7 +187,7 @@ func (s *Server) handleDeleteDynamicBackend(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	if !s.requireWrite(w, r, tokenFromCtx(r), project.ID) {
+	if !s.requireWrite(w, r, tokenFromCtx(r), project.ID, envID) {
 		return
 	}
 
@@ -215,7 +215,7 @@ func (s *Server) handleSetDynamicRole(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !s.requireWrite(w, r, tokenFromCtx(r), project.ID) {
+	if !s.requireWrite(w, r, tokenFromCtx(r), project.ID, envID) {
 		return
 	}
 
@@ -305,7 +305,7 @@ func (s *Server) handleDeleteDynamicRole(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	if !s.requireWrite(w, r, tokenFromCtx(r), project.ID) {
+	if !s.requireWrite(w, r, tokenFromCtx(r), project.ID, envID) {
 		return
 	}
 
@@ -450,11 +450,11 @@ func (s *Server) handleListDynamicLeases(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleRevokeDynamicLease(w http.ResponseWriter, r *http.Request) {
-	project, _, ok := s.resolveProjectEnv(r, w)
+	project, envID, ok := s.resolveProjectEnv(r, w)
 	if !ok {
 		return
 	}
-	if !s.requireWrite(w, r, tokenFromCtx(r), project.ID) {
+	if !s.requireWrite(w, r, tokenFromCtx(r), project.ID, envID) {
 		return
 	}
 
