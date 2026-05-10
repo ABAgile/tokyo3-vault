@@ -6,14 +6,10 @@ Self-hosted secrets manager. Stores encrypted secrets, issues short-lived dynami
 ## Layout
 
 ```
-cmd/vaultd/          server binary — startup, TLS, env config
+cmd/vaultd/          server binary — startup, TLS, env config; subcommands: (default) serve, migrate-keys, audit-query
 cmd/vault/           CLI client (Cobra); reads ~/.vault/config.json
-cmd/vault-audit/     standalone audit pipeline tool — consume (NATS→DB) and query subcommands
 internal/api/        HTTP handlers (one file per resource type) + `web/` embedded templates/static + `web_portal*.go` for /portal/*
-internal/audit/      audit pipeline — Entry, Sink, JetStreamSink, Store interface, Filter
-internal/audit/postgres/    audit DB Postgres backend — Open, Migrate, UpsertAuditLog, ListAuditLogs
-internal/audit/postgres/migrations/  versioned SQL migrations for the audit DB (Postgres)
-internal/audit/sqlite/      audit DB SQLite backend  — Open, ensureSchema (inline), UpsertAuditLog, ListAuditLogs
+internal/audit/      audit Entry shape + wire constants (Subject, StreamName, StreamMaxAge); read/write via base/journal
 internal/auth/       token hashing, issuance, validation
 internal/crypto/     KEK/PEK/DEK key hierarchy, KMS/local providers
 internal/dynamic/    dynamic credential issuance + background revoker
@@ -25,7 +21,7 @@ internal/store/sqlite/     SQLite backend  — split by domain (see below)
 internal/testutil/mockstore/  shared Stub for test mocks
 internal/tlsutil/    TLS helpers (hot-reload, self-signed, cert pools)
 certs/               gen.sh — generates CA + server/client certs for the mTLS overlay
-postgres/            DB init scripts: db-init.sh (vault_app role), audit-db-init.sh (audit roles)
+postgres/            DB init scripts: db-init.sh (vault_app role)
 docs/                architecture.md, contributing.md, data-flows.md, er-diagram.md,
                      oidc-sso-design.md, security.md
 ```
@@ -46,8 +42,8 @@ docs/                architecture.md, contributing.md, data-flows.md, er-diagram
 ## Key invariants
 
 - **Main vault DB migrations**: numbered `NNN_description.sql` in `internal/store/postgres/migrations/` and `internal/store/sqlite/migrations/`. Run at `vaultd serve` startup via `VAULT_ADMIN_DATABASE_URL` (admin/DDL role). Postgres can `ALTER COLUMN`; SQLite requires full table recreation (see 012, 014 for pattern). Never skip numbers.
-- **Audit DB migrations**: numbered `NNN_description.sql` in `internal/audit/postgres/migrations/` (Postgres only). Run at `vault-audit consume` startup via `VAULT_AUDIT_DATABASE_URL`. SQLite dev path uses `ensureSchema` inline — no migration files needed there.
-- **Credential separation**: `VAULT_ADMIN_DATABASE_URL` (DDL) vs `VAULT_DATABASE_URL` (DML via `vault_app`); `VAULT_AUDIT_DATABASE_URL` (DDL + INSERT + SELECT — single credential used by `vault-audit` for migrations, writes, and queries). See `docs/security.md`.
+- **Audit storage**: NATS JetStream is the sole authoritative store (`vault_audit` stream, subject `vault.audit.events`, FileStorage + DenyDelete + DenyPurge + 13-month retention). No projection database — `/portal/admin/audit` (live tail) and `vaultd audit-query` (CLI) read directly off the stream via `base/journal/jetstream.Source`.
+- **Credential separation**: `VAULT_ADMIN_DATABASE_URL` (DDL) vs `VAULT_DATABASE_URL` (DML via `vault_app`). One DB only. See `docs/security.md`.
 - **Encryption**: secrets and dynamic backend configs are double-wrapped — DEK encrypted by PEK encrypted by KEK. See `docs/security.md`.
 - **Auth middleware** (`internal/api/middleware.go`): mTLS cert (SPIFFE URI SAN first, then email SAN) → bearer token. `errCertUnregistered` is the fall-through sentinel.
 - **SCIM deprovisioning**: `SetUserActive(false)` + `DeleteAllTokensForUser` — two calls intentionally, not atomic.
@@ -61,12 +57,11 @@ docs/                architecture.md, contributing.md, data-flows.md, er-diagram
 | Add a store method | `internal/store/store.go` + the relevant `*_domain.go` in both backends + `internal/testutil/mockstore/mock.go` |
 | Add an API handler | `internal/api/server.go` (routes) + the relevant handler file + `internal/api/audit.go` (action constants) |
 | Add a main vault DB migration | `internal/store/postgres/migrations/` + `internal/store/sqlite/migrations/` — check highest number first |
-| Add an audit DB migration | `internal/audit/postgres/migrations/` — Postgres only; check highest number first |
 | Work on mTLS / deploy config | `certs/gen.sh` + `docker-compose.mtls.yml` + `postgres/` init scripts |
 | Work on OIDC/SCIM | `internal/api/auth_oidc.go` or `internal/api/scim.go` + `docs/oidc-sso-design.md` |
 | Work on mTLS cert principals | `internal/api/certs.go` + `internal/store/*/postgres_certs.go` |
 | Crypto / key rotation | `internal/crypto/` + `docs/security.md` |
-| Work on audit pipeline | `internal/audit/` + `internal/audit/postgres/` + `internal/audit/sqlite/` + `cmd/vault-audit/main.go` + `docs/security.md` |
+| Work on audit pipeline | `internal/audit/sink.go` (Entry shape + wire constants) + `cmd/vaultd/audit.go` (CLI viewer) + `internal/api/audit.go` (publish path) + `docs/security.md` |
 | Work on the admin portal | `internal/api/web.go` + `internal/api/web_portal.go` + `internal/api/web_portal_admin.go` + `internal/api/web/tmpl/` + `internal/api/server.go` (route table) |
 
 ## Test mocks

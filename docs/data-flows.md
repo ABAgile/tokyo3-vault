@@ -29,18 +29,18 @@ main()
 
 All routes pass through the `limitBody` middleware (4 MB cap) and then the per-route `auth` middleware.
 
-## vault-audit consume startup
+## audit query (CLI viewer)
 
 ```
-runConsume()
- ├─ openAuditDB()
- │   ├─ VAULT_AUDIT_DATABASE_URL set → auditpg.Migrate() then auditpg.Open() (vault_audit owner)
- │   └─ else                         → auditsqlite.Open(VAULT_AUDIT_DB_PATH, default: audit.db)
- ├─ connectConsumerNATS()   — VAULT_AUDIT_NATS_URL + optional mTLS (VAULT_AUDIT_NATS_CERT/KEY/CA)
- ├─ js.CreateOrUpdateStream() — idempotent: ensures vault_audit stream exists
- └─ loop: cons.Fetch(64) → json.Unmarshal → adb.UpsertAuditLog (ON CONFLICT DO NOTHING)
-           Ack on success; Nak on upsert failure; Ack+discard on unmarshal failure
+vaultd audit-query --limit N
+ ├─ VAULT_NATS_URL required → jetstream.NewSource() (mTLS via VAULT_NATS_CERT/KEY/CA)
+ ├─ stream.Info() → pickDeliverPolicy(replay=N, lastSeq) → ephemeral AckNone consumer
+ └─ loop until limit-or-2s-idle: msg → write JSON line to stdout
 ```
+
+The same `journal/jetstream.Source` primitive backs the live-tail SSE
+endpoint at `/portal/admin/audit/sse` — both readers attach an ephemeral
+ack-none consumer to the existing `vault_audit` stream.
 
 ## Authentication middleware (every protected request)
 

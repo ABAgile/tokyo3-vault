@@ -1,11 +1,9 @@
 ## Vault — build targets
 ##
 ## Usage:
-##   make build             Build all three binaries to ./bin/
+##   make build             Build vaultd + vault binaries to ./bin/
 ##   make run               Start vaultd with dev defaults (starts Postgres + NATS via compose)
 ##   make run-mtls          Start vaultd with mTLS (cert auth, no password in DSN; starts Postgres + NATS)
-##   make run-audit         Start vault-audit consume (starts NATS + audit-db via compose)
-##   make run-audit-mtls    Start vault-audit consume with mTLS (cert auth, no password in DSN)
 ##   make keygen            Generate a VAULT_MASTER_KEY
 ##   make check             Full pre-commit sequence (fmt + test + staticcheck + gopls + govulncheck)
 ##   make docker-build      Build Docker image
@@ -24,12 +22,10 @@
 MODULE      := github.com/abagile/tokyo3-vault
 CMD_VAULTD  := ./cmd/vaultd
 CMD_VAULT   := ./cmd/vault
-CMD_AUDIT   := ./cmd/vault-audit
 
 BIN_DIR     := bin
 VAULTD_BIN  := $(BIN_DIR)/vaultd
 VAULT_BIN   := $(BIN_DIR)/vault
-AUDIT_BIN   := $(BIN_DIR)/vault-audit
 
 # Version/Commit/BuildTime are all read from embedded build info — no ldflags needed.
 GIT_TAG     := $(shell git describe --tags --exact-match 2>/dev/null || true)
@@ -45,7 +41,6 @@ IMAGE_NAME    ?= abagile/vault
 IMAGE_TAG     ?= $(VERSION)
 VAULT_ADDR    ?= :8443
 POSTGRES_PORT ?= 35432
-AUDIT_DB_PORT ?= 35433
 NATS_PORT     ?= 34222
 
 # Docker Compose project name (defaults to directory basename, matching Compose behaviour).
@@ -55,8 +50,8 @@ SHARED_VOLUME   := $(COMPOSE_PROJECT)_shared_data
 
 # ── Phony targets ─────────────────────────────────────────────────────────────
 
-.PHONY: all build build-server build-cli build-audit build-linux build-linux-amd64 build-darwin \
-        run run-mtls run-audit run-audit-mtls keygen gen-certs \
+.PHONY: all build build-server build-cli build-linux build-linux-amd64 build-darwin \
+        run run-mtls keygen gen-certs \
         _gen-env _sync-pg-scripts _sync-certs \
         test test-verbose tidy vet lint check \
         docker-build docker-build-amd64 docker-push docker-up docker-up-mtls docker-down docker-down-all docker-logs \
@@ -66,8 +61,8 @@ all: build
 
 # ── Build ─────────────────────────────────────────────────────────────────────
 
-## build: Compile vaultd, vault, and vault-audit into ./bin/
-build: build-server build-cli build-audit
+## build: Compile vaultd + vault into ./bin/
+build: build-server build-cli
 
 ## build-server: Compile only the vaultd server binary
 build-server: $(BIN_DIR)
@@ -79,40 +74,32 @@ build-cli: $(BIN_DIR)
 	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(VAULT_BIN) $(CMD_VAULT)
 	@echo "  built $(VAULT_BIN) ($(VERSION))"
 
-## build-audit: Compile only the vault-audit pipeline binary
-build-audit: $(BIN_DIR)
-	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(AUDIT_BIN) $(CMD_AUDIT)
-	@echo "  built $(AUDIT_BIN) ($(VERSION))"
-
 $(BIN_DIR):
 	mkdir -p $(BIN_DIR)
 
 # Cross-compilation helpers — call as: make build-linux build-darwin
-## build-linux: Cross-compile all binaries for Linux arm64 (Graviton, default)
+## build-linux: Cross-compile both binaries for Linux arm64 (Graviton, default)
 build-linux: $(BIN_DIR)
-	GOOS=linux GOARCH=arm64 $(GO) build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/vaultd-linux-arm64      $(CMD_VAULTD)
-	GOOS=linux GOARCH=arm64 $(GO) build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/vault-linux-arm64       $(CMD_VAULT)
-	GOOS=linux GOARCH=arm64 $(GO) build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/vault-audit-linux-arm64 $(CMD_AUDIT)
+	GOOS=linux GOARCH=arm64 $(GO) build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/vaultd-linux-arm64 $(CMD_VAULTD)
+	GOOS=linux GOARCH=arm64 $(GO) build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/vault-linux-arm64  $(CMD_VAULT)
 	@echo "  built Linux arm64 binaries"
 
-## build-linux-amd64: Cross-compile all binaries for Linux amd64
+## build-linux-amd64: Cross-compile both binaries for Linux amd64
 build-linux-amd64: $(BIN_DIR)
-	GOOS=linux GOARCH=amd64 $(GO) build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/vaultd-linux-amd64      $(CMD_VAULTD)
-	GOOS=linux GOARCH=amd64 $(GO) build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/vault-linux-amd64       $(CMD_VAULT)
-	GOOS=linux GOARCH=amd64 $(GO) build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/vault-audit-linux-amd64 $(CMD_AUDIT)
+	GOOS=linux GOARCH=amd64 $(GO) build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/vaultd-linux-amd64 $(CMD_VAULTD)
+	GOOS=linux GOARCH=amd64 $(GO) build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/vault-linux-amd64  $(CMD_VAULT)
 	@echo "  built Linux amd64 binaries"
 
-## build-darwin: Cross-compile all binaries for macOS arm64 (M-series)
+## build-darwin: Cross-compile both binaries for macOS arm64 (M-series)
 build-darwin: $(BIN_DIR)
-	GOOS=darwin GOARCH=arm64 $(GO) build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/vaultd-darwin-arm64      $(CMD_VAULTD)
-	GOOS=darwin GOARCH=arm64 $(GO) build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/vault-darwin-arm64       $(CMD_VAULT)
-	GOOS=darwin GOARCH=arm64 $(GO) build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/vault-audit-darwin-arm64 $(CMD_AUDIT)
+	GOOS=darwin GOARCH=arm64 $(GO) build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/vaultd-darwin-arm64 $(CMD_VAULTD)
+	GOOS=darwin GOARCH=arm64 $(GO) build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/vault-darwin-arm64  $(CMD_VAULT)
 	@echo "  built macOS arm64 binaries"
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
-# Generate .env with dev defaults on first run. Used by run / run-audit (and their mTLS variants).
-# DSNs use password auth; the mTLS run targets override with cert-auth DSNs at process launch time.
+# Generate .env with dev defaults on first run. Used by run / run-mtls.
+# DSNs use password auth; the mTLS run target overrides with cert-auth DSNs at process launch time.
 _gen-env: build-server build-cli
 	@if [ ! -f .env ]; then \
 	    KEY=$$($(VAULT_BIN) keygen); \
@@ -123,12 +110,8 @@ _gen-env: build-server build-cli
 	    echo "VAULT_DB_PASSWORD=changeme"                                                                                                                            >> .env; \
 	    echo "VAULT_ADMIN_DATABASE_URL=postgres://$${VAULT_ADMIN_DB_USERNAME:-vault_admin}:changeme@db.localhost:$(POSTGRES_PORT)/vault?sslmode=disable"             >> .env; \
 	    echo "VAULT_DATABASE_URL=postgres://$${VAULT_DB_USERNAME:-vault_app}:changeme@db.localhost:$(POSTGRES_PORT)/vault?sslmode=disable"                          >> .env; \
-	    echo "AUDIT_DB_PORT=$(AUDIT_DB_PORT)"                                                                                                                        >> .env; \
-	    echo "VAULT_AUDIT_DB_PASSWORD=changeme"                                                                                                                      >> .env; \
-	    echo "VAULT_AUDIT_DATABASE_URL=postgres://$${VAULT_AUDIT_DB_USERNAME:-vault_audit}:changeme@audit-db.localhost:$(AUDIT_DB_PORT)/vault_audit?sslmode=disable" >> .env; \
 	    echo "NATS_PORT=$(NATS_PORT)"                                                                                                                                >> .env; \
 	    echo "VAULT_NATS_URL=nats://nats.localhost:$(NATS_PORT)"                                                                                                     >> .env; \
-	    echo "VAULT_AUDIT_NATS_URL=nats://nats.localhost:$(NATS_PORT)"                                                                                               >> .env; \
 	    echo "VAULT_ALLOW_REGISTRATION=true"                                                                                                                         >> .env; \
 	    echo ""                                                                                                                                                     >> .env; \
 	    echo "# OIDC SSO via auth — paste CLIENT_ID/SECRET from \`authd\`'s /admin/clients (POST) or"                                                               >> .env; \
@@ -163,12 +146,12 @@ _sync-certs:
 
 ## run: Build and start vaultd with dev defaults (auto-generates .env on first run)
 run: _gen-env _sync-pg-scripts
-	@docker compose up -d db audit-db nats natsbox --wait 2>/dev/null || true
+	@docker compose up -d db nats natsbox --wait 2>/dev/null || true
 	@export $$(grep -v '^#' .env | xargs) && $(VAULTD_BIN)
 
 ## run-mtls: Build and start vaultd with mTLS (cert auth; overrides DSNs — no password)
 run-mtls: _gen-env _sync-pg-scripts _sync-certs
-	@docker compose -f docker-compose.yml -f docker-compose.mtls.yml up -d db audit-db nats natsbox --wait 2>/dev/null || true
+	@docker compose -f docker-compose.yml -f docker-compose.mtls.yml up -d db nats natsbox --wait 2>/dev/null || true
 	@CA_PEM=$$(mkcert -CAROOT)/rootCA.pem; \
 	    export $$(grep -v '^#' .env | xargs) && \
 	    if [ -n "$$VAULT_OIDC_CLIENT_ID" ]; then \
@@ -194,26 +177,6 @@ run-mtls: _gen-env _sync-pg-scripts _sync-certs
 	    VAULT_SCIM_MTLS_CA=$$CA_PEM \
 	    VAULT_SCIM_MTLS_SAN_DNS=$${VAULT_SCIM_MTLS_SAN_DNS:-auth.localhost} \
 	    $(VAULTD_BIN)
-
-## run-audit: Build and start vault-audit consume with dev defaults
-run-audit: build-audit _gen-env _sync-pg-scripts
-	@docker compose up -d nats audit-db --wait 2>/dev/null || true
-	@export $$(grep -v '^#' .env | xargs) && $(AUDIT_BIN) consume
-
-## run-audit-mtls: Build and start vault-audit consume with mTLS (cert auth; overrides DSN — no password)
-run-audit-mtls: build-audit _gen-env _sync-pg-scripts _sync-certs
-	@docker compose -f docker-compose.yml -f docker-compose.mtls.yml up -d nats audit-db --wait 2>/dev/null || true
-	@CA_PEM=$$(mkcert -CAROOT)/rootCA.pem; \
-	    export $$(grep -v '^#' .env | xargs) && \
-	    VAULT_AUDIT_DB_CERT=certs/vault-audit-db-client.crt \
-	    VAULT_AUDIT_DB_KEY=certs/vault-audit-db-client.key \
-	    VAULT_AUDIT_DB_CA=$$CA_PEM \
-	    VAULT_AUDIT_DATABASE_URL=postgres://$${VAULT_AUDIT_DB_USERNAME:-vault_audit}@audit-db.localhost:$(AUDIT_DB_PORT)/vault_audit?sslmode=verify-full \
-	    VAULT_AUDIT_NATS_CERT=certs/vault-audit-nats-client.crt \
-	    VAULT_AUDIT_NATS_KEY=certs/vault-audit-nats-client.key \
-	    VAULT_AUDIT_NATS_CA=$$CA_PEM \
-	    VAULT_AUDIT_NATS_URL=tls://nats.localhost:$(NATS_PORT) \
-	    $(AUDIT_BIN) consume
 
 ## keygen: Print a fresh random master key
 keygen: build-cli
@@ -290,7 +253,7 @@ docker-up-mtls: _sync-pg-scripts _sync-certs
 docker-down:
 	docker compose -f docker-compose.yml -f docker-compose.mtls.yml down
 
-## docker-down-all: Stop services AND remove named volumes (db, audit-db, NATS, shared_data)
+## docker-down-all: Stop services AND remove named volumes (db, NATS, shared_data)
 docker-down-all:
 	docker compose -f docker-compose.yml -f docker-compose.mtls.yml down -v --remove-orphans
 
@@ -300,12 +263,11 @@ docker-logs:
 
 # ── Install ───────────────────────────────────────────────────────────────────
 
-## install: Install all three binaries to GOPATH/bin (or ~/go/bin)
+## install: Install both binaries to GOPATH/bin (or ~/go/bin)
 install:
 	$(GO) install -ldflags "$(LDFLAGS)" $(CMD_VAULTD)
 	$(GO) install -ldflags "$(LDFLAGS)" $(CMD_VAULT)
-	$(GO) install -ldflags "$(LDFLAGS)" $(CMD_AUDIT)
-	@echo "  installed vaultd, vault, and vault-audit"
+	@echo "  installed vaultd and vault"
 
 # ── Clean ─────────────────────────────────────────────────────────────────────
 

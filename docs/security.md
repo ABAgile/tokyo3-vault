@@ -214,34 +214,31 @@ Every state-changing operation, every read of a secret value, and authentication
 
 ### Architecture (PCI-DSS aligned)
 
-Audit uses a two-process design with credential separation between the vault server and the audit tool:
+NATS JetStream is the **sole authoritative store** for audit events; there is no separate projection database. Both write and read paths run through `vaultd` itself:
 
 ```
-vaultd serve (publisher credential)
-    │ Sink.Log → NATS JetStream "vault_audit" stream
-    │            (DenyDelete, DenyPurge, FileStorage, 400-day retention)
+vaultd serve / mutating handler
+    │ logAudit → journal.NewJSONSink[Entry].Append
+    │            → NATS JetStream "vault_audit" stream
+    │              (DenyDelete, DenyPurge, FileStorage, 400-day retention)
     │
-vault-audit consume (subscriber credential)
-    └── Fetch → decode → UpsertAuditLog → Audit DB
+    ├── /portal/admin/audit/sse → journal/sse.Handler  (live tail in browser)
+    └── vaultd audit-query     → journal/jetstream.Source (one-shot CLI)
 ```
 
-Querying is handled entirely by `vault-audit query`, which reads directly from the audit DB. `vaultd` has no connection to the audit database at runtime.
-
-**Fail-closed**: `logAudit` returns an error; every handler that calls it checks the return value. If the publish to JetStream fails, the handler writes HTTP 500 and discards the response — the sensitive operation is never considered complete without a durable audit record.
+**Fail-closed**: `logAudit` returns an error; every handler that calls it checks the return value. If the publish to JetStream fails, the handler writes HTTP 503 and discards the response — the sensitive operation is never considered complete without a durable audit record.
 
 **Tamper evidence**: the NATS stream is configured with `DenyDelete` and `DenyPurge`, so no individual message or the entire stream can be deleted via the NATS API. `FileStorage` ensures records survive restarts.
 
-**Stream provisioning**: `vaultd`'s publisher credential is PUBLISH-only on `vault.audit.events` and intentionally lacks stream-management rights. The `vault_audit` stream must therefore exist before the first publish — if absent, JetStream rejects the publish, `logAudit` returns an error, and the handler 500s (fail-closed). Provision the stream out-of-band: the bundled `docker-compose.yml` runs a `natsbox` sidecar that creates it idempotently on startup; for hand-rolled deployments either run `vault-audit consume` once (its `CreateOrUpdateStream` is idempotent and uses the same parameters) or use `nats stream add vault_audit --subjects 'vault.audit.events' --retention limits --storage file --max-age 9600h --deny-delete --deny-purge`.
+**Stream provisioning**: `vaultd`'s NATS credential is PUBLISH + CONSUME on `vault.audit.events` and intentionally lacks stream-management rights. The `vault_audit` stream must therefore exist before the first publish — if absent, JetStream rejects the publish, `logAudit` returns an error, and the handler 503s (fail-closed). Provision the stream out-of-band: the bundled `docker-compose.yml` runs a `natsbox` sidecar that creates it idempotently on startup; for hand-rolled deployments use `nats stream add vault_audit --subjects 'vault.audit.events' --retention limits --storage file --max-age 9600h --deny-delete --deny-purge`.
 
-**Credential separation** (five distinct identities):
+**Credential separation** (three distinct identities):
 
 | Identity | Rights | Used by |
 |----------|--------|---------|
-| `vault_app` | DML-only on main DB | `vaultd serve` (runtime) |
-| `vault` (admin) | DDL on main DB | `vaultd serve` (startup migration only) |
-| `nats_publisher` | PUBLISH-only on `vault.audit.events` | `vaultd serve` |
-| `nats_consumer` | SUBSCRIBE + consumer management | `vault-audit consume` |
-| `vault_audit` | DDL + INSERT + SELECT on audit DB | `vault-audit` (both subcommands) |
+| `vault_app` | DML-only on main DB | `vaultd` (runtime) |
+| `vault` (admin) | DDL on main DB | `vaultd` (startup migration only) |
+| `vaultd-nats-client` | PUBLISH + CONSUME on `vault.audit.events` | `vaultd` (publish path + audit-tail page + `audit-query` CLI) |
 
 ### Covered events
 

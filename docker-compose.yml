@@ -1,21 +1,17 @@
-# docker-compose.yml — sample deployment: vaultd + Postgres + NATS JetStream + vault-audit
+# docker-compose.yml — sample deployment: vaultd + Postgres + NATS JetStream
 #
-# This sample wires all four components together without inter-service mTLS.
+# This sample wires the three components together without inter-service mTLS.
 # For production hardening add:
-#   VAULT_NATS_CERT / VAULT_NATS_KEY / VAULT_NATS_CA           (vaultd publisher)
-#   VAULT_AUDIT_NATS_CERT / VAULT_AUDIT_NATS_KEY / VAULT_AUDIT_NATS_CA (vault-audit consumer)
-#   VAULT_AUDIT_DB_CERT / VAULT_AUDIT_DB_KEY / VAULT_AUDIT_DB_CA  (audit DB mTLS)
+#   VAULT_NATS_CERT / VAULT_NATS_KEY / VAULT_NATS_CA   (vaultd publisher + reader)
 #
 # Required env vars (set in shell or .env file):
 #   VAULT_MASTER_KEY            64-char hex key  (vault keygen)
 #   VAULT_ADMIN_DB_PASSWORD     main vault DB admin password (DDL owner, runs migrations)
 #   VAULT_DB_PASSWORD           main vault DB app password (DML-only)
-#   VAULT_AUDIT_DB_PASSWORD     audit DB password (audit owner)
 #
-# Optional (usernames default to vault_admin / vault_app / vault_audit):
+# Optional (usernames default to vault_admin / vault_app):
 #   VAULT_ADMIN_DB_USERNAME  main vault DB admin username (default: vault_admin)
 #   VAULT_DB_USERNAME        main vault DB app username   (default: vault_app)
-#   VAULT_AUDIT_DB_USERNAME  audit DB username            (default: vault_audit)
 #
 # Note: DB credentials and usernames above are only applied on first startup when
 # the data volume is empty (postgres initdb). Changing them after the volume is
@@ -34,10 +30,10 @@ services:
     ports:
       - "${POSTGRES_PORT:-5433}:5432"
     environment:
-      PG_INIT_SCRIPT:     /shared/pg-scripts/db-init.sh
-      POSTGRES_USER:      ${VAULT_ADMIN_DB_USERNAME:-vault_admin}
-      POSTGRES_PASSWORD:  ${VAULT_ADMIN_DB_PASSWORD:?VAULT_ADMIN_DB_PASSWORD is required}
-      POSTGRES_DB:        vault
+      PG_INIT_SCRIPT:    /shared/pg-scripts/db-init.sh
+      POSTGRES_USER:     ${VAULT_ADMIN_DB_USERNAME:-vault_admin}
+      POSTGRES_PASSWORD: ${VAULT_ADMIN_DB_PASSWORD:?VAULT_ADMIN_DB_PASSWORD is required}
+      POSTGRES_DB:       vault
       VAULT_DB_USERNAME: ${VAULT_DB_USERNAME:-vault_app}
       VAULT_DB_PASSWORD: ${VAULT_DB_PASSWORD:?VAULT_DB_PASSWORD is required}
     volumes:
@@ -50,28 +46,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # ── Dedicated audit database (separate from the main vault DB) ────────────
-  audit-db:
-    image: postgres:17-alpine
-    entrypoint: ["sh", "/shared/pg-scripts/pg-entrypoint.sh"]
-    ports:
-      - "${AUDIT_DB_PORT:-5434}:5432"
-    environment:
-      PG_INIT_SCRIPT:    /shared/pg-scripts/audit-db-init.sh
-      POSTGRES_USER:     ${VAULT_AUDIT_DB_USERNAME:-vault_audit}
-      POSTGRES_PASSWORD: ${VAULT_AUDIT_DB_PASSWORD:?VAULT_AUDIT_DB_PASSWORD is required}
-      POSTGRES_DB:       vault_audit
-    volumes:
-      - shared_data:/shared:ro
-      - audit_db_data:/var/lib/postgresql/data
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${VAULT_AUDIT_DB_USERNAME:-vault_audit} -d vault_audit"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  # ── NATS JetStream (authoritative audit event stream) ─────────────────────
+  # ── NATS JetStream (authoritative audit event store) ──────────────────────
   nats:
     image: nats:2-alpine
     command: ["--jetstream", "--store_dir", "/data", "-m", "8222"]
@@ -87,13 +62,13 @@ services:
       retries: 5
 
   # ── nats-box: stream provisioner + interactive shell ──────────────────────
-  # On startup, ensures the vault_audit JetStream stream exists. Without this
-  # step, vaultd's first audit publish would fail (no stream covers the subject)
-  # and every audit-emitting handler would 500 until vault-audit ran and created
-  # the stream. Provisioning it here keeps vaultd's publisher credential
-  # PUBLISH-only and prevents event loss when vault-audit is offline.
+  # On startup, ensures the vault_audit JetStream stream exists. Without it,
+  # vaultd's first audit publish would fail (no stream covers the subject)
+  # and every audit-emitting handler would 503 fail-closed. Provisioning it
+  # here keeps vaultd's NATS credential PUBLISH+CONSUME-only.
   #
-  # After provisioning the container stays alive (tail -f /dev/null) so you can:
+  # After provisioning the container stays alive (tail -f /dev/null) so you
+  # can:
   #   docker compose exec natsbox nats stream info vault_audit
   #   docker compose exec natsbox nats sub 'vault.audit.events'
   natsbox:
@@ -126,8 +101,8 @@ services:
 
   # ── API server ────────────────────────────────────────────────────────────
   # Exposes HTTPS on ${VAULT_PORT:-8443}. Browse https://vault.localhost:8443;
-  # the CLI uses --server https://vault.localhost:8443. Use mkcert (via certs/gen.sh)
-  # to issue a browser-trusted server cert.
+  # the CLI uses --server https://vault.localhost:8443. Use mkcert (via
+  # certs/gen.sh) to issue a browser-trusted server cert.
   vaultd:
     build: .
     image: abagile/vault:${VERSION:-latest}
@@ -140,7 +115,8 @@ services:
       # Runtime DSN: DML-only after schema is in place.
       VAULT_DATABASE_URL:       postgres://${VAULT_DB_USERNAME:-vault_app}:${VAULT_DB_PASSWORD}@db:5432/vault?sslmode=disable
       VAULT_ADDR:               :443
-      # Audit sink: publish events to NATS JetStream (fail-closed).
+      # Audit sink + source (live tail page + `vaultd audit-query` CLI):
+      # publish to and read from the vault_audit JetStream stream.
       VAULT_NATS_URL:           nats://nats:4222
     depends_on:
       db:
@@ -157,25 +133,7 @@ services:
       retries: 3
       start_period: 10s
 
-  # ── vault-audit: NATS → audit DB projection writer ────────────────────────
-  vault-audit:
-    image: abagile/vault:${VERSION:-latest}
-    entrypoint: ["/usr/local/bin/vault-audit", "consume"]
-    environment:
-      VAULT_AUDIT_NATS_URL:      nats://nats:4222
-      # Single DSN: vault_audit owner has DDL + INSERT + SELECT rights.
-      VAULT_AUDIT_DATABASE_URL:  postgres://${VAULT_AUDIT_DB_USERNAME:-vault_audit}:${VAULT_AUDIT_DB_PASSWORD}@audit-db:5432/vault_audit?sslmode=disable
-    depends_on:
-      audit-db:
-        condition: service_healthy
-      nats:
-        condition: service_healthy
-      natsbox:
-        condition: service_healthy
-    restart: unless-stopped
-
 volumes:
   shared_data:
   db_data:
-  audit_db_data:
   nats_data:

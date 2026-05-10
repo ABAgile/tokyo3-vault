@@ -170,6 +170,24 @@ func main() {
 		return
 	}
 
+	if subcommand == "audit-query" {
+		// Dispatch before any DB / key-provider init — `audit-query` is a
+		// pure NATS reader that needs nothing else.
+		limit := 100
+		for i := 2; i+1 < len(os.Args); i += 2 {
+			if os.Args[i] == "--limit" {
+				if n, err := strconv.Atoi(os.Args[i+1]); err == nil {
+					limit = n
+				}
+			}
+		}
+		if err := runAuditQuery(ctx, limit); err != nil {
+			fmt.Fprintf(os.Stderr, "audit-query: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	kp, err := openKeyProvider(ctx, log)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "key provider: %v\n", err)

@@ -21,7 +21,7 @@ gofmt -s -w .
 # Start a local server (auto-generates VAULT_MASTER_KEY + SQLite on first run)
 make run-server
 
-# Start with docker compose (Postgres + NATS + vault-audit)
+# Start with docker compose (Postgres + NATS)
 make docker-up
 
 # mTLS overlay (generates certs first, then brings up with mutual TLS)
@@ -36,13 +36,10 @@ Always run in order: `gofmt -s -w .` → `make test` → `staticcheck ./...` bef
 ```
 cmd/
   vault/        CLI client entry point
-  vaultd/       Server entry point (startup, env parsing, TLS config)
-  vault-audit/  Standalone audit pipeline — consume (NATS→DB) and query subcommands
+  vaultd/       Server entry point (startup, env parsing, TLS config); subcommands: serve (default), migrate-keys, audit-query
 internal/
   api/          HTTP handlers and middleware
-  audit/        Audit pipeline — Entry, Sink, JetStreamSink, Store interface
-    postgres/   Audit DB PostgreSQL backend (Open, Migrate, UpsertAuditLog, ListAuditLogs) + migrations/
-    sqlite/     Audit DB SQLite backend (Open, ensureSchema inline)
+  audit/        Audit Entry shape + wire constants (Subject, StreamName, StreamMaxAge); read/write through base/journal
   auth/         Password hashing + token generation/validation
   build/        Version metadata
   crypto/       AES-256-GCM helpers, KeyProvider interface, ProjectKeyCache
@@ -72,11 +69,9 @@ To add a migration:
 2. Test with `go test ./internal/store/...`.
 3. Do not modify existing migration files — always add a new one.
 
-### Audit DB
+### Audit storage
 
-Audit DB migrations live in `internal/audit/postgres/migrations/` (Postgres only — the SQLite dev path handles schema inline via `ensureSchema`). They are embedded into the `internal/audit/postgres` package and run by `vault-audit consume` at startup using `VAULT_AUDIT_DATABASE_URL` (the `vault_audit` owner role).
-
-Role setup (users, grants) is handled once at postgres first-start by `postgres/audit-db-init.sh`. Schema (tables, indexes) is owned by the versioned migration files.
+There is no audit database. Audit events are published synchronously to the NATS JetStream stream `vault_audit` (subject `vault.audit.events`) — the stream itself is the authoritative store (FileStorage, DenyDelete, DenyPurge, 400-day retention). Read back live in the browser at `/portal/admin/audit` or from the terminal with `vaultd audit-query`.
 
 ## Adding a new dynamic backend type
 
@@ -159,7 +154,7 @@ Audit: no-op sink (`VAULT_NATS_URL` unset; server logs a warning).
 
 #### Mode 2 — Postgres with password auth
 
-Standard production setup: Postgres for the main store and audit DB, NATS for the audit pipeline, AWS KMS for key management.
+Standard production setup: Postgres for the main store, NATS JetStream for the audit journal (sole authoritative store — no projection DB), AWS KMS for key management.
 
 ```
 # Key provider
@@ -173,12 +168,8 @@ VAULT_DATABASE_URL=postgres://vault_app:<app-pw>@db:5432/vault
 VAULT_API_CERT=/etc/vault/tls.crt
 VAULT_API_KEY=/etc/vault/tls.key
 
-# Audit sink (vaultd publisher)
+# Audit sink + reader (vaultd publishes and reads on the same connection)
 VAULT_NATS_URL=nats://nats:4222
-
-# vault-audit (separate process)
-VAULT_AUDIT_NATS_URL=nats://nats:4222
-VAULT_AUDIT_DATABASE_URL=postgres://vault_audit:<audit-pw>@auditdb:5432/vault_audit
 ```
 
 The `docker-compose.yml` ships a reference implementation of this mode.
@@ -209,22 +200,11 @@ VAULT_API_CERT=/etc/vault/tls.crt
 VAULT_API_KEY=/etc/vault/tls.key
 VAULT_API_CLIENT_CA=/etc/vault/client-ca.crt
 
-# Audit sink over mTLS
+# Audit sink + reader over mTLS
 VAULT_NATS_URL=tls://nats:4222
 VAULT_NATS_CERT=/etc/vault/nats.crt
 VAULT_NATS_KEY=/etc/vault/nats.key
 VAULT_NATS_CA=/etc/vault/nats-ca.crt
-
-# vault-audit (separate process)
-VAULT_AUDIT_NATS_URL=tls://nats:4222
-VAULT_AUDIT_NATS_CERT=/etc/vault/audit-nats.crt
-VAULT_AUDIT_NATS_KEY=/etc/vault/audit-nats.key
-VAULT_AUDIT_NATS_CA=/etc/vault/nats-ca.crt
-
-VAULT_AUDIT_DATABASE_URL=postgres://vault_audit@auditdb:5432/vault_audit?sslmode=verify-full
-VAULT_AUDIT_DB_CERT=/etc/vault/audit-db.crt
-VAULT_AUDIT_DB_KEY=/etc/vault/audit-db.key
-VAULT_AUDIT_DB_CA=/etc/vault/db-ca.crt
 ```
 
 The `docker-compose.mtls.yml` overlay ships a reference implementation of this mode. Run `bash certs/gen.sh` to generate development certificates, then `make docker-up-mtls`.
@@ -235,7 +215,7 @@ The `docker-compose.mtls.yml` overlay ships a reference implementation of this m
 
 SQLite is appropriate for single-node development or small deployments with external backup. For multi-instance or high-availability deployments, use Postgres. The store interface abstracts all persistence; no application logic changes are needed when switching.
 
-The audit DB is always Postgres in production (set `VAULT_AUDIT_DATABASE_URL`). The SQLite fallback (`VAULT_AUDIT_DB_PATH`) is for local development only — `vault-audit consume`'s `ensureSchema` handles schema creation automatically for SQLite, so no migrations directory is needed.
+There is no audit database. Audit events live in the NATS JetStream stream `vault_audit` (FileStorage + DenyDelete + DenyPurge + 400-day retention) and are read back via the `/portal/admin/audit` live-tail page or `vaultd audit-query` CLI.
 
 ### TLS certificate rotation
 
@@ -257,7 +237,7 @@ Backend types are registered in a compile-time map. There is no plugin system. A
 
 ### Audit DB projection grows indefinitely
 
-The NATS JetStream `AUDIT` stream has built-in 400-day retention (`StreamMaxAge`), satisfying PCI-DSS 10.5. However, the queryable audit DB populated by `vault-audit consume` has no pruning. Implement retention externally: periodically delete rows older than your retention window, copy them to object storage first, or use Postgres table partitioning.
+The NATS JetStream `vault_audit` stream has built-in 400-day retention (`StreamMaxAge`), satisfying PCI-DSS 10.5. Records older than the retention window are removed by NATS automatically; copy them to long-term archival object storage before that window if your compliance regime requires longer retention.
 
 ### Lease revocation is not transactional
 

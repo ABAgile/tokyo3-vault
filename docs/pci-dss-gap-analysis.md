@@ -11,7 +11,7 @@
 
 ## Scope
 
-The vault server stores, transmits, and brokers access to secrets that may include cardholder data (CHD) or sensitive authentication data (SAD). Analysis covers the application codebase (`vaultd`, `vault`, `vault-audit`). Physical controls, network segmentation, and organisation-level policy requirements are flagged where they affect compliance posture but are noted as out-of-code-scope.
+The vault server stores, transmits, and brokers access to secrets that may include cardholder data (CHD) or sensitive authentication data (SAD). Analysis covers the application codebase (`vaultd`, `vault`). Physical controls, network segmentation, and organisation-level policy requirements are flagged where they affect compliance posture but are noted as out-of-code-scope.
 
 ## Status Legend
 
@@ -114,7 +114,7 @@ The vault server stores, transmits, and brokers access to secrets that may inclu
 | 10-2 | 10.2.1.a | Successful + failed authentication logged | ✅ | `auth.login`, `auth.login_failed`, `auth.signup`, `auth.logout` all covered; fail-closed | — |
 | 10-3 | 10.2.1.b | Actions by privileged users logged | ✅ | Server admin actions (`user.create`, `scim.*`, `token.*`) are audited | — |
 | 10-4 | 10.2.1.c | Changes to audit trail logged | ⚠️ | NATS stream `DenyDelete`/`DenyPurge` prevents in-stream deletion. Schema changes via admin DSN are not themselves audited by the vault. | Document admin DB access controls; consider DDL audit at DB level |
-| 10-5 | 10.3.2 | Audit logs protected from destruction | ✅ | Separate `vault-audit` process with distinct credential; NATS `DenyDelete`, `DenyPurge`, `FileStorage` | — |
+| 10-5 | 10.3.2 | Audit logs protected from destruction | ✅ | NATS JetStream `vault_audit` stream with `DenyDelete`, `DenyPurge`, `FileStorage`; sole authoritative store, read back via `vaultd audit-query` or `/portal/admin/audit` | — |
 | 10-6 | 10.5.1 | Retain ≥ 12 months; ≥ 3 months immediately available | ✅ | NATS stream `MaxAge = 400 days`; JetStream consumer makes recent events immediately queryable | — |
 | 10-7 | 10.5.1 | Audit DB retention bounded | ⚠️ | Audit DB (Postgres projection) grows indefinitely. NATS stream is authoritative at 400 days, but the queryable DB has no pruning. | Add scheduled `DELETE FROM audit_logs WHERE created_at < now() - interval '400 days'` |
 | 10-8 | 10.6.1 | Time synchronisation (NTP, stratum ≤ 2) | ⚠️ | Vault uses `time.Now().UTC()` for all timestamps. NTP is not referenced in deployment documentation. | Add NTP configuration requirement to `docs/contributing.md` deployment notes |
@@ -176,7 +176,7 @@ The vault server stores, transmits, and brokers access to secrets that may inclu
 | Ref | Gap | Req | File / Location | Estimated Effort |
 |-----|-----|-----|-----------------|-----------------|
 | 6-2 | `govulncheck` + Dependabot in CI | 6.3.3 | CI config | XS |
-| 10-7 | Audit DB retention pruning | 10.5.1 | `cmd/vault-audit/` or scheduled SQL | S |
+| 10-7 | Long-term archival of expired audit records | 10.5.1 | External (NATS auto-prunes after `StreamMaxAge`; copy to S3/GCS before expiry if longer retention is required) | S |
 | 8-12 | Machine token max TTL / mandatory expiry | 8.6.1, 8.6.3 | `internal/api/tokens.go:handleCreateToken` | S |
 | 10-9 | Health/metrics endpoint + NATS disconnect alert | 10.7.1 | New `GET /healthz` handler; NATS reconnect hook | M |
 | 7-5 | Admin access-report endpoint | 7.3.2 | New handler in `internal/api/` | S |

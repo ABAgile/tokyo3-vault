@@ -2,7 +2,7 @@
 
 > Source: [`internal/model/model.go`](../internal/model/model.go)
 
-> **Note on `AUDIT_LOG`**: this entity lives in a physically separate audit database (see `VAULT_AUDIT_DATABASE_URL` / `VAULT_AUDIT_DB_PATH`), not in the main vault DB. Its `actor_id`, `project_id`, and `env_id` columns are plain TEXT — there are no enforced foreign keys. Relationship arrows to PROJECT, ENVIRONMENT, and TOKEN are logical documentation only. Schema is managed by `internal/audit/postgres/migrations/` and applied by `vault-audit consume` at startup.
+> **Note on `AUDIT_LOG`**: this entity lives in NATS JetStream (stream `vault_audit`, subject `vault.audit.events`), not in any database. Its `actor_id`, `project_id`, and `env_id` are plain string fields on the JSON payload — there are no enforced foreign keys. Relationship arrows to PROJECT, ENVIRONMENT, and TOKEN are logical documentation only. View entries with `vaultd audit-query` or the `/portal/admin/audit` live-tail page.
 
 ```mermaid
 erDiagram
@@ -78,8 +78,8 @@ erDiagram
     AUDIT_LOG {
         string id         PK
         string action     "e.g. secret.set"
-        string actor_id   "TOKEN id; no FK — separate audit DB"
-        string project_id "PROJECT id; no FK — separate audit DB"
+        string actor_id   "TOKEN id; no FK — JetStream payload only"
+        string project_id "PROJECT id; no FK — JetStream payload only"
         string env_id     "ENVIRONMENT id; no FK — nullable"
         string resource   "nullable"
         string metadata   "free-form JSON; nullable"

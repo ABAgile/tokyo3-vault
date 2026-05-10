@@ -37,35 +37,34 @@ Vault is a self-hosted secrets manager. It stores encrypted secrets, issues shor
    ┌────────────────────────┐
    │   NATS JetStream       │
    │   vault_audit stream   │
-   │   (authoritative,      │
-   │    DenyDelete+Purge,   │
-   │    FileStorage, 400 d) │
+   │   (sole authoritative  │
+   │    store; DenyDelete + │
+   │    Purge, FileStorage, │
+   │    400 d retention)    │
    └────────────────────────┘
-              ▲
-              │ subscribe
-   ┌──────────┴──────────────┐        ┌───────────────────────────┐
-   │   vault-audit consume   │ upsert │   Audit DB                │
-   │   (separate process)    │───────►│   (PG or SQLite)          │
-   │   vault_audit cred      │        │   vault_audit cred        │
-   └─────────────────────────┘        └───────────────────────────┘
-                                                  ▲
-                                                  │ query
-                                       ┌──────────┴──────────────┐
-                                       │   vault-audit query     │
-                                       │   vault_audit cred      │
-                                       └─────────────────────────┘
+         ▲                ▲
+         │ Subscribe      │ Subscribe
+         │ (last 100      │ (last N,
+         │  + tail)       │  one-shot)
+   ┌─────┴────────┐ ┌─────┴──────────┐
+   │ /portal/admin│ │ vaultd         │
+   │ /audit/sse   │ │ audit-query    │
+   │ (browser     │ │ (terminal      │
+   │  live tail)  │ │  one-shot CLI) │
+   └──────────────┘ └────────────────┘
 ```
 
 ## Components
 
 ### `cmd/vaultd` — server binary
 
-Two subcommands:
+Subcommands:
 
 | Subcommand | Purpose |
 |------------|---------|
-| `vaultd serve` | HTTPS API server (default) |
+| `vaultd` (no arg) | HTTPS API server (default) |
 | `vaultd migrate-keys` | One-time migration to per-project PEKs |
+| `vaultd audit-query [--limit N]` | Terminal viewer for the audit JetStream stream — prints the most recent N events as JSON, then exits. Shares the journal/jetstream.Source primitive used by /portal/admin/audit. |
 
 **`vaultd serve` startup sequence:**
 
@@ -130,20 +129,19 @@ Four abstractions:
 
 The interface is intentionally constrained so that new store backends can be added without touching API code.
 
-### `internal/audit` — audit pipeline
+### `internal/audit` — audit event types
 
-The audit subsystem uses CQRS: JetStream is the authoritative write record; the audit database is a queryable projection rebuilt by `vault-audit consume`.
+JetStream is the **sole** authoritative store for audit events; there is no separate projection database. `internal/audit` keeps only the wire shape (`Entry` struct + `Subject` / `StreamName` / `StreamMaxAge` constants); the publish path goes through `journal.NewJSONSink[Entry]` and the read path through `journal/jetstream.Source` — both from `tokyo3-base`.
 
 | Component | Package | Credential |
 |-----------|---------|------------|
-| `JetStreamSink` | `internal/audit` | `nats_publisher` — PUBLISH-only on `vault.audit.events` |
-| `postgres.DB` | `internal/audit/postgres` | `vault_audit` — DDL + INSERT + SELECT on audit DB |
-| `sqlite.DB` | `internal/audit/sqlite` | file-level access (dev/single-node) |
-| NATS consumer | `cmd/vault-audit` | `nats_consumer` — SUBSCRIBE + consumer management |
+| Publisher (audit.Append) | `internal/api/audit.go` | `nats_publisher` — PUBLISH on `vault.audit.events` |
+| Live tail (browser SSE) | `internal/api/audit_stream.go` + `base/journal/sse` | `nats_consumer` — CONSUME on `vault.audit.events` |
+| CLI viewer (`vaultd audit-query`) | `cmd/vaultd/audit.go` | same NATS credential as the server |
 
-The AUDIT JetStream stream is configured with `DenyDelete`, `DenyPurge`, and `FileStorage` to provide tamper evidence. `StreamMaxAge` is 400 days (PCI-DSS requires 12 months).
+The `vault_audit` JetStream stream is configured with `DenyDelete`, `DenyPurge`, and `FileStorage` to provide tamper evidence. `StreamMaxAge` is 400 days (PCI-DSS requires 12 months).
 
-All audit writes are **fail-closed**: if `Sink.Log` returns an error, the request returns HTTP 500 without completing the sensitive operation.
+All audit writes are **fail-closed**: if the JetStream publish fails, the request returns HTTP 503 without completing the sensitive operation.
 
 ### `internal/dynamic` — dynamic credential backends
 
@@ -210,16 +208,4 @@ Key relationships:
 | `VAULT_NATS_KEY` | no | — | mTLS client key PEM for publisher |
 | `VAULT_NATS_CA` | no | — | CA PEM for NATS server verification |
 
-**`vault-audit` — standalone audit pipeline tool (separate binary, separate credentials)**
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `VAULT_AUDIT_NATS_URL` | yes (consume) | — | NATS server URL |
-| `VAULT_AUDIT_NATS_CERT` | no | — | mTLS client cert PEM for consumer |
-| `VAULT_AUDIT_NATS_KEY` | no | — | mTLS client key PEM for consumer |
-| `VAULT_AUDIT_NATS_CA` | no | — | CA PEM for NATS server verification |
-| `VAULT_AUDIT_DATABASE_URL` | one of two | — | Postgres DSN (DDL + INSERT + SELECT; `vault_audit` owner role) |
-| `VAULT_AUDIT_DB_PATH` | one of two | `audit.db` (consume) | SQLite path |
-| `VAULT_AUDIT_DB_CERT` | no | — | Client cert PEM for audit DB mTLS |
-| `VAULT_AUDIT_DB_KEY` | no | — | Client key PEM for audit DB mTLS |
-| `VAULT_AUDIT_DB_CA` | no | — | CA cert PEM for audit DB server verification |
+`vaultd audit-query` reuses the server's `VAULT_NATS_*` env vars — there is no separate audit binary or audit-DB credentials anymore.

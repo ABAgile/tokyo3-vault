@@ -264,7 +264,7 @@ vaultd serves a server-rendered admin portal at `/portal/*` on the same TLS list
 - **Admin → SCIM Tokens** — server-admin only. Issue/delete the bearer tokens auth uses to push users and groups to vault.
 - **Admin → Group → Role** — server-admin only. UI for the SCIM group→role mappings table (translates IdP groups into vault project memberships when a SCIM group syncs).
 
-Audit events are still emitted to NATS JetStream by every mutating handler; query them with the `vault-audit query` CLI. vaultd itself does not connect to the audit database.
+Audit events are emitted to NATS JetStream by every mutating handler. View them live in the browser at `/portal/admin/audit` (server-admin only) or from the terminal with `vaultd audit-query [--limit N]`.
 
 **Sign in**
 
@@ -364,28 +364,21 @@ When `VAULT_NATS_URL` is set, `vaultd` runs **two independent NATS pipelines** s
 
 If `VAULT_NATS_URL` is unset both pipelines are no-ops and `vaultd` logs to stdout only. If the URL is set but the dial for the log-shipping connection fails, that pipeline silently falls back to stdout-only and the audit sink's separate connection is unaffected (different concerns, different `*nats.Conn`). In production all three TLS variables must be set together for mTLS.
 
-The audit pipeline expects the JetStream stream `vault_audit` to already exist — `vaultd`'s publisher credential is PUBLISH-only on `vault.audit.events` and does not have stream-management rights. The bundled `docker-compose.yml` provisions the stream via a small `natsbox` service (image `natsio/nats-box`) on first start; for hand-rolled deployments either run `vault-audit consume` once (its `CreateOrUpdateStream` is idempotent) or `nats stream add vault_audit --subjects 'vault.audit.events' --retention limits --storage file --max-age 9600h --deny-delete --deny-purge`.
+The audit pipeline expects the JetStream stream `vault_audit` to already exist — `vaultd`'s NATS credential is PUBLISH + CONSUME on `vault.audit.events` (no stream-management rights). The bundled `docker-compose.yml` provisions the stream via a small `natsbox` service (image `natsio/nats-box`) on first start; for hand-rolled deployments run `nats stream add vault_audit --subjects 'vault.audit.events' --retention limits --storage file --max-age 9600h --deny-delete --deny-purge`.
+
+The same stream is read back by:
+
+- **`/portal/admin/audit`** — live tail in the browser via SSE (last 100 + tail forward, with `Last-Event-ID` reconnect resume).
+- **`vaultd audit-query`** — terminal viewer; prints the most recent N events as one JSON object per line, then exits.
+
+Both readers use `journal/jetstream.Source` from `tokyo3-base`; same primitive, different framing.
 
 | Variable | Default | Description |
 |---|---|---|
-| `VAULT_NATS_URL` | — | NATS server URL; enables both pipelines when set |
-| `VAULT_NATS_CERT` | — | mTLS client certificate PEM path (publisher credential, used by both pipelines) |
+| `VAULT_NATS_URL` | — | NATS server URL; enables audit publish + read (and op-log shipping) when set |
+| `VAULT_NATS_CERT` | — | mTLS client certificate PEM path |
 | `VAULT_NATS_KEY` | — | mTLS client key PEM path |
 | `VAULT_NATS_CA` | — | CA certificate PEM path for NATS server verification |
-
-**`vault-audit` — standalone audit pipeline tool (separate binary):**
-
-| Variable | Default | Description |
-|---|---|---|
-| `VAULT_AUDIT_NATS_URL` | — | NATS server URL (required for `consume`) |
-| `VAULT_AUDIT_NATS_CERT` | — | mTLS client certificate PEM path (consumer credential) |
-| `VAULT_AUDIT_NATS_KEY` | — | mTLS client key PEM path |
-| `VAULT_AUDIT_NATS_CA` | — | CA certificate PEM path for NATS server verification |
-| `VAULT_AUDIT_DATABASE_URL` | — | Postgres DSN with DDL + INSERT + SELECT rights on audit DB |
-| `VAULT_AUDIT_DB_PATH` | `audit.db` (consume) | SQLite path for audit DB |
-| `VAULT_AUDIT_DB_CERT` | — | Client certificate PEM path for audit DB mTLS |
-| `VAULT_AUDIT_DB_KEY` | — | Client key PEM path for audit DB mTLS |
-| `VAULT_AUDIT_DB_CA` | — | CA certificate PEM path for audit DB server verification |
 
 ### vaultd subcommands
 
@@ -393,13 +386,7 @@ The audit pipeline expects the JetStream stream `vault_audit` to already exist �
 |---|---|
 | `vaultd` (no arg) | Start the API server (default) |
 | `vaultd migrate-keys` | Migrate existing projects to per-project envelope keys (PEKs). For each project without a PEK, generates a 32-byte PEK, wraps it with the server KEK/KMS, and re-wraps all secret DEKs so they are encrypted under the project PEK instead of the server KEK directly. Idempotent — already-migrated projects are skipped. New projects created after this version are migrated automatically at creation time. |
-
-### vault-audit subcommands
-
-| Subcommand | Description |
-|---|---|
-| `vault-audit consume` | Reads audit events from the NATS JetStream `AUDIT` stream and upserts them into the audit database. Uses `VAULT_AUDIT_NATS_*` and `VAULT_AUDIT_DATABASE_URL`/`VAULT_AUDIT_DB_PATH` — completely separate from the main `vault_app` credentials. Run as a separate process alongside `vaultd serve`. |
-| `vault-audit query` | Queries the audit database and prints matching entries. Flags: `--project-id`, `--env-id`, `--action`, `--limit`. |
+| `vaultd audit-query [--limit N]` | Print the most recent N audit events from the JetStream journal as JSON (default 100). Reads via `VAULT_NATS_URL` + `VAULT_NATS_CERT/KEY/CA` — no DB required. |
 
 `vaultd migrate-keys` requires the same env vars as the server (`VAULT_MASTER_KEY`/`VAULT_KMS_KEY_ID` and `VAULT_DATABASE_URL`/`VAULT_DB_PATH`). Run it once after upgrading to activate the three-level encryption hierarchy.
 
@@ -922,30 +909,20 @@ vault change-password --email bob@example.com
 
 ### Audit Log
 
-Audit log querying is handled by the standalone `vault-audit` tool, not the `vault` CLI. Run it wherever the audit database is accessible.
+Audit log querying is built into `vaultd` itself. Two ways to read:
 
 ```sh
-# Query all recent events (default: last 50)
-vault-audit query
+# Live tail in the browser (server-admin only)
+open https://vault.localhost:8443/portal/admin/audit
 
-# Filter by project or environment UUID
-vault-audit query --project-id <uuid> --env-id <uuid>
-
-# Filter by action
-vault-audit query --action secret.get
-
-# Increase result limit (max 500)
-vault-audit query --limit 200
+# Terminal viewer — prints the most recent N events as JSON (one per line)
+vaultd audit-query --limit 100
 ```
 
-| Flag | Description |
-|---|---|
-| `--project-id` | Filter by project UUID |
-| `--env-id` | Filter by environment UUID |
-| `--action` | Filter by action string (e.g. `secret.set`, `secret.get`) |
-| `--limit` | Max entries to return, 1–500 (default: 50) |
-
-`vault-audit query` reads directly from the audit database. Set `VAULT_AUDIT_DATABASE_URL` (Postgres) or `VAULT_AUDIT_DB_PATH` (SQLite) before running.
+`vaultd audit-query` reads directly from the JetStream stream via
+`VAULT_NATS_URL` + `VAULT_NATS_CERT/KEY/CA` — no database is involved.
+Filtering flags (`--action`, `--actor`, `--since`, …) are not implemented
+yet; pipe through `jq` for now.
 
 ---
 

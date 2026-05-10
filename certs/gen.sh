@@ -18,7 +18,7 @@ set -euo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # Load .env from the repo root if present — mirrors docker compose behaviour so
-# VAULT_ADMIN_DB_USERNAME / VAULT_DB_USERNAME / VAULT_AUDIT_DB_USERNAME stay in sync with the DSNs.
+# VAULT_ADMIN_DB_USERNAME / VAULT_DB_USERNAME stay in sync with the DSNs.
 REPO_ROOT="$(cd "$DIR/.." && pwd)"
 if [[ -f "$REPO_ROOT/.env" ]]; then
   set -a
@@ -28,7 +28,6 @@ if [[ -f "$REPO_ROOT/.env" ]]; then
 fi
 ADMIN_USERNAME="${VAULT_ADMIN_DB_USERNAME:-vault_admin}"
 APP_USERNAME="${VAULT_DB_USERNAME:-vault_app}"
-AUDIT_USERNAME="${VAULT_AUDIT_DB_USERNAME:-vault_audit}"
 
 step() { printf '  %-34s' "$1..."; }
 ok()   { echo "ok"; }
@@ -73,20 +72,17 @@ mkc_client() {
 # `.localhost` and any subdomain are reserved (RFC 6761) and resolve to
 # 127.0.0.1 on modern systems — no /etc/hosts entries needed. The docker
 # service hostname covers in-network access.
-mkc_server "vaultd-server"   vaultd   vault.localhost
-mkc_server "nats-server"     nats     nats.localhost
-mkc_server "db-server"       db       db.localhost
-mkc_server "audit-db-server" audit-db audit-db.localhost
+mkc_server "vaultd-server" vaultd vault.localhost
+mkc_server "nats-server"   nats   nats.localhost
+mkc_server "db-server"     db     db.localhost
 
 # ── Client certs — NATS (transport identity only) ────────────────────────────
-mkc_client "vaultd-nats-client"      vaultd
-mkc_client "vault-audit-nats-client" vault-audit
+mkc_client "vaultd-nats-client" vaultd
 
 # ── Client certs — PostgreSQL (CN must match the DB role for cert auth) ──────
 # Role name first → fork sets it as Subject CN. SAN follows.
-mkc_client "vaultd-admin-db-client"  "$ADMIN_USERNAME"  vaultd
-mkc_client "vaultd-app-db-client"    "$APP_USERNAME"    vaultd
-mkc_client "vault-audit-db-client"   "$AUDIT_USERNAME"  vault-audit
+mkc_client "vaultd-admin-db-client" "$ADMIN_USERNAME" vaultd
+mkc_client "vaultd-app-db-client"   "$APP_USERNAME"   vaultd
 
 # ── Workload cert — SPIFFE URI SAN for vault API principal auth ──────────────
 mkc_client "webapp-vaultd-workload" spiffe://vault.internal/workload/webapp
