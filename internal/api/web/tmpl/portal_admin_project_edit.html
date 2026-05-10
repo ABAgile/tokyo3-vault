@@ -16,13 +16,15 @@
         {{range .Envs}}
         <tr>
           <td>{{.Name}}</td>
-          <td class="mono"><a href="/portal/admin/projects/{{$.Project.Slug}}/envs/{{.Slug}}/secrets">{{.Slug}}</a></td>
+          <td class="mono"><a href="/portal/projects/{{$.Project.Slug}}/envs/{{.Slug}}/secrets">{{.Slug}}</a></td>
           <td style="white-space:nowrap">
-            <a href="/portal/admin/projects/{{$.Project.Slug}}/envs/{{.Slug}}/secrets" class="btn btn-secondary btn-sm">Secrets</a>
-            <form method="POST" action="/portal/admin/projects/{{$.Project.Slug}}/envs/{{.Slug}}/delete" style="display:inline"
+            <a href="/portal/projects/{{$.Project.Slug}}/envs/{{.Slug}}/secrets" class="btn btn-secondary btn-sm">Secrets</a>
+            {{if $.CanEdit}}
+            <form method="POST" action="/portal/projects/{{$.Project.Slug}}/envs/{{.Slug}}/delete" style="display:inline"
                   onsubmit="return confirm('Delete environment {{.Slug}}? Secrets in this env are also deleted.')">
               <button type="submit" class="btn btn-secondary btn-sm">Delete</button>
             </form>
+            {{end}}
           </td>
         </tr>
         {{else}}
@@ -31,8 +33,9 @@
       </tbody>
     </table>
   </div>
+  {{if .CanEdit}}
   <div class="card-body">
-    <form method="POST" action="/portal/admin/projects/{{.Project.Slug}}/envs/new" style="display:flex;gap:8px;align-items:end">
+    <form method="POST" action="/portal/projects/{{.Project.Slug}}/envs/new" style="display:flex;gap:8px;align-items:end">
       <div style="flex:1">
         <label for="env_name" style="font-size:13px">New environment name</label>
         <input type="text" id="env_name" name="name" placeholder="prod" required>
@@ -40,6 +43,7 @@
       <button type="submit" class="btn btn-primary btn-sm">Add env</button>
     </form>
   </div>
+  {{end}}
 </div>
 
 <div class="card mb-4">
@@ -54,11 +58,13 @@
           <td>{{.Role}}</td>
           <td class="text-muted">{{if .EnvSlug}}env: {{.EnvSlug}}{{else}}project{{end}}</td>
           <td style="white-space:nowrap">
-            <form method="POST" action="/portal/admin/projects/{{$.Project.Slug}}/members/{{.UserID}}/delete" style="display:inline"
+            {{if $.CanOwn}}
+            <form method="POST" action="/portal/projects/{{$.Project.Slug}}/members/{{.UserID}}/delete" style="display:inline"
                   onsubmit="return confirm('Remove this member?')">
               {{if .EnvSlug}}<input type="hidden" name="env_slug" value="{{.EnvSlug}}">{{end}}
               <button type="submit" class="btn btn-secondary btn-sm">Remove</button>
             </form>
+            {{end}}
           </td>
         </tr>
         {{else}}
@@ -67,8 +73,9 @@
       </tbody>
     </table>
   </div>
+  {{if .CanOwn}}
   <div class="card-body">
-    <form method="POST" action="/portal/admin/projects/{{.Project.Slug}}/members/new" style="display:flex;gap:8px;align-items:end;flex-wrap:wrap">
+    <form method="POST" action="/portal/projects/{{.Project.Slug}}/members/new" style="display:flex;gap:8px;align-items:end;flex-wrap:wrap">
       <div style="flex:2;min-width:220px">
         <label for="email" style="font-size:13px">Email</label>
         <input type="email" id="email" name="email" required>
@@ -88,8 +95,10 @@
       <button type="submit" class="btn btn-primary btn-sm">Add member</button>
     </form>
   </div>
+  {{end}}
 </div>
 
+{{if .CanOwn}}
 <div class="card mb-4">
   <div class="card-header"><h2>Danger zone</h2></div>
   <div class="card-body" style="display:flex;flex-direction:column;gap:12px">
@@ -98,7 +107,7 @@
         <strong>Rotate envelope key</strong>
         <div class="text-muted" style="font-size:13px">Generates a new project envelope key (PEK) and re-encrypts every secret and dynamic backend config in this project. Safe but expensive on large projects.</div>
       </div>
-      <form method="POST" action="/portal/admin/projects/{{.Project.Slug}}/rotate"
+      <form method="POST" action="/portal/projects/{{.Project.Slug}}/rotate"
             onsubmit="return confirm('Rotate the envelope key for {{.Project.Slug}}? Every secret in this project will be re-encrypted.')">
         <button type="submit" class="btn btn-secondary btn-sm">Rotate key</button>
       </form>
@@ -109,15 +118,16 @@
         <strong style="color:var(--danger,#c0392b)">Delete project</strong>
         <div class="text-muted" style="font-size:13px">Permanently deletes the project, all environments, all secrets, and all member assignments. This cannot be undone.</div>
       </div>
-      <form method="POST" action="/portal/admin/projects/{{.Project.Slug}}/delete"
+      <form method="POST" action="/portal/projects/{{.Project.Slug}}/delete"
             onsubmit="return confirm('Delete project {{.Project.Slug}}? This permanently destroys every environment, secret, and membership.')">
         <button type="submit" class="btn btn-secondary btn-sm">Delete project</button>
       </form>
     </div>
   </div>
 </div>
+{{end}}
 
 <div style="margin-top:8px">
-  <a href="/portal/admin/projects" class="btn btn-secondary btn-sm">Back to projects</a>
+  <a href="/portal/projects" class="btn btn-secondary btn-sm">Back to projects</a>
 </div>
 {{end}}

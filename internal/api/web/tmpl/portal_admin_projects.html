@@ -4,7 +4,7 @@
 {{define "pagetitle"}}Projects{{end}}
 
 {{define "topbar-right"}}
-<a href="/portal/admin/projects/new" class="btn btn-primary btn-sm">+ New project</a>
+{{if .IsAdmin}}<a href="/portal/projects/new" class="btn btn-primary btn-sm">+ New project</a>{{end}}
 {{end}}
 
 {{define "content"}}
@@ -28,14 +28,14 @@
         {{range .Projects}}
         <tr>
           <td>{{.Name}}</td>
-          <td class="mono"><a href="/portal/admin/projects/{{.Slug}}">{{.Slug}}</a></td>
+          <td class="mono"><a href="/portal/projects/{{.Slug}}">{{.Slug}}</a></td>
           <td class="text-muted">{{.CreatedAt.Format "Jan 2, 2006"}}</td>
           <td style="white-space:nowrap">
-            <a href="/portal/admin/projects/{{.Slug}}" class="btn btn-secondary btn-sm">Open</a>
+            <a href="/portal/projects/{{.Slug}}" class="btn btn-secondary btn-sm">Open</a>
           </td>
         </tr>
         {{else}}
-        <tr><td colspan="4" class="text-muted" style="text-align:center;padding:28px">No projects yet. <a href="/portal/admin/projects/new">Create one</a> or use <span class="mono">vault project create</span>.</td></tr>
+        <tr><td colspan="4" class="text-muted" style="text-align:center;padding:28px">No projects yet.{{if .IsAdmin}} <a href="/portal/projects/new">Create one</a> or use <span class="mono">vault project create</span>.{{end}}</td></tr>
         {{end}}
       </tbody>
     </table>

@@ -8,7 +8,7 @@
 
 <div class="card" style="max-width:560px">
   <div class="card-body">
-    <form method="POST" action="/portal/admin/projects/new">
+    <form method="POST" action="/portal/projects/new">
       <div class="form-group">
         <label for="name">Name</label>
         <input type="text" id="name" name="name" value="{{.Name}}" required autofocus>
@@ -20,7 +20,7 @@
       </div>
       <div style="display:flex;gap:10px">
         <button type="submit" class="btn btn-primary">Create project</button>
-        <a href="/portal/admin/projects" class="btn btn-secondary">Cancel</a>
+        <a href="/portal/projects" class="btn btn-secondary">Cancel</a>
       </div>
     </form>
   </div>

@@ -452,24 +452,8 @@ type secretRow struct {
 
 func (s *Server) handlePortalAdminSecrets(w http.ResponseWriter, r *http.Request) {
 	pc := portalFromCtx(r)
-	projectSlug := r.PathValue("project")
-	envSlug := r.PathValue("env")
-	p, err := s.store.GetProject(r.Context(), projectSlug)
-	if errors.Is(err, store.ErrNotFound) {
-		http.Error(w, "project not found", http.StatusNotFound)
-		return
-	}
-	if err != nil {
-		http.Error(w, "lookup failed", http.StatusInternalServerError)
-		return
-	}
-	env, err := s.store.GetEnvironment(r.Context(), p.ID, envSlug)
-	if errors.Is(err, store.ErrNotFound) {
-		http.Error(w, "environment not found", http.StatusNotFound)
-		return
-	}
-	if err != nil {
-		http.Error(w, "lookup failed", http.StatusInternalServerError)
+	p, env, ok := s.portalAuthorizeProject(w, r, r.PathValue("project"), r.PathValue("env"), model.RoleViewer)
+	if !ok {
 		return
 	}
 	secrets, versions, err := s.store.ListSecrets(r.Context(), p.ID, env.ID)
@@ -493,7 +477,7 @@ func (s *Server) handlePortalAdminSecrets(w http.ResponseWriter, r *http.Request
 		Secrets        []secretRow
 		Success, Error string
 	}{
-		newPortalBase(pc, "admin-projects"),
+		newPortalBase(pc, "projects"),
 		p, env, rows,
 		r.URL.Query().Get("success"), r.URL.Query().Get("error"),
 	})
@@ -503,19 +487,13 @@ func (s *Server) handlePortalAdminSecretDelete(w http.ResponseWriter, r *http.Re
 	projectSlug := r.PathValue("project")
 	envSlug := r.PathValue("env")
 	key := strings.ToUpper(r.PathValue("key"))
-	back := "/portal/admin/projects/" + projectSlug + "/envs/" + envSlug + "/secrets"
+	back := "/portal/projects/" + projectSlug + "/envs/" + envSlug + "/secrets"
 
-	p, err := s.store.GetProject(r.Context(), projectSlug)
-	if err != nil {
-		flashRedirect(w, r, back, "error", "Project not found.")
+	p, env, ok := s.portalAuthorizeProject(w, r, projectSlug, envSlug, model.RoleEditor)
+	if !ok {
 		return
 	}
-	env, err := s.store.GetEnvironment(r.Context(), p.ID, envSlug)
-	if err != nil {
-		flashRedirect(w, r, back, "error", "Environment not found.")
-		return
-	}
-	err = s.store.DeleteSecret(r.Context(), p.ID, env.ID, key)
+	err := s.store.DeleteSecret(r.Context(), p.ID, env.ID, key)
 	if errors.Is(err, store.ErrNotFound) {
 		flashRedirect(w, r, back, "error", "Secret not found.")
 		return
@@ -558,18 +536,10 @@ func (s *Server) resolveUserEmail(ctx context.Context, id *string) string {
 
 func (s *Server) handlePortalAdminSecretVersions(w http.ResponseWriter, r *http.Request) {
 	pc := portalFromCtx(r)
-	projectSlug := r.PathValue("project")
-	envSlug := r.PathValue("env")
 	key := strings.ToUpper(r.PathValue("key"))
 
-	p, err := s.store.GetProject(r.Context(), projectSlug)
-	if err != nil {
-		http.Error(w, "project not found", http.StatusNotFound)
-		return
-	}
-	env, err := s.store.GetEnvironment(r.Context(), p.ID, envSlug)
-	if err != nil {
-		http.Error(w, "environment not found", http.StatusNotFound)
+	p, env, ok := s.portalAuthorizeProject(w, r, r.PathValue("project"), r.PathValue("env"), model.RoleViewer)
+	if !ok {
 		return
 	}
 	sec, currentVer, err := s.store.GetSecret(r.Context(), p.ID, env.ID, key)
@@ -619,7 +589,7 @@ func (s *Server) handlePortalAdminSecretVersions(w http.ResponseWriter, r *http.
 		Versions       []versionRow
 		Success, Error string
 	}{
-		newPortalBase(pc, "admin-projects"),
+		newPortalBase(pc, "projects"),
 		p, env, key, rows,
 		r.URL.Query().Get("success"), r.URL.Query().Get("error"),
 	})
@@ -630,16 +600,10 @@ func (s *Server) handlePortalAdminSecretRollback(w http.ResponseWriter, r *http.
 	envSlug := r.PathValue("env")
 	key := strings.ToUpper(r.PathValue("key"))
 	versionID := r.PathValue("version")
-	back := "/portal/admin/projects/" + projectSlug + "/envs/" + envSlug + "/secrets/" + key + "/versions"
+	back := "/portal/projects/" + projectSlug + "/envs/" + envSlug + "/secrets/" + key + "/versions"
 
-	p, err := s.store.GetProject(r.Context(), projectSlug)
-	if err != nil {
-		flashRedirect(w, r, back, "error", "Project not found.")
-		return
-	}
-	env, err := s.store.GetEnvironment(r.Context(), p.ID, envSlug)
-	if err != nil {
-		flashRedirect(w, r, back, "error", "Environment not found.")
+	p, env, ok := s.portalAuthorizeProject(w, r, projectSlug, envSlug, model.RoleEditor)
+	if !ok {
 		return
 	}
 	sec, _, err := s.store.GetSecret(r.Context(), p.ID, env.ID, key)
@@ -681,10 +645,10 @@ type secretEditPage struct {
 
 func (s *Server) renderSecretEditForm(w http.ResponseWriter, pc *portalCtx, p *model.Project, env *model.Environment, isNew bool, key, comment, errMsg string) {
 	s.portalTmpl.render(w, "portal_admin_secret_edit.html", secretEditPage{
-		portalBase: newPortalBase(pc, "admin-projects"),
+		portalBase: newPortalBase(pc, "projects"),
 		Project:    p, Env: env, IsNew: isNew,
 		Key: key, Comment: comment, Error: errMsg,
-		BackToSecrets: "/portal/admin/projects/" + p.Slug + "/envs/" + env.Slug + "/secrets",
+		BackToSecrets: "/portal/projects/" + p.Slug + "/envs/" + env.Slug + "/secrets",
 	})
 }
 
@@ -692,16 +656,10 @@ func (s *Server) handlePortalAdminSecretNew(w http.ResponseWriter, r *http.Reque
 	pc := portalFromCtx(r)
 	projectSlug := r.PathValue("project")
 	envSlug := r.PathValue("env")
-	back := "/portal/admin/projects/" + projectSlug + "/envs/" + envSlug + "/secrets"
+	back := "/portal/projects/" + projectSlug + "/envs/" + envSlug + "/secrets"
 
-	p, err := s.store.GetProject(r.Context(), projectSlug)
-	if err != nil {
-		flashRedirect(w, r, back, "error", "Project not found.")
-		return
-	}
-	env, err := s.store.GetEnvironment(r.Context(), p.ID, envSlug)
-	if err != nil {
-		flashRedirect(w, r, back, "error", "Environment not found.")
+	p, env, ok := s.portalAuthorizeProject(w, r, projectSlug, envSlug, model.RoleEditor)
+	if !ok {
 		return
 	}
 
@@ -747,16 +705,10 @@ func (s *Server) handlePortalAdminSecretEdit(w http.ResponseWriter, r *http.Requ
 	projectSlug := r.PathValue("project")
 	envSlug := r.PathValue("env")
 	key := strings.ToUpper(r.PathValue("key"))
-	back := "/portal/admin/projects/" + projectSlug + "/envs/" + envSlug + "/secrets"
+	back := "/portal/projects/" + projectSlug + "/envs/" + envSlug + "/secrets"
 
-	p, err := s.store.GetProject(r.Context(), projectSlug)
-	if err != nil {
-		flashRedirect(w, r, back, "error", "Project not found.")
-		return
-	}
-	env, err := s.store.GetEnvironment(r.Context(), p.ID, envSlug)
-	if err != nil {
-		flashRedirect(w, r, back, "error", "Environment not found.")
+	p, env, ok := s.portalAuthorizeProject(w, r, projectSlug, envSlug, model.RoleEditor)
+	if !ok {
 		return
 	}
 	sec, _, err := s.store.GetSecret(r.Context(), p.ID, env.ID, key)
@@ -827,16 +779,10 @@ func (s *Server) handlePortalAdminSecretReveal(w http.ResponseWriter, r *http.Re
 	projectSlug := r.PathValue("project")
 	envSlug := r.PathValue("env")
 	key := strings.ToUpper(r.PathValue("key"))
-	back := "/portal/admin/projects/" + projectSlug + "/envs/" + envSlug + "/secrets"
+	back := "/portal/projects/" + projectSlug + "/envs/" + envSlug + "/secrets"
 
-	p, err := s.store.GetProject(r.Context(), projectSlug)
-	if err != nil {
-		flashRedirect(w, r, back, "error", "Project not found.")
-		return
-	}
-	env, err := s.store.GetEnvironment(r.Context(), p.ID, envSlug)
-	if err != nil {
-		flashRedirect(w, r, back, "error", "Environment not found.")
+	p, env, ok := s.portalAuthorizeProject(w, r, projectSlug, envSlug, model.RoleViewer)
+	if !ok {
 		return
 	}
 	_, sv, err := s.store.GetSecret(r.Context(), p.ID, env.ID, key)
@@ -860,7 +806,7 @@ func (s *Server) handlePortalAdminSecretReveal(w http.ResponseWriter, r *http.Re
 		return
 	}
 	page := secretValuePage{
-		portalBase: newPortalBase(pc, "admin-projects"),
+		portalBase: newPortalBase(pc, "projects"),
 		Project:    p, Env: env, Key: key,
 		Version: sv.Version, VersionID: sv.ID, IsCurrent: true,
 		CreatedAt: sv.CreatedAt, CreatedBy: sv.CreatedBy,
@@ -882,16 +828,10 @@ func (s *Server) handlePortalAdminSecretVersionReveal(w http.ResponseWriter, r *
 	envSlug := r.PathValue("env")
 	key := strings.ToUpper(r.PathValue("key"))
 	versionID := r.PathValue("version")
-	back := "/portal/admin/projects/" + projectSlug + "/envs/" + envSlug + "/secrets/" + key + "/versions"
+	back := "/portal/projects/" + projectSlug + "/envs/" + envSlug + "/secrets/" + key + "/versions"
 
-	p, err := s.store.GetProject(r.Context(), projectSlug)
-	if err != nil {
-		flashRedirect(w, r, back, "error", "Project not found.")
-		return
-	}
-	env, err := s.store.GetEnvironment(r.Context(), p.ID, envSlug)
-	if err != nil {
-		flashRedirect(w, r, back, "error", "Environment not found.")
+	p, env, ok := s.portalAuthorizeProject(w, r, projectSlug, envSlug, model.RoleViewer)
+	if !ok {
 		return
 	}
 	sec, currentVer, err := s.store.GetSecret(r.Context(), p.ID, env.ID, key)
@@ -926,7 +866,7 @@ func (s *Server) handlePortalAdminSecretVersionReveal(w http.ResponseWriter, r *
 	}
 	isCurrent := currentVer != nil && currentVer.ID == sv.ID
 	page := secretValuePage{
-		portalBase: newPortalBase(pc, "admin-projects"),
+		portalBase: newPortalBase(pc, "projects"),
 		Project:    p, Env: env, Key: key,
 		Version: sv.Version, VersionID: sv.ID, IsCurrent: isCurrent,
 		CreatedAt: sv.CreatedAt, CreatedBy: sv.CreatedBy,
@@ -943,16 +883,10 @@ func (s *Server) handlePortalAdminSecretVersionReveal(w http.ResponseWriter, r *
 func (s *Server) handlePortalAdminSecretsImport(w http.ResponseWriter, r *http.Request) {
 	projectSlug := r.PathValue("project")
 	envSlug := r.PathValue("env")
-	back := "/portal/admin/projects/" + projectSlug + "/envs/" + envSlug + "/secrets"
+	back := "/portal/projects/" + projectSlug + "/envs/" + envSlug + "/secrets"
 
-	p, err := s.store.GetProject(r.Context(), projectSlug)
-	if err != nil {
-		flashRedirect(w, r, back, "error", "Project not found.")
-		return
-	}
-	env, err := s.store.GetEnvironment(r.Context(), p.ID, envSlug)
-	if err != nil {
-		flashRedirect(w, r, back, "error", "Environment not found.")
+	p, env, ok := s.portalAuthorizeProject(w, r, projectSlug, envSlug, model.RoleEditor)
+	if !ok {
 		return
 	}
 	// 4 MiB cap matches the global limitBody wrapper.
@@ -991,16 +925,10 @@ func (s *Server) handlePortalAdminSecretsImport(w http.ResponseWriter, r *http.R
 func (s *Server) handlePortalAdminSecretsExport(w http.ResponseWriter, r *http.Request) {
 	projectSlug := r.PathValue("project")
 	envSlug := r.PathValue("env")
-	back := "/portal/admin/projects/" + projectSlug + "/envs/" + envSlug + "/secrets"
+	back := "/portal/projects/" + projectSlug + "/envs/" + envSlug + "/secrets"
 
-	p, err := s.store.GetProject(r.Context(), projectSlug)
-	if err != nil {
-		flashRedirect(w, r, back, "error", "Project not found.")
-		return
-	}
-	env, err := s.store.GetEnvironment(r.Context(), p.ID, envSlug)
-	if err != nil {
-		flashRedirect(w, r, back, "error", "Environment not found.")
+	p, env, ok := s.portalAuthorizeProject(w, r, projectSlug, envSlug, model.RoleViewer)
+	if !ok {
 		return
 	}
 	content, err := s.renderEnvfile(r, p, env.ID)
@@ -1019,16 +947,16 @@ func (s *Server) handlePortalAdminSecretsExport(w http.ResponseWriter, r *http.R
 // ── Admin: Projects (envs + members) ──────────────────────────────────────────
 
 // handlePortalAdminProjectNew renders the new-project form on GET and creates
-// the project on POST. Server admins can create projects regardless of project
-// membership; the creating admin is auto-added as the project owner so they
-// retain access via project-level checks.
+// the project on POST. Server admin only — this route is mounted on
+// portalAdminAuth. The creating admin is auto-added as the project owner so
+// they show up in member lists alongside their implicit admin access.
 func (s *Server) handlePortalAdminProjectNew(w http.ResponseWriter, r *http.Request) {
 	pc := portalFromCtx(r)
 	render := func(name, slug, errMsg string) {
 		s.portalTmpl.render(w, "portal_admin_project_new.html", struct {
 			portalBase
 			Name, Slug, Error string
-		}{newPortalBase(pc, "admin-projects"), name, slug, errMsg})
+		}{newPortalBase(pc, "projects"), name, slug, errMsg})
 	}
 	if r.Method == http.MethodGet {
 		render("", "", "")
@@ -1080,64 +1008,60 @@ func (s *Server) handlePortalAdminProjectNew(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "audit unavailable", http.StatusInternalServerError)
 		return
 	}
-	flashRedirect(w, r, "/portal/admin/projects/"+p.Slug, "success", "Project created.")
+	flashRedirect(w, r, "/portal/projects/"+p.Slug, "success", "Project created.")
 }
 
 func (s *Server) handlePortalAdminProjectDelete(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("project")
-	p, err := s.store.GetProject(r.Context(), slug)
-	if errors.Is(err, store.ErrNotFound) {
-		flashRedirect(w, r, "/portal/admin/projects", "error", "Project not found.")
-		return
-	}
-	if err != nil {
-		s.log.Error("portal admin delete project lookup", "err", err)
-		flashRedirect(w, r, "/portal/admin/projects", "error", "Lookup failed.")
+	p, _, ok := s.portalAuthorizeProject(w, r, slug, "", model.RoleOwner)
+	if !ok {
 		return
 	}
 	if err := s.store.DeleteProject(r.Context(), slug); err != nil {
 		s.log.Error("portal admin delete project", "err", err)
-		flashRedirect(w, r, "/portal/admin/projects/"+slug, "error", "Delete failed.")
+		flashRedirect(w, r, "/portal/projects/"+slug, "error", "Delete failed.")
 		return
 	}
 	if err := s.logAudit(r, ActionProjectDelete, p.ID, slug); err != nil {
 		http.Error(w, "audit unavailable", http.StatusInternalServerError)
 		return
 	}
-	flashRedirect(w, r, "/portal/admin/projects", "success", "Project deleted.")
+	flashRedirect(w, r, "/portal/projects", "success", "Project deleted.")
 }
 
 func (s *Server) handlePortalAdminProjectRotateKey(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("project")
-	p, err := s.store.GetProject(r.Context(), slug)
-	if errors.Is(err, store.ErrNotFound) {
-		flashRedirect(w, r, "/portal/admin/projects", "error", "Project not found.")
-		return
-	}
-	if err != nil {
-		s.log.Error("portal admin rotate key lookup", "err", err)
-		flashRedirect(w, r, "/portal/admin/projects", "error", "Lookup failed.")
+	p, _, ok := s.portalAuthorizeProject(w, r, slug, "", model.RoleOwner)
+	if !ok {
 		return
 	}
 	if err := s.rotateProjectPEK(r.Context(), p); err != nil {
 		if errors.Is(err, errProjectMissingPEK) {
-			flashRedirect(w, r, "/portal/admin/projects/"+slug, "error", "Project has no envelope key. Run vaultd migrate-keys first.")
+			flashRedirect(w, r, "/portal/projects/"+slug, "error", "Project has no envelope key. Run vaultd migrate-keys first.")
 			return
 		}
 		s.log.Error("portal admin rotate key", "project", slug, "err", err)
-		flashRedirect(w, r, "/portal/admin/projects/"+slug, "error", "Rotate failed.")
+		flashRedirect(w, r, "/portal/projects/"+slug, "error", "Rotate failed.")
 		return
 	}
 	if err := s.logAudit(r, ActionProjectRotateKey, p.ID, slug); err != nil {
 		http.Error(w, "audit unavailable", http.StatusInternalServerError)
 		return
 	}
-	flashRedirect(w, r, "/portal/admin/projects/"+slug, "success", "Project key rotated. All secrets re-encrypted.")
+	flashRedirect(w, r, "/portal/projects/"+slug, "success", "Project key rotated. All secrets re-encrypted.")
 }
 
 func (s *Server) handlePortalAdminProjects(w http.ResponseWriter, r *http.Request) {
 	pc := portalFromCtx(r)
-	projects, err := s.store.ListProjects(r.Context())
+	var (
+		projects []*model.Project
+		err      error
+	)
+	if pc.User.Role == model.UserRoleAdmin {
+		projects, err = s.store.ListProjects(r.Context())
+	} else {
+		projects, err = s.store.ListProjectsByMember(r.Context(), pc.User.ID)
+	}
 	if err != nil {
 		http.Error(w, "list projects failed", http.StatusInternalServerError)
 		return
@@ -1146,7 +1070,7 @@ func (s *Server) handlePortalAdminProjects(w http.ResponseWriter, r *http.Reques
 		portalBase
 		Projects       []*model.Project
 		Success, Error string
-	}{newPortalBase(pc, "admin-projects"), projects,
+	}{newPortalBase(pc, "projects"), projects,
 		r.URL.Query().Get("success"), r.URL.Query().Get("error")})
 }
 
@@ -1156,14 +1080,8 @@ type projectMemberView struct {
 
 func (s *Server) handlePortalAdminProjectEdit(w http.ResponseWriter, r *http.Request) {
 	pc := portalFromCtx(r)
-	slug := r.PathValue("project")
-	p, err := s.store.GetProject(r.Context(), slug)
-	if errors.Is(err, store.ErrNotFound) {
-		http.Error(w, "project not found", http.StatusNotFound)
-		return
-	}
-	if err != nil {
-		http.Error(w, "lookup failed", http.StatusInternalServerError)
+	p, _, ok := s.portalAuthorizeProject(w, r, r.PathValue("project"), "", model.RoleViewer)
+	if !ok {
 		return
 	}
 	envs, _ := s.store.ListEnvironments(r.Context(), p.ID)
@@ -1186,71 +1104,102 @@ func (s *Server) handlePortalAdminProjectEdit(w http.ResponseWriter, r *http.Req
 		}
 		memberViews = append(memberViews, v)
 	}
+	// CanEdit / CanOwn gate the project-level action buttons. They follow the
+	// same rule as requireProjectRole(envID="") on the JSON API: server admins
+	// always pass; otherwise the project-level (env_id IS NULL) row is the
+	// only one that counts. Env-scoped editors/owners can browse the project
+	// (viewer access) but can't add envs or manage members.
+	canEdit := pc.User.Role == model.UserRoleAdmin
+	canOwn := pc.User.Role == model.UserRoleAdmin
+	hasProjectLevelRow := canOwn // admins are treated as project-level
+	allowedEnvIDs := map[string]bool{}
+	for _, m := range members {
+		if m.UserID != pc.User.ID {
+			continue
+		}
+		if m.EnvID == nil {
+			hasProjectLevelRow = true
+			canEdit = canEdit || roleAtLeast(m.Role, model.RoleEditor)
+			canOwn = canOwn || roleAtLeast(m.Role, model.RoleOwner)
+		} else {
+			allowedEnvIDs[*m.EnvID] = true
+		}
+	}
+	// Filter the env list to those the user can access. Project-level
+	// membership (any role) and server admin grant visibility on every env;
+	// env-scoped membership grants visibility on that env only.
+	if !hasProjectLevelRow {
+		filtered := envs[:0]
+		for _, e := range envs {
+			if allowedEnvIDs[e.ID] {
+				filtered = append(filtered, e)
+			}
+		}
+		envs = filtered
+	}
 	s.portalTmpl.render(w, "portal_admin_project_edit.html", struct {
 		portalBase
-		Project        *model.Project
-		Envs           []*model.Environment
-		Members        []projectMemberView
-		Success, Error string
-	}{newPortalBase(pc, "admin-projects"), p, envs, memberViews,
+		Project         *model.Project
+		Envs            []*model.Environment
+		Members         []projectMemberView
+		CanEdit, CanOwn bool
+		Success, Error  string
+	}{newPortalBase(pc, "projects"), p, envs, memberViews, canEdit, canOwn,
 		r.URL.Query().Get("success"), r.URL.Query().Get("error")})
 }
 
 func (s *Server) handlePortalAdminProjectEnvNew(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("project")
-	p, err := s.store.GetProject(r.Context(), slug)
-	if err != nil {
-		flashRedirect(w, r, "/portal/admin/projects", "error", "Project not found.")
+	p, _, ok := s.portalAuthorizeProject(w, r, slug, "", model.RoleEditor)
+	if !ok {
 		return
 	}
 	_ = r.ParseForm()
 	name := strings.TrimSpace(r.FormValue("name"))
 	if name == "" {
-		flashRedirect(w, r, "/portal/admin/projects/"+slug, "error", "Environment name is required.")
+		flashRedirect(w, r, "/portal/projects/"+slug, "error", "Environment name is required.")
 		return
 	}
 	envSlug := toSlug(name)
 	env, err := s.store.CreateEnvironment(r.Context(), p.ID, name, envSlug)
 	if errors.Is(err, store.ErrConflict) {
-		flashRedirect(w, r, "/portal/admin/projects/"+slug, "error", "Environment already exists.")
+		flashRedirect(w, r, "/portal/projects/"+slug, "error", "Environment already exists.")
 		return
 	}
 	if err != nil {
 		s.log.Error("create env", "err", err)
-		flashRedirect(w, r, "/portal/admin/projects/"+slug, "error", "Create failed.")
+		flashRedirect(w, r, "/portal/projects/"+slug, "error", "Create failed.")
 		return
 	}
 	if err := s.logAuditEnv(r, ActionEnvCreate, p.ID, env.ID, env.Slug, `{"via":"portal"}`); err != nil {
 		http.Error(w, "audit unavailable", http.StatusInternalServerError)
 		return
 	}
-	flashRedirect(w, r, "/portal/admin/projects/"+slug, "success", "Environment created.")
+	flashRedirect(w, r, "/portal/projects/"+slug, "success", "Environment created.")
 }
 
 func (s *Server) handlePortalAdminProjectEnvDelete(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("project")
 	envSlug := r.PathValue("env")
-	p, err := s.store.GetProject(r.Context(), slug)
-	if err != nil {
-		flashRedirect(w, r, "/portal/admin/projects", "error", "Project not found.")
+	p, _, ok := s.portalAuthorizeProject(w, r, slug, "", model.RoleEditor)
+	if !ok {
 		return
 	}
 	if err := s.store.DeleteEnvironment(r.Context(), p.ID, envSlug); err != nil {
-		flashRedirect(w, r, "/portal/admin/projects/"+slug, "error", "Delete failed.")
+		flashRedirect(w, r, "/portal/projects/"+slug, "error", "Delete failed.")
 		return
 	}
 	if err := s.logAuditEnv(r, ActionEnvDelete, p.ID, "", envSlug, `{"via":"portal"}`); err != nil {
 		http.Error(w, "audit unavailable", http.StatusInternalServerError)
 		return
 	}
-	flashRedirect(w, r, "/portal/admin/projects/"+slug, "success", "Environment deleted.")
+	flashRedirect(w, r, "/portal/projects/"+slug, "success", "Environment deleted.")
 }
 
 func (s *Server) handlePortalAdminProjectMemberNew(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("project")
-	p, err := s.store.GetProject(r.Context(), slug)
-	if err != nil {
-		flashRedirect(w, r, "/portal/admin/projects", "error", "Project not found.")
+	p, _, ok := s.portalAuthorizeProject(w, r, slug, "", model.RoleOwner)
+	if !ok {
 		return
 	}
 	_ = r.ParseForm()
@@ -1259,16 +1208,16 @@ func (s *Server) handlePortalAdminProjectMemberNew(w http.ResponseWriter, r *htt
 	envSlug := strings.TrimSpace(r.FormValue("env_slug"))
 
 	if email == "" || !validRole(role) {
-		flashRedirect(w, r, "/portal/admin/projects/"+slug, "error", "Email and a valid role are required.")
+		flashRedirect(w, r, "/portal/projects/"+slug, "error", "Email and a valid role are required.")
 		return
 	}
 	user, err := s.store.GetUserByEmail(r.Context(), email)
 	if errors.Is(err, store.ErrNotFound) {
-		flashRedirect(w, r, "/portal/admin/projects/"+slug, "error", "User not found.")
+		flashRedirect(w, r, "/portal/projects/"+slug, "error", "User not found.")
 		return
 	}
 	if err != nil {
-		flashRedirect(w, r, "/portal/admin/projects/"+slug, "error", "Lookup failed.")
+		flashRedirect(w, r, "/portal/projects/"+slug, "error", "Lookup failed.")
 		return
 	}
 	var envID *string
@@ -1276,11 +1225,11 @@ func (s *Server) handlePortalAdminProjectMemberNew(w http.ResponseWriter, r *htt
 	if envSlug != "" {
 		env, err := s.store.GetEnvironment(r.Context(), p.ID, envSlug)
 		if errors.Is(err, store.ErrNotFound) {
-			flashRedirect(w, r, "/portal/admin/projects/"+slug, "error", "Env not found.")
+			flashRedirect(w, r, "/portal/projects/"+slug, "error", "Env not found.")
 			return
 		}
 		if err != nil {
-			flashRedirect(w, r, "/portal/admin/projects/"+slug, "error", "Lookup failed.")
+			flashRedirect(w, r, "/portal/projects/"+slug, "error", "Lookup failed.")
 			return
 		}
 		envID = &env.ID
@@ -1288,22 +1237,21 @@ func (s *Server) handlePortalAdminProjectMemberNew(w http.ResponseWriter, r *htt
 	}
 	if err := s.store.AddProjectMember(r.Context(), p.ID, user.ID, role, envID); err != nil {
 		s.log.Error("add member", "err", err)
-		flashRedirect(w, r, "/portal/admin/projects/"+slug, "error", "Add failed.")
+		flashRedirect(w, r, "/portal/projects/"+slug, "error", "Add failed.")
 		return
 	}
 	if err := s.logAuditEnv(r, ActionMemberAdd, p.ID, auditEnv, user.Email, `{"via":"portal","role":"`+role+`"}`); err != nil {
 		http.Error(w, "audit unavailable", http.StatusInternalServerError)
 		return
 	}
-	flashRedirect(w, r, "/portal/admin/projects/"+slug, "success", "Member added.")
+	flashRedirect(w, r, "/portal/projects/"+slug, "success", "Member added.")
 }
 
 func (s *Server) handlePortalAdminProjectMemberDelete(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("project")
 	userID := r.PathValue("user_id")
-	p, err := s.store.GetProject(r.Context(), slug)
-	if err != nil {
-		flashRedirect(w, r, "/portal/admin/projects", "error", "Project not found.")
+	p, _, ok := s.portalAuthorizeProject(w, r, slug, "", model.RoleOwner)
+	if !ok {
 		return
 	}
 	_ = r.ParseForm()
@@ -1318,12 +1266,12 @@ func (s *Server) handlePortalAdminProjectMemberDelete(w http.ResponseWriter, r *
 		}
 	}
 	if err := s.store.RemoveProjectMember(r.Context(), p.ID, userID, envID); err != nil {
-		flashRedirect(w, r, "/portal/admin/projects/"+slug, "error", "Remove failed.")
+		flashRedirect(w, r, "/portal/projects/"+slug, "error", "Remove failed.")
 		return
 	}
 	if err := s.logAuditEnv(r, ActionMemberRemove, p.ID, auditEnv, userID, `{"via":"portal"}`); err != nil {
 		http.Error(w, "audit unavailable", http.StatusInternalServerError)
 		return
 	}
-	flashRedirect(w, r, "/portal/admin/projects/"+slug, "success", "Member removed.")
+	flashRedirect(w, r, "/portal/projects/"+slug, "success", "Member removed.")
 }

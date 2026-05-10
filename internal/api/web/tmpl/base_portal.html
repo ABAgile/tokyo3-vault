@@ -16,20 +16,19 @@
       tokyo3-vault
     </div>
     <nav>
-      <span class="nav-section">Account</span>
       <a href="/portal" {{if eq .ActivePage "home"}}class="active"{{end}}>Overview</a>
-      <a href="/portal/account" {{if eq .ActivePage "account"}}class="active"{{end}}>Settings</a>
+      <a href="/portal/projects" {{if eq .ActivePage "projects"}}class="active"{{end}}>Projects</a>
       <a href="/portal/tokens" {{if eq .ActivePage "tokens"}}class="active"{{end}}>Machine tokens</a>
       {{if .IsAdmin}}
-      <span class="nav-section">Admin</span>
+      <hr style="border:0;border-top:1px solid rgba(255,255,255,.07);margin:8px 0">
       <a href="/portal/admin/users" {{if eq .ActivePage "admin-users"}}class="active"{{end}}>Users</a>
-      <a href="/portal/admin/projects" {{if eq .ActivePage "admin-projects"}}class="active"{{end}}>Projects</a>
       <a href="/portal/admin/scim-tokens" {{if eq .ActivePage "admin-scim-tokens"}}class="active"{{end}}>SCIM Tokens</a>
       <a href="/portal/admin/scim-group-roles" {{if eq .ActivePage "admin-scim-group-roles"}}class="active"{{end}}>Group → Role</a>
       {{end}}
     </nav>
     <div class="sidebar-footer">
       <div class="text-muted" style="margin-bottom:6px">{{.UserEmail}}</div>
+      <a href="/portal/account" {{if eq .ActivePage "account"}}class="active"{{end}}>Profile</a>
       <form method="POST" action="/portal/logout" style="margin:0">
         <button type="submit" class="btn-link">Sign out</button>
       </form>

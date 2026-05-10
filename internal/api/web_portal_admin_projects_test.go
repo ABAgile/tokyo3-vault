@@ -58,7 +58,7 @@ func TestPortalAdminProjectNew_POST_OK(t *testing.T) {
 	srv := newPortalAdminTestServer(t, st)
 
 	form := url.Values{"name": {"Test Project"}, "slug": {"test-project"}}
-	r := httptest.NewRequest(http.MethodPost, "/portal/admin/projects/new", strings.NewReader(form.Encode()))
+	r := httptest.NewRequest(http.MethodPost, "/portal/projects/new", strings.NewReader(form.Encode()))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	r = withPortalAdmin(r)
 	w := httptest.NewRecorder()
@@ -69,7 +69,7 @@ func TestPortalAdminProjectNew_POST_OK(t *testing.T) {
 		t.Fatalf("status: got %d want %d", w.Code, http.StatusFound)
 	}
 	loc := w.Header().Get("Location")
-	if !strings.HasPrefix(loc, "/portal/admin/projects/test-project") {
+	if !strings.HasPrefix(loc, "/portal/projects/test-project") {
 		t.Fatalf("redirect: got %q", loc)
 	}
 }
@@ -85,7 +85,7 @@ func TestPortalAdminProjectNew_POST_SlugDerivedFromName(t *testing.T) {
 	srv := newPortalAdminTestServer(t, st)
 
 	form := url.Values{"name": {"Cool Project"}} // no slug
-	r := httptest.NewRequest(http.MethodPost, "/portal/admin/projects/new", strings.NewReader(form.Encode()))
+	r := httptest.NewRequest(http.MethodPost, "/portal/projects/new", strings.NewReader(form.Encode()))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	r = withPortalAdmin(r)
 	w := httptest.NewRecorder()
@@ -100,7 +100,7 @@ func TestPortalAdminProjectNew_POST_SlugDerivedFromName(t *testing.T) {
 func TestPortalAdminProjectNew_POST_MissingName(t *testing.T) {
 	srv := newPortalAdminTestServer(t, &mockStore{})
 
-	r := httptest.NewRequest(http.MethodPost, "/portal/admin/projects/new", strings.NewReader(""))
+	r := httptest.NewRequest(http.MethodPost, "/portal/projects/new", strings.NewReader(""))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	r = withPortalAdmin(r)
 	w := httptest.NewRecorder()
@@ -133,14 +133,14 @@ func TestPortalAdminProjectDelete_OK(t *testing.T) {
 	}
 	srv := newPortalAdminTestServer(t, st)
 
-	r := httptest.NewRequest(http.MethodPost, "/portal/admin/projects/demo/delete", nil)
+	r := httptest.NewRequest(http.MethodPost, "/portal/projects/demo/delete", nil)
 	r.SetPathValue("project", "demo")
 	r = withPortalAdmin(r)
 	w := httptest.NewRecorder()
 
 	srv.handlePortalAdminProjectDelete(w, r)
 
-	if w.Code != http.StatusFound || !strings.HasPrefix(w.Header().Get("Location"), "/portal/admin/projects?") {
+	if w.Code != http.StatusFound || !strings.HasPrefix(w.Header().Get("Location"), "/portal/projects?") {
 		t.Fatalf("redirect: status=%d loc=%q", w.Code, w.Header().Get("Location"))
 	}
 	if !deleted {
@@ -152,7 +152,7 @@ func TestPortalAdminProjectDelete_NotFound(t *testing.T) {
 	st := &mockStore{} // default Stub returns ErrNotFound for getProject
 	srv := newPortalAdminTestServer(t, st)
 
-	r := httptest.NewRequest(http.MethodPost, "/portal/admin/projects/missing/delete", nil)
+	r := httptest.NewRequest(http.MethodPost, "/portal/projects/missing/delete", nil)
 	r.SetPathValue("project", "missing")
 	r = withPortalAdmin(r)
 	w := httptest.NewRecorder()
@@ -175,7 +175,7 @@ func TestPortalAdminProjectRotateKey_MissingPEK(t *testing.T) {
 	}
 	srv := newPortalAdminTestServer(t, st)
 
-	r := httptest.NewRequest(http.MethodPost, "/portal/admin/projects/demo/rotate", nil)
+	r := httptest.NewRequest(http.MethodPost, "/portal/projects/demo/rotate", nil)
 	r.SetPathValue("project", "demo")
 	r = withPortalAdmin(r)
 	w := httptest.NewRecorder()
@@ -210,7 +210,7 @@ func TestPortalAdminProjectRotateKey_OK(t *testing.T) {
 	}
 	_ = rotated
 
-	r := httptest.NewRequest(http.MethodPost, "/portal/admin/projects/demo/rotate", nil)
+	r := httptest.NewRequest(http.MethodPost, "/portal/projects/demo/rotate", nil)
 	r.SetPathValue("project", "demo")
 	r = withPortalAdmin(r)
 	w := httptest.NewRecorder()

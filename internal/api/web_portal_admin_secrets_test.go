@@ -52,7 +52,7 @@ func TestPortalAdminSecrets_GET_OK(t *testing.T) {
 	}
 	srv := newPortalAdminTestServer(t, st)
 
-	r := httptest.NewRequest(http.MethodGet, "/portal/admin/projects/demo/envs/prod/secrets", nil)
+	r := httptest.NewRequest(http.MethodGet, "/portal/projects/demo/envs/prod/secrets", nil)
 	r.SetPathValue("project", "demo")
 	r.SetPathValue("env", "prod")
 	r = withPortalAdmin(r)
@@ -88,7 +88,7 @@ func TestPortalAdminSecretDelete_OK(t *testing.T) {
 	}
 	srv := newPortalAdminTestServer(t, st)
 
-	r := httptest.NewRequest(http.MethodPost, "/portal/admin/projects/demo/envs/prod/secrets/api_token/delete", nil)
+	r := httptest.NewRequest(http.MethodPost, "/portal/projects/demo/envs/prod/secrets/api_token/delete", nil)
 	r.SetPathValue("project", "demo")
 	r.SetPathValue("env", "prod")
 	r.SetPathValue("key", "api_token") // handler upper-cases
@@ -114,7 +114,7 @@ func TestPortalAdminSecretDelete_NotFound(t *testing.T) {
 	st.deleteSecret = func(_ context.Context, _, _, _ string) error { return store.ErrNotFound }
 	srv := newPortalAdminTestServer(t, st)
 
-	r := httptest.NewRequest(http.MethodPost, "/portal/admin/projects/demo/envs/prod/secrets/MISSING/delete", nil)
+	r := httptest.NewRequest(http.MethodPost, "/portal/projects/demo/envs/prod/secrets/MISSING/delete", nil)
 	r.SetPathValue("project", "demo")
 	r.SetPathValue("env", "prod")
 	r.SetPathValue("key", "MISSING")
@@ -164,7 +164,7 @@ func TestPortalAdminSecretVersions_GET_OK(t *testing.T) {
 	}
 	srv := newPortalAdminTestServer(t, st)
 
-	r := httptest.NewRequest(http.MethodGet, "/portal/admin/projects/demo/envs/prod/secrets/api_token/versions", nil)
+	r := httptest.NewRequest(http.MethodGet, "/portal/projects/demo/envs/prod/secrets/api_token/versions", nil)
 	r.SetPathValue("project", "demo")
 	r.SetPathValue("env", "prod")
 	r.SetPathValue("key", "api_token")
@@ -210,7 +210,7 @@ func TestPortalAdminSecretVersions_GET_UnknownCreatedBy(t *testing.T) {
 	}
 	srv := newPortalAdminTestServer(t, st)
 
-	r := httptest.NewRequest(http.MethodGet, "/portal/admin/projects/demo/envs/prod/secrets/x/versions", nil)
+	r := httptest.NewRequest(http.MethodGet, "/portal/projects/demo/envs/prod/secrets/x/versions", nil)
 	r.SetPathValue("project", "demo")
 	r.SetPathValue("env", "prod")
 	r.SetPathValue("key", "x")
@@ -252,7 +252,7 @@ func TestPortalAdminSecretRollback_OK(t *testing.T) {
 	}
 	srv := newPortalAdminTestServer(t, st)
 
-	r := httptest.NewRequest(http.MethodPost, "/portal/admin/projects/demo/envs/prod/secrets/api_token/versions/v1/rollback", nil)
+	r := httptest.NewRequest(http.MethodPost, "/portal/projects/demo/envs/prod/secrets/api_token/versions/v1/rollback", nil)
 	r.SetPathValue("project", "demo")
 	r.SetPathValue("env", "prod")
 	r.SetPathValue("key", "api_token")
@@ -306,7 +306,7 @@ func TestPortalAdminSecretNew_POST_OK(t *testing.T) {
 		"value":   {"super-secret"},
 		"comment": {"ci-only"},
 	}
-	r := httptest.NewRequest(http.MethodPost, "/portal/admin/projects/demo/envs/prod/secrets/new", strings.NewReader(form.Encode()))
+	r := httptest.NewRequest(http.MethodPost, "/portal/projects/demo/envs/prod/secrets/new", strings.NewReader(form.Encode()))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	r.SetPathValue("project", "demo")
 	r.SetPathValue("env", "prod")
@@ -333,7 +333,7 @@ func TestPortalAdminSecretNew_POST_InvalidKey(t *testing.T) {
 	srv := newPortalAdminTestServer(t, st)
 
 	form := url.Values{"key": {"bad-key!"}, "value": {"v"}}
-	r := httptest.NewRequest(http.MethodPost, "/portal/admin/projects/demo/envs/prod/secrets/new", strings.NewReader(form.Encode()))
+	r := httptest.NewRequest(http.MethodPost, "/portal/projects/demo/envs/prod/secrets/new", strings.NewReader(form.Encode()))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	r.SetPathValue("project", "demo")
 	r.SetPathValue("env", "prod")
@@ -368,7 +368,7 @@ func TestPortalAdminSecretNew_POST_DuplicateKey(t *testing.T) {
 	}
 
 	form := url.Values{"key": {"EXISTS"}, "value": {"v"}}
-	r := httptest.NewRequest(http.MethodPost, "/portal/admin/projects/demo/envs/prod/secrets/new", strings.NewReader(form.Encode()))
+	r := httptest.NewRequest(http.MethodPost, "/portal/projects/demo/envs/prod/secrets/new", strings.NewReader(form.Encode()))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	r.SetPathValue("project", "demo")
 	r.SetPathValue("env", "prod")
@@ -395,7 +395,7 @@ func TestPortalAdminSecretEdit_GET_OK(t *testing.T) {
 	}
 	srv := newPortalAdminTestServer(t, st)
 
-	r := httptest.NewRequest(http.MethodGet, "/portal/admin/projects/demo/envs/prod/secrets/api_token/edit", nil)
+	r := httptest.NewRequest(http.MethodGet, "/portal/projects/demo/envs/prod/secrets/api_token/edit", nil)
 	r.SetPathValue("project", "demo")
 	r.SetPathValue("env", "prod")
 	r.SetPathValue("key", "api_token")
@@ -434,7 +434,7 @@ func TestPortalAdminSecretEdit_POST_OK(t *testing.T) {
 	}
 
 	form := url.Values{"value": {"new-value"}, "comment": {"updated"}}
-	r := httptest.NewRequest(http.MethodPost, "/portal/admin/projects/demo/envs/prod/secrets/api_token/edit", strings.NewReader(form.Encode()))
+	r := httptest.NewRequest(http.MethodPost, "/portal/projects/demo/envs/prod/secrets/api_token/edit", strings.NewReader(form.Encode()))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	r.SetPathValue("project", "demo")
 	r.SetPathValue("env", "prod")
@@ -461,7 +461,7 @@ func TestPortalAdminSecretEdit_POST_EmptyValue(t *testing.T) {
 	srv := newPortalAdminTestServer(t, st)
 
 	form := url.Values{"value": {""}, "comment": {"keep"}}
-	r := httptest.NewRequest(http.MethodPost, "/portal/admin/projects/demo/envs/prod/secrets/api_token/edit", strings.NewReader(form.Encode()))
+	r := httptest.NewRequest(http.MethodPost, "/portal/projects/demo/envs/prod/secrets/api_token/edit", strings.NewReader(form.Encode()))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	r.SetPathValue("project", "demo")
 	r.SetPathValue("env", "prod")
@@ -535,7 +535,7 @@ func TestPortalAdminSecretReveal_OK(t *testing.T) {
 		return &model.Secret{ID: "s1", Key: key}, sv, nil
 	}
 
-	r := httptest.NewRequest(http.MethodPost, "/portal/admin/projects/demo/envs/prod/secrets/db_password/reveal", nil)
+	r := httptest.NewRequest(http.MethodPost, "/portal/projects/demo/envs/prod/secrets/db_password/reveal", nil)
 	r.SetPathValue("project", "demo")
 	r.SetPathValue("env", "prod")
 	r.SetPathValue("key", "db_password")
@@ -563,7 +563,7 @@ func TestPortalAdminSecretReveal_NotFound(t *testing.T) {
 	}
 	srv := newPortalAdminTestServer(t, st)
 
-	r := httptest.NewRequest(http.MethodPost, "/portal/admin/projects/demo/envs/prod/secrets/missing/reveal", nil)
+	r := httptest.NewRequest(http.MethodPost, "/portal/projects/demo/envs/prod/secrets/missing/reveal", nil)
 	r.SetPathValue("project", "demo")
 	r.SetPathValue("env", "prod")
 	r.SetPathValue("key", "missing")
@@ -601,7 +601,7 @@ func TestPortalAdminSecretVersionReveal_FragmentRollback(t *testing.T) {
 		return sv, nil
 	}
 
-	r := httptest.NewRequest(http.MethodPost, "/portal/admin/projects/demo/envs/prod/secrets/api_token/versions/v1/reveal", nil)
+	r := httptest.NewRequest(http.MethodPost, "/portal/projects/demo/envs/prod/secrets/api_token/versions/v1/reveal", nil)
 	r.Header.Set("X-Reveal-Fragment", "1")
 	r.SetPathValue("project", "demo")
 	r.SetPathValue("env", "prod")
@@ -637,7 +637,7 @@ func TestPortalAdminSecretReveal_FragmentHeader(t *testing.T) {
 		return &model.Secret{ID: "s1", Key: "API_TOKEN"}, sv, nil
 	}
 
-	r := httptest.NewRequest(http.MethodPost, "/portal/admin/projects/demo/envs/prod/secrets/api_token/reveal", nil)
+	r := httptest.NewRequest(http.MethodPost, "/portal/projects/demo/envs/prod/secrets/api_token/reveal", nil)
 	r.Header.Set("X-Reveal-Fragment", "1")
 	r.SetPathValue("project", "demo")
 	r.SetPathValue("env", "prod")
@@ -688,7 +688,7 @@ func TestPortalAdminSecretVersionReveal_OK(t *testing.T) {
 		return nil, store.ErrNotFound
 	}
 
-	r := httptest.NewRequest(http.MethodPost, "/portal/admin/projects/demo/envs/prod/secrets/db_password/versions/v1/reveal", nil)
+	r := httptest.NewRequest(http.MethodPost, "/portal/projects/demo/envs/prod/secrets/db_password/versions/v1/reveal", nil)
 	r.SetPathValue("project", "demo")
 	r.SetPathValue("env", "prod")
 	r.SetPathValue("key", "db_password")
@@ -738,7 +738,7 @@ func TestPortalAdminSecretsImport_OK(t *testing.T) {
 	}
 	mw.Close()
 
-	r := httptest.NewRequest(http.MethodPost, "/portal/admin/projects/demo/envs/prod/secrets/import", body)
+	r := httptest.NewRequest(http.MethodPost, "/portal/projects/demo/envs/prod/secrets/import", body)
 	r.Header.Set("Content-Type", mw.FormDataContentType())
 	r.SetPathValue("project", "demo")
 	r.SetPathValue("env", "prod")
@@ -769,7 +769,7 @@ func TestPortalAdminSecretsImport_InvalidKey(t *testing.T) {
 	_, _ = fw.Write([]byte("lowercase=1\n"))
 	mw.Close()
 
-	r := httptest.NewRequest(http.MethodPost, "/portal/admin/projects/demo/envs/prod/secrets/import", body)
+	r := httptest.NewRequest(http.MethodPost, "/portal/projects/demo/envs/prod/secrets/import", body)
 	r.Header.Set("Content-Type", mw.FormDataContentType())
 	r.SetPathValue("project", "demo")
 	r.SetPathValue("env", "prod")
@@ -797,7 +797,7 @@ func TestPortalAdminSecretsExport_OK(t *testing.T) {
 	}
 	srv := newPortalAdminTestServer(t, st)
 
-	r := httptest.NewRequest(http.MethodGet, "/portal/admin/projects/demo/envs/prod/secrets/export", nil)
+	r := httptest.NewRequest(http.MethodGet, "/portal/projects/demo/envs/prod/secrets/export", nil)
 	r.SetPathValue("project", "demo")
 	r.SetPathValue("env", "prod")
 	r = withPortalAdmin(r)
@@ -824,7 +824,7 @@ func TestPortalAdminSecretsExport_ProjectNotFound(t *testing.T) {
 	}
 	srv := newPortalAdminTestServer(t, st)
 
-	r := httptest.NewRequest(http.MethodGet, "/portal/admin/projects/demo/envs/prod/secrets/export", nil)
+	r := httptest.NewRequest(http.MethodGet, "/portal/projects/demo/envs/prod/secrets/export", nil)
 	r.SetPathValue("project", "demo")
 	r.SetPathValue("env", "prod")
 	r = withPortalAdmin(r)

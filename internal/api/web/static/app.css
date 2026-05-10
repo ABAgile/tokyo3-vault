@@ -90,6 +90,13 @@ body {
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
+  /* Pin the sidebar to the viewport so long content scrolls under it.
+     Sticky (vs fixed) keeps the sidebar in normal flow, so .portal-main
+     gets the right width without manually subtracting the sidebar's. */
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
 }
 
 .sidebar .sidebar-brand {
