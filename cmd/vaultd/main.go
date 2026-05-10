@@ -209,6 +209,12 @@ func main() {
 		os.Exit(1)
 	}
 	defer auditSink.Close()
+	auditSource, err := openAuditSource(log)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "audit source: %v\n", err)
+		os.Exit(1)
+	}
+	defer auditSource.Close()
 
 	revoker := dynamic.NewRevoker(st, kp, projectKP, log)
 	go revoker.Run(ctx)
@@ -297,6 +303,7 @@ func main() {
 		OIDC:              oidcProvider,
 		OIDCEnforce:       oidcEnforce,
 		Sink:              auditSink,
+		Source:            auditSource,
 		TrustedProxies:    trustedProxies,
 		AuthRatePerMin:    authRatePerMin,
 		PruneMinCount:     pruneMinCount,
@@ -309,6 +316,14 @@ func main() {
 		Addr:      addr,
 		Handler:   srv.Routes(),
 		TLSConfig: tlsCfg,
+		// BaseContext makes every request inherit from the SIGTERM-aware
+		// ctx so long-lived handlers (e.g. /portal/admin/audit/sse, which
+		// blocks in select{} on r.Context().Done() and the JetStream
+		// iterator) abort promptly on shutdown. Without this, Shutdown
+		// would wait its full 10s deadline for each open SSE tab; with
+		// it, ctx cancels propagate down the SSE → Source.Subscribe →
+		// jetstream consumer chain in milliseconds.
+		BaseContext: func(net.Listener) context.Context { return ctx },
 	}
 
 	log.Info("vaultd starting", "addr", addr, "tls", true)
@@ -568,7 +583,7 @@ func openAuditSink(log *slog.Logger) (audit.Sink, error) {
 	} else {
 		log.Warn("audit sink: VAULT_NATS_CERT not set — connecting without mTLS (not for production)")
 	}
-	jSink, err := jetstream.New(jetstream.Config{
+	jSink, err := jetstream.NewSink(jetstream.SinkConfig{
 		URL:     url,
 		Subject: audit.Subject,
 		TLS:     tlsCfg,
@@ -577,6 +592,33 @@ func openAuditSink(log *slog.Logger) (audit.Sink, error) {
 		return nil, err
 	}
 	return journal.NewJSONSink[audit.Entry](jSink), nil
+}
+
+// openAuditSource is the read-side counterpart of openAuditSink: returns a
+// journal.Source attached to the same NATS URL + stream + subject so the
+// portal admin /portal/admin/audit page can tail the audit log live. When
+// VAULT_NATS_URL is empty, returns NoopSource — the page renders but stays
+// empty. mTLS is shared with the publisher via VAULT_NATS_CERT/KEY/CA.
+func openAuditSource(log *slog.Logger) (journal.Source, error) {
+	url := os.Getenv("VAULT_NATS_URL")
+	if url == "" {
+		log.Warn("VAULT_NATS_URL not set — audit source is no-op; admin audit page will be empty")
+		return journal.NoopSource{}, nil
+	}
+	tlsCfg, err := btls.FromFiles(
+		os.Getenv("VAULT_NATS_CERT"),
+		os.Getenv("VAULT_NATS_KEY"),
+		os.Getenv("VAULT_NATS_CA"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("nats audit source TLS: %w", err)
+	}
+	return jetstream.NewSource(jetstream.SourceConfig{
+		URL:        url,
+		StreamName: audit.StreamName,
+		Subject:    audit.Subject,
+		TLS:        tlsCfg,
+	})
 }
 
 // openStore selects SQLite or Postgres based on environment variables.

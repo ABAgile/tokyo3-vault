@@ -1,0 +1,95 @@
+{{template "base" .}}
+
+{{define "title"}}Audit log{{end}}
+{{define "pagetitle"}}Audit log{{end}}
+{{define "topbar-right"}}
+<span id="audit-status" class="text-muted" style="font-size:13px">connecting…</span>
+{{end}}
+
+{{define "content"}}
+<div class="card">
+  <div class="card-body" style="padding:0">
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th style="white-space:nowrap">Time</th>
+            <th>Action</th>
+            <th>Actor</th>
+            <th>Project</th>
+            <th>Env</th>
+            <th>Resource</th>
+            <th>IP</th>
+            <th>Metadata</th>
+          </tr>
+        </thead>
+        <tbody id="audit-rows">
+          <tr id="audit-empty"><td colspan="8" class="text-muted" style="text-align:center;padding:20px">Waiting for events…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{{end}}
+
+{{define "scripts"}}
+<script>
+(function() {
+  const tbody = document.getElementById('audit-rows');
+  const empty = document.getElementById('audit-empty');
+  const status = document.getElementById('audit-status');
+  const MAX_ROWS = 500;
+
+  // EventSource auto-reconnects with Last-Event-ID so a brief drop replays
+  // only the missed events, not the full backfill.
+  const es = new EventSource('/portal/admin/audit/sse');
+
+  es.onopen  = () => { status.textContent = 'live'; status.className = 'text-muted'; };
+  es.onerror = () => { status.textContent = 'reconnecting…'; };
+
+  es.onmessage = (ev) => {
+    let e;
+    try { e = JSON.parse(ev.data); } catch { return; }
+    if (empty && empty.parentNode) empty.remove();
+    tbody.insertBefore(rowFor(e), tbody.firstChild);
+    while (tbody.children.length > MAX_ROWS) tbody.removeChild(tbody.lastChild);
+  };
+
+  function rowFor(e) {
+    const tr = document.createElement('tr');
+    tr.appendChild(td(fmtTime(e.occurred_at), 'nowrap'));
+    tr.appendChild(td(e.action || '', 'mono'));
+    tr.appendChild(td(actorLabel(e)));
+    tr.appendChild(td(e.project_slug || (e.project_id ? '—' : ''), 'mono'));
+    tr.appendChild(td(e.env_slug || (e.env_id ? '—' : ''), 'mono'));
+    tr.appendChild(td(e.resource || '', 'mono'));
+    tr.appendChild(td(e.ip || '', 'nowrap'));
+    tr.appendChild(td(e.metadata || '', 'mono'));
+    return tr;
+  }
+
+  function td(text, cls) {
+    const el = document.createElement('td');
+    if (cls) el.className = cls;
+    if (cls && cls.indexOf('nowrap') !== -1) el.style.whiteSpace = 'nowrap';
+    el.textContent = text;
+    return el;
+  }
+
+  function fmtTime(s) {
+    if (!s) return '';
+    const d = new Date(s);
+    return isNaN(d) ? s : d.toLocaleString();
+  }
+
+  // Prefer "Display Name <email>" for human-user tokens, fall back to either
+  // alone (machine tokens have no email), then dash. Names come from
+  // publish-time lookup on audit.Entry; rows for already-deleted actors
+  // (rare) leave them empty and we render — rather than a raw UUID.
+  function actorLabel(e) {
+    if (e.actor_name && e.actor_email) return e.actor_name + ' <' + e.actor_email + '>';
+    return e.actor_name || e.actor_email || (e.actor_id ? '—' : '');
+  }
+})();
+</script>
+{{end}}

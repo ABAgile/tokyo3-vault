@@ -51,20 +51,32 @@ type Sink = *journal.EncodedSink[Entry]
 
 // NoopSink is a shared audit sink that discards every event. Use in tests
 // and dev environments where the audit journal is not configured. Safe for
-// concurrent use; the underlying journal.Noop is stateless.
-var NoopSink Sink = journal.NewJSONSink[Entry](journal.Noop{})
+// concurrent use; the underlying journal.NoopSink is stateless.
+var NoopSink Sink = journal.NewJSONSink[Entry](journal.NoopSink{})
 
 // Entry is the canonical shape of a single audit event. It is JSON-serialised
 // as the journal payload and stored verbatim in the audit database by the
 // consumer. Fields are omitted from JSON when empty to keep payloads lean.
+//
+// ActorEmail/ActorName/ProjectSlug/EnvSlug are denormalised name snapshots
+// resolved at publish time so live tail viewers can render rows without
+// round-tripping the UUIDs. For human-user actor tokens ActorEmail comes
+// from the linked user; for machine tokens ActorName is the token's
+// descriptive name and ActorEmail is empty. ProjectSlug/EnvSlug are the
+// human-readable slugs for the corresponding IDs. Any of these fields may
+// be empty if the referenced row has been deleted before audit.
 type Entry struct {
-	ID         string    `json:"id"`
-	Action     string    `json:"action"`
-	ActorID    string    `json:"actor_id,omitempty"`
-	ProjectID  string    `json:"project_id,omitempty"`
-	EnvID      string    `json:"env_id,omitempty"`
-	Resource   string    `json:"resource,omitempty"`
-	IP         string    `json:"ip,omitempty"`
-	Metadata   string    `json:"metadata,omitempty"`
-	OccurredAt time.Time `json:"occurred_at"`
+	ID          string    `json:"id"`
+	Action      string    `json:"action"`
+	ActorID     string    `json:"actor_id,omitempty"`
+	ActorEmail  string    `json:"actor_email,omitempty"`
+	ActorName   string    `json:"actor_name,omitempty"`
+	ProjectID   string    `json:"project_id,omitempty"`
+	ProjectSlug string    `json:"project_slug,omitempty"`
+	EnvID       string    `json:"env_id,omitempty"`
+	EnvSlug     string    `json:"env_slug,omitempty"`
+	Resource    string    `json:"resource,omitempty"`
+	IP          string    `json:"ip,omitempty"`
+	Metadata    string    `json:"metadata,omitempty"`
+	OccurredAt  time.Time `json:"occurred_at"`
 }

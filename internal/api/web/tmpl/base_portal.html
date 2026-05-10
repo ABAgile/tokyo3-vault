@@ -24,6 +24,7 @@
       <a href="/portal/admin/users" {{if eq .ActivePage "admin-users"}}class="active"{{end}}>Users</a>
       <a href="/portal/admin/scim-tokens" {{if eq .ActivePage "admin-scim-tokens"}}class="active"{{end}}>SCIM Tokens</a>
       <a href="/portal/admin/scim-group-roles" {{if eq .ActivePage "admin-scim-group-roles"}}class="active"{{end}}>Group → Role</a>
+      <a href="/portal/admin/audit" {{if eq .ActivePage "admin-audit"}}class="active"{{end}}>Audit Log</a>
       {{end}}
     </nav>
     <div class="sidebar-footer">
@@ -44,6 +45,7 @@
     </div>
   </div>
 </div>
+{{block "scripts" .}}{{end}}
 </body>
 </html>
 {{end}}

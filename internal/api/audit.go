@@ -92,8 +92,38 @@ func (s *Server) logAuditEnv(r *http.Request, action, projectID, envID, resource
 		Metadata:   metadata,
 		IP:         s.clientIP(r),
 	}
+	// Stamp human-readable name snapshots at publish time so live audit
+	// viewers render slugs/emails directly from the entry — no UUID-to-name
+	// round-trip on the consume side. A miss (e.g. project deleted before
+	// audit) leaves the corresponding slug field empty; the entry still
+	// carries the IDs.
 	if tok != nil {
 		e.ActorID = tok.ID
+		if tok.UserID != nil {
+			if u, err := s.store.GetUserByID(r.Context(), *tok.UserID); err == nil {
+				e.ActorEmail = u.Email
+			}
+		} else if tok.Name != "" {
+			e.ActorName = tok.Name
+		}
+	}
+	if projectID != "" {
+		if p, err := s.store.GetProjectByID(r.Context(), projectID); err == nil {
+			e.ProjectSlug = p.Slug
+			if envID != "" {
+				// No GetEnvironmentByID in the store; ListEnvironments is
+				// fine — projects typically hold a handful of envs and the
+				// row is hot in pg's cache.
+				if envs, err := s.store.ListEnvironments(r.Context(), projectID); err == nil {
+					for _, ev := range envs {
+						if ev.ID == envID {
+							e.EnvSlug = ev.Slug
+							break
+						}
+					}
+				}
+			}
+		}
 	}
 
 	if err := s.audit.Append(r.Context(), e); err != nil {

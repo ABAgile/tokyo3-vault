@@ -10,6 +10,7 @@ import (
 	"time"
 
 	bcrypto "github.com/abagile/tokyo3-base/crypto"
+	"github.com/abagile/tokyo3-base/journal"
 	"github.com/abagile/tokyo3-vault/internal/audit"
 	oidcpkg "github.com/abagile/tokyo3-vault/internal/oidc"
 	"github.com/abagile/tokyo3-vault/internal/store"
@@ -27,6 +28,10 @@ type Config struct {
 	OIDC        *oidcpkg.Provider
 	OIDCEnforce bool
 	Sink        audit.Sink
+	// Source backs the live audit-log stream page. Reads from the same NATS
+	// JetStream stream the publisher writes to. Nil falls back to NoopSource
+	// (admin audit page renders, but stays empty until a real source is wired).
+	Source journal.Source
 	// TrustedProxies is appended to the built-in loopback + RFC-1918 + ULA ranges
 	// when determining whether to trust X-Forwarded-For for client IP extraction.
 	// nil adds nothing — only the built-in defaults apply.
@@ -80,6 +85,7 @@ type Server struct {
 	allowReg       bool              // gates /portal/register; ignored when oidcEnforce is true
 	// scimAllowedSANs lower-cased; empty = inbound SCIM accepts bearer only.
 	scimAllowedSANs []string
+	auditSrc        journal.Source // backs /portal/admin/audit live stream; NoopSource when not wired
 }
 
 // New returns a configured Server.
@@ -87,6 +93,10 @@ func New(st store.Store, kp bcrypto.KeyProvider, projectKP *bcrypto.KeyProviderC
 	sink := cfg.Sink
 	if sink == nil {
 		sink = audit.NoopSink
+	}
+	src := cfg.Source
+	if src == nil {
+		src = journal.NoopSource{}
 	}
 	ratePerMin := cfg.AuthRatePerMin
 	if ratePerMin <= 0 {
@@ -127,6 +137,7 @@ func New(st store.Store, kp bcrypto.KeyProvider, projectKP *bcrypto.KeyProviderC
 		cookieKey:       cfg.CookieKey,
 		allowReg:        cfg.AllowRegistration && !cfg.OIDCEnforce,
 		scimAllowedSANs: allowedSANs,
+		auditSrc:        src,
 	}
 	if len(cfg.CookieKey) == 32 {
 		tm, err := newTmplManager("base_portal.html")
@@ -308,6 +319,9 @@ func (s *Server) Routes() http.Handler {
 		mux.HandleFunc("GET /portal/admin/scim-group-roles/new", s.portalAdminAuth(s.handlePortalAdminSCIMGroupRoleNew))
 		mux.HandleFunc("POST /portal/admin/scim-group-roles/new", s.portalAdminAuth(s.handlePortalAdminSCIMGroupRoleNew))
 		mux.HandleFunc("POST /portal/admin/scim-group-roles/{id}/delete", s.portalAdminAuth(s.handlePortalAdminSCIMGroupRoleDelete))
+
+		mux.HandleFunc("GET /portal/admin/audit", s.portalAdminAuth(s.handlePortalAdminAuditPage))
+		mux.HandleFunc("GET /portal/admin/audit/sse", s.portalAdminAuth(s.handlePortalAdminAuditSSE))
 	}
 
 	return limitBody(mux)
