@@ -145,9 +145,20 @@ func (s *Server) portalAuth(next http.HandlerFunc) http.HandlerFunc {
 			http.Redirect(w, r, "/portal/login", http.StatusFound)
 			return
 		}
-		// Slide session expiry on each request, mirroring s.auth.
+		// Session tokens hard-cap at AuthTime + DefaultSessionAbsoluteTTL.
+		// Past the cap, force re-auth — silent SSO on auth's side handles
+		// it transparently if the OP session is still alive (and within its
+		// own cap); otherwise the user enters credentials once and both
+		// sides restart together.
+		if tok.IsSession && auth.SessionAbsoluteCapExceeded(tok, time.Now().UTC()) {
+			clearPortalCookie(w)
+			http.Redirect(w, r, "/portal/login", http.StatusFound)
+			return
+		}
+		// Slide session expiry on each request, mirroring s.auth. Cap at the
+		// absolute lifetime so slides never push past the hard ceiling.
 		if tok.IsSession {
-			newExpiry := time.Now().UTC().Add(auth.DefaultSessionTTL)
+			newExpiry := auth.CapSessionSlide(time.Now().UTC().Add(auth.DefaultSessionTTL), tok)
 			if err := s.store.ExtendTokenExpiry(r.Context(), tok.TokenHash, newExpiry); err == nil {
 				tok.ExpiresAt = &newExpiry
 			}
@@ -358,7 +369,7 @@ func (s *Server) handlePortalRegisterPOST(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	rawToken, tok, err := auth.IssueUserToken(r.Context(), s.store, user.ID, tokenNamePortal)
+	rawToken, tok, err := auth.IssueUserToken(r.Context(), s.store, user.ID, tokenNamePortal, time.Now().UTC())
 	if err != nil {
 		s.log.Error("portal register issue token", "err", err)
 		flashRedirect(w, r, "/portal/login", "error", "Registered. Please sign in.")
@@ -401,7 +412,7 @@ func (s *Server) handlePortalLoginPOST(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rawToken, tok, err := auth.IssueUserToken(r.Context(), s.store, user.ID, tokenNamePortal)
+	rawToken, tok, err := auth.IssueUserToken(r.Context(), s.store, user.ID, tokenNamePortal, time.Now().UTC())
 	if err != nil {
 		s.log.Error("portal issue token", "err", err)
 		flashRedirect(w, r, "/portal/login", "error", "Sign-in failed.")

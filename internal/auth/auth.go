@@ -19,10 +19,42 @@ const bcryptCost = 12
 
 // Default expiry durations applied when the caller does not specify one.
 const (
-	DefaultSessionTTL       = 15 * time.Minute     // human login sessions (sliding — reset on every request)
-	DefaultMachineTokenTTL  = 90 * 24 * time.Hour  // machine / CI tokens
-	DefaultCertPrincipalTTL = 365 * 24 * time.Hour // cert principal mappings
+	DefaultSessionTTL         = 15 * time.Minute     // human login sessions (sliding — reset on every request)
+	DefaultSessionAbsoluteTTL = 4 * time.Hour        // hard ceiling from CreatedAt for IsSession tokens; no slide can extend past it
+	DefaultMachineTokenTTL    = 90 * 24 * time.Hour  // machine / CI tokens
+	DefaultCertPrincipalTTL   = 365 * 24 * time.Hour // cert principal mappings
 )
+
+// SessionEffectiveAnchor returns the timestamp from which the absolute
+// session cap is measured for a session token. Prefers AuthTime (the
+// human-authentication moment, carried across silent-SSO re-issuances), but
+// falls back to CreatedAt when AuthTime is nil (pre-migration rows). Caller
+// is responsible for fast-pathing on !tok.IsSession.
+func SessionEffectiveAnchor(tok *model.Token) time.Time {
+	if tok.AuthTime != nil {
+		return *tok.AuthTime
+	}
+	return tok.CreatedAt
+}
+
+// SessionAbsoluteCapExceeded reports whether a session token has aged past
+// the absolute lifetime cap, measured from the user's last interactive
+// authentication moment (AuthTime, falling back to CreatedAt).
+func SessionAbsoluteCapExceeded(tok *model.Token, now time.Time) bool {
+	return now.Sub(SessionEffectiveAnchor(tok)) > DefaultSessionAbsoluteTTL
+}
+
+// CapSessionSlide returns min(deadline, anchor + DefaultSessionAbsoluteTTL),
+// where anchor is the session's AuthTime (or CreatedAt as fallback). Used
+// to clamp sliding-expiry extensions so no slide pushes past the session's
+// absolute lifetime; re-auth at /auth/oidc/login mints a new row.
+func CapSessionSlide(deadline time.Time, tok *model.Token) time.Time {
+	cap := SessionEffectiveAnchor(tok).Add(DefaultSessionAbsoluteTTL)
+	if deadline.After(cap) {
+		return cap
+	}
+	return deadline
+}
 
 // HashPassword returns a bcrypt hash of the password.
 func HashPassword(password string) (string, error) {
@@ -54,14 +86,21 @@ func HashToken(raw string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// IssueUserToken creates a session token for a human user.
+// IssueUserToken creates a session token for a human user. authTime is the
+// moment of *interactive* authentication (password + MFA). For local-login
+// flows pass time.Now(); for OIDC-bootstrapped sessions pass the IdP's
+// auth_time claim so the absolute session cap follows the human
+// authentication clock rather than the credential mint clock.
+//
 // Returns the raw token (sent to client once, never stored) and the DB record.
-func IssueUserToken(ctx context.Context, st store.Store, userID, name string) (rawToken string, t *model.Token, err error) {
+func IssueUserToken(ctx context.Context, st store.Store, userID, name string, authTime time.Time) (rawToken string, t *model.Token, err error) {
 	rawToken, err = GenerateRawToken()
 	if err != nil {
 		return "", nil, fmt.Errorf("generate token: %w", err)
 	}
-	exp := time.Now().UTC().Add(DefaultSessionTTL)
+	now := time.Now().UTC()
+	exp := now.Add(DefaultSessionTTL)
+	at := authTime.UTC()
 	t = &model.Token{
 		ID:        uuid.NewString(),
 		UserID:    &userID,
@@ -69,7 +108,8 @@ func IssueUserToken(ctx context.Context, st store.Store, userID, name string) (r
 		Name:      name,
 		IsSession: true,
 		ExpiresAt: &exp,
-		CreatedAt: time.Now().UTC(),
+		AuthTime:  &at,
+		CreatedAt: now,
 	}
 	if err := st.CreateToken(ctx, t); err != nil {
 		return "", nil, fmt.Errorf("store token: %w", err)

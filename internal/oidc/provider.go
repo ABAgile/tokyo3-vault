@@ -5,16 +5,23 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"time"
 
 	gooidc "github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
 )
 
 // Claims holds the identity fields extracted from an ID token.
+//
+// AuthTime is the IdP's `auth_time` claim — the moment the user actually
+// authenticated at the OP (password+MFA), distinct from when the ID token
+// itself was minted. Zero value when the IdP omitted the claim; callers
+// fall back to time.Now() in that case.
 type Claims struct {
-	Issuer  string
-	Subject string
-	Email   string
+	Issuer   string
+	Subject  string
+	Email    string
+	AuthTime time.Time
 }
 
 // Provider manages the OIDC Authorization Code + PKCE flow.
@@ -117,7 +124,8 @@ func (p *Provider) CompleteAuth(ctx context.Context, code, state string) (claims
 	}
 
 	var raw struct {
-		Email string `json:"email"`
+		Email    string `json:"email"`
+		AuthTime int64  `json:"auth_time"`
 	}
 	if err := idToken.Claims(&raw); err != nil {
 		return nil, "", fmt.Errorf("extract claims: %w", err)
@@ -125,10 +133,15 @@ func (p *Provider) CompleteAuth(ctx context.Context, code, state string) (claims
 	if raw.Email == "" {
 		return nil, "", fmt.Errorf("id_token missing email claim — ensure the IdP includes email in the token")
 	}
+	var authTime time.Time
+	if raw.AuthTime > 0 {
+		authTime = time.Unix(raw.AuthTime, 0).UTC()
+	}
 
 	return &Claims{
-		Issuer:  idToken.Issuer,
-		Subject: idToken.Subject,
-		Email:   raw.Email,
+		Issuer:   idToken.Issuer,
+		Subject:  idToken.Subject,
+		Email:    raw.Email,
+		AuthTime: authTime,
 	}, cliCallback, nil
 }

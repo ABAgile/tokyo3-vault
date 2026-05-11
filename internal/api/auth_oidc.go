@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/abagile/tokyo3-vault/internal/auth"
 	"github.com/abagile/tokyo3-vault/internal/model"
@@ -93,7 +94,15 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rawToken, _, err := auth.IssueUserToken(r.Context(), s.store, user.ID, "login")
+	// Prefer the IdP's auth_time claim — the human-authentication moment that
+	// survives silent SSO at the OP. Fall back to now when the IdP omitted it
+	// (then vault's 4h cap counts from token mint, same as the local-login
+	// path).
+	authTime := claims.AuthTime
+	if authTime.IsZero() {
+		authTime = time.Now().UTC()
+	}
+	rawToken, _, err := auth.IssueUserToken(r.Context(), s.store, user.ID, "login", authTime)
 	if err != nil {
 		s.log.Error("issue oidc token", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")

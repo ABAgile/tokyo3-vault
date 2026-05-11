@@ -96,8 +96,18 @@ func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 			writeError(w, http.StatusUnauthorized, "token expired")
 			return
 		}
+		// Session tokens hard-cap at AuthTime + DefaultSessionAbsoluteTTL (the
+		// user's last interactive authentication moment, carried across
+		// silent-SSO re-issuances). No slide can extend past it. Re-auth via
+		// /auth/oidc/login mints a new row with a fresh AuthTime and
+		// restarts the clock; if auth's session also caps, the IdP forces a
+		// full password+MFA challenge.
+		if tok.IsSession && auth.SessionAbsoluteCapExceeded(tok, time.Now().UTC()) {
+			writeError(w, http.StatusUnauthorized, "session age cap exceeded; re-authenticate")
+			return
+		}
 		if tok.IsSession {
-			newExpiry := time.Now().UTC().Add(auth.DefaultSessionTTL)
+			newExpiry := auth.CapSessionSlide(time.Now().UTC().Add(auth.DefaultSessionTTL), tok)
 			if err := s.store.ExtendTokenExpiry(r.Context(), tok.TokenHash, newExpiry); err != nil {
 				s.log.Error("extend session expiry", "err", err)
 			} else {

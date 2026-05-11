@@ -50,6 +50,14 @@ type SCIMGroupRole struct {
 
 // Token covers both user session tokens (UserID set, ProjectID nil) and
 // machine tokens (may have ProjectID/EnvID scope and ReadOnly flag).
+//
+// AuthTime is the moment the user *interactively* authenticated — the
+// password+MFA moment, as opposed to CreatedAt which advances every time a
+// session token row is minted (e.g. silent-SSO re-issuance via OIDC). Set
+// to time.Now() for local logins/signups; copied from the IdP's auth_time
+// claim for OIDC-bootstrapped sessions. Nullable so pre-migration rows fall
+// back to CreatedAt for the absolute session cap. Not consulted for machine
+// tokens.
 type Token struct {
 	ID        string
 	UserID    *string
@@ -60,6 +68,7 @@ type Token struct {
 	ReadOnly  bool // if true, token cannot perform any write operation
 	IsSession bool // true only for interactive user sessions — enables sliding expiry
 	ExpiresAt *time.Time
+	AuthTime  *time.Time
 	CreatedAt time.Time
 }
 

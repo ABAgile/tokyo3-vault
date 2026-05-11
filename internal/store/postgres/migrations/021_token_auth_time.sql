@@ -1,0 +1,15 @@
+-- auth_time records the moment the user *interactively* authenticated
+-- (password + MFA), as opposed to created_at which advances every time a
+-- token row is minted (silent SSO, refresh, etc.). For local-login flows
+-- they coincide; for OIDC-bootstrapped sessions the IdP's auth_time claim
+-- is copied here so vault's absolute session cap follows the human
+-- authentication clock rather than the credential mint clock.
+--
+-- See: OIDC Core 1.0 §2 (auth_time semantics) and PCI 8.2.8.
+--
+-- Nullable: pre-migration rows have no recorded auth_time. The session
+-- middleware falls back to created_at when auth_time IS NULL, so existing
+-- tokens keep working under their original cap. Machine tokens carry the
+-- column but it's never consulted for them — their absolute TTL is whatever
+-- was baked in at issuance.
+ALTER TABLE tokens ADD COLUMN auth_time TIMESTAMPTZ;

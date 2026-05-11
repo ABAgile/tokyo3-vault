@@ -268,7 +268,7 @@ Audit events are emitted to NATS JetStream by every mutating handler. View them 
 
 **Sign in**
 
-`https://vault.example.com/portal` (TLS only; cookies are HttpOnly + Secure + SameSite=Lax). The portal session reuses the regular `tokens` table — `auth.IssueUserToken` issues a session token, the raw value is sealed with AES-256-GCM and stored in the `vault_portal` cookie. Sliding session expiry mirrors the bearer-token flow on `/api/v1/*`.
+`https://vault.example.com/portal` (TLS only; cookies are HttpOnly + Secure + SameSite=Lax). The portal session reuses the regular `tokens` table — `auth.IssueUserToken` issues a session token, the raw value is sealed with AES-256-GCM and stored in the `vault_portal` cookie. Sliding session expiry mirrors the bearer-token flow on `/api/v1/*`: **15-minute idle**, hard-capped at **4 hours** from `tokens.auth_time` (the human-authentication moment carried across silent-SSO re-issuances via the IdP's `auth_time` claim; for local-login flows it equals `created_at`). Past the absolute cap the user is bounced through `/auth/oidc/login`, where the auth IdP silently re-issues a code if its own session is still alive — otherwise the user re-authenticates once and both sessions restart together. Using `auth_time` instead of `created_at` prevents an actively-clicking user from extending a single human-authentication session via repeated silent-SSO re-issuances.
 
 **Register vault as an OAuth2 client in auth** for SSO, with the redirect URI:
 
