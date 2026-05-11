@@ -12,14 +12,26 @@
 //	VAULT_DATABASE_URL      Postgres DSN (postgres://...) — uses Postgres store (vault_app user, DML-only)
 //	VAULT_DB_PATH           SQLite file path (default: vault.db) — uses SQLite store
 //
+// Workload CA (single root for every internal mTLS channel — DB, NATS, SCIM):
+//
+//	VAULT_WORKLOAD_CA  CA PEM that signs every internal workload cert vault
+//	                   talks to (Postgres, NATS, inbound SCIM clients). Used
+//	                   as the fallback for VAULT_DB_CA / VAULT_ADMIN_DB_CA /
+//	                   VAULT_NATS_CA / VAULT_SCIM_MTLS_CA when any of those
+//	                   is unset. Leave the per-channel CA vars empty in
+//	                   deployments that issue all internal certs from one
+//	                   workload CA; set the per-channel vars when stricter
+//	                   separation is needed.
+//
 // Vault DB admin (Postgres only — schema migration):
 //
 //	VAULT_ADMIN_DATABASE_URL  Postgres DSN for schema migration (vault owner, DDL privileges).
 //	                          Falls back to VAULT_DATABASE_URL if unset, but that requires
 //	                          the runtime role to have DDL privileges — not for production.
-//	VAULT_ADMIN_DB_CERT   Client cert PEM path for admin DB mTLS
-//	VAULT_ADMIN_DB_KEY    Client key PEM path for admin DB mTLS
-//	VAULT_ADMIN_DB_CA     CA cert PEM path for admin DB server verification
+//	VAULT_ADMIN_DB_CERT       Client cert PEM path for admin DB mTLS.
+//	                          Falls back to VAULT_DB_CERT.
+//	VAULT_ADMIN_DB_KEY        Client key PEM path. Falls back to VAULT_DB_KEY.
+//	VAULT_ADMIN_DB_CA         CA cert PEM path. Falls back to VAULT_DB_CA → VAULT_WORKLOAD_CA.
 //
 // TLS (server always uses HTTPS):
 //
@@ -38,7 +50,8 @@
 //
 //	VAULT_SCIM_MTLS_CA       Path to CA bundle PEM that signs the IdP's client
 //	                         cert. Merged into the same ClientCAs pool as
-//	                         VAULT_API_CLIENT_CA — either may be omitted.
+//	                         VAULT_API_CLIENT_CA — either may be omitted. Falls
+//	                         back to VAULT_WORKLOAD_CA when unset.
 //	VAULT_SCIM_MTLS_SAN_DNS  Comma-separated allow-list of DNS SANs that
 //	                         identify the IdP. Required alongside
 //	                         VAULT_SCIM_MTLS_CA. The peer cert's SAN must match
@@ -48,9 +61,10 @@
 //
 // Vault's own Postgres TLS (optional):
 //
-//	VAULT_DB_CERT     Path to client certificate PEM for the vault→postgres connection.
-//	VAULT_DB_KEY      Path to client key PEM. Must be paired with VAULT_DB_CERT.
-//	VAULT_DB_CA Path to CA certificate PEM for verifying the postgres server cert.
+//	VAULT_DB_CERT  Path to client certificate PEM for the vault→postgres connection.
+//	VAULT_DB_KEY   Path to client key PEM. Must be paired with VAULT_DB_CERT.
+//	VAULT_DB_CA    Path to CA certificate PEM for verifying the postgres server cert.
+//	               Falls back to VAULT_WORKLOAD_CA when unset.
 //
 // Optional:
 //
@@ -90,6 +104,7 @@
 //	VAULT_NATS_CERT   mTLS client certificate PEM path (publisher credential).
 //	VAULT_NATS_KEY    mTLS client key PEM path.
 //	VAULT_NATS_CA     CA certificate PEM path for NATS server verification.
+//	                  Falls back to VAULT_WORKLOAD_CA when unset.
 //
 // Subcommands:
 //
@@ -416,7 +431,7 @@ func buildServerTLS(log *slog.Logger) (*tls.Config, error) {
 	certFile := os.Getenv("VAULT_API_CERT")
 	keyFile := os.Getenv("VAULT_API_KEY")
 	clientCAFile := os.Getenv("VAULT_API_CLIENT_CA")
-	scimCAFile := os.Getenv("VAULT_SCIM_MTLS_CA")
+	scimCAFile := envFirst("VAULT_SCIM_MTLS_CA", "VAULT_WORKLOAD_CA")
 
 	if (certFile == "") != (keyFile == "") {
 		return nil, fmt.Errorf("VAULT_API_CERT and VAULT_API_KEY must both be set or both unset")
@@ -591,7 +606,7 @@ func openAuditSink(log *slog.Logger) (audit.Sink, error) {
 	tlsCfg, err := btls.FromFiles(
 		os.Getenv("VAULT_NATS_CERT"),
 		os.Getenv("VAULT_NATS_KEY"),
-		os.Getenv("VAULT_NATS_CA"),
+		envFirst("VAULT_NATS_CA", "VAULT_WORKLOAD_CA"),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("nats audit TLS: %w", err)
@@ -626,7 +641,7 @@ func openAuditSource(log *slog.Logger) (journal.Source, error) {
 	tlsCfg, err := btls.FromFiles(
 		os.Getenv("VAULT_NATS_CERT"),
 		os.Getenv("VAULT_NATS_KEY"),
-		os.Getenv("VAULT_NATS_CA"),
+		envFirst("VAULT_NATS_CA", "VAULT_WORKLOAD_CA"),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("nats audit source TLS: %w", err)
@@ -646,15 +661,14 @@ func openAuditSource(log *slog.Logger) (journal.Source, error) {
 // connection is opened. Falls back to VAULT_DATABASE_URL with a warning when
 // VAULT_ADMIN_DATABASE_URL is not set.
 func migrateVaultDB(log *slog.Logger) error {
-	adminDSN := os.Getenv("VAULT_ADMIN_DATABASE_URL")
-	if adminDSN == "" {
+	adminDSN := envFirst("VAULT_ADMIN_DATABASE_URL", "VAULT_DATABASE_URL")
+	if os.Getenv("VAULT_ADMIN_DATABASE_URL") == "" {
 		log.Warn("VAULT_ADMIN_DATABASE_URL not set — using VAULT_DATABASE_URL for schema migration (not for production)")
-		adminDSN = os.Getenv("VAULT_DATABASE_URL")
 	}
 	tlsCfg, err := btls.FromFiles(
-		os.Getenv("VAULT_ADMIN_DB_CERT"),
-		os.Getenv("VAULT_ADMIN_DB_KEY"),
-		os.Getenv("VAULT_ADMIN_DB_CA"),
+		envFirst("VAULT_ADMIN_DB_CERT", "VAULT_DB_CERT"),
+		envFirst("VAULT_ADMIN_DB_KEY", "VAULT_DB_KEY"),
+		envFirst("VAULT_ADMIN_DB_CA", "VAULT_DB_CA", "VAULT_WORKLOAD_CA"),
 	)
 	if err != nil {
 		return fmt.Errorf("vault admin db TLS: %w", err)
@@ -675,7 +689,7 @@ func openStore(log *slog.Logger) (store.Store, error) {
 		tlsCfg, err := btls.FromFiles(
 			os.Getenv("VAULT_DB_CERT"),
 			os.Getenv("VAULT_DB_KEY"),
-			os.Getenv("VAULT_DB_CA"),
+			envFirst("VAULT_DB_CA", "VAULT_WORKLOAD_CA"),
 		)
 		if err != nil {
 			return nil, fmt.Errorf("postgres TLS config: %w", err)
@@ -718,6 +732,19 @@ func parseTrustedProxies(log *slog.Logger) []*net.IPNet {
 		out = append(out, cidr)
 	}
 	return out
+}
+
+// envFirst returns the value of the first non-empty env var among keys.
+// Used for chained fallbacks (e.g. VAULT_ADMIN_DB_CA → VAULT_DB_CA →
+// VAULT_WORKLOAD_CA) so simple deployments can set one workload-CA env var
+// and let every internal mTLS channel inherit it.
+func envFirst(keys ...string) string {
+	for _, k := range keys {
+		if v := os.Getenv(k); v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // splitCSV trims and returns non-empty entries from a comma-separated string.

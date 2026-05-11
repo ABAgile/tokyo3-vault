@@ -309,9 +309,10 @@ In local-key mode (`VAULT_MASTER_KEY` set), the master KEK doubles as the portal
 | Variable | Default | Description |
 |---|---|---|
 | `VAULT_ADMIN_DATABASE_URL` | falls back to `VAULT_DATABASE_URL` | Postgres DSN for schema migrations (owner/DDL role). Omit on normal restarts; inject only when deploying a new version that adds migrations. |
-| `VAULT_ADMIN_DB_CERT` | — | Client certificate PEM path for admin DB mTLS |
-| `VAULT_ADMIN_DB_KEY` | — | Client key PEM path paired with `VAULT_ADMIN_DB_CERT` |
-| `VAULT_ADMIN_DB_CA` | — | CA certificate PEM path for admin Postgres server verification |
+| `VAULT_ADMIN_DB_CERT` | falls back to `VAULT_DB_CERT` | Client certificate PEM path for admin DB mTLS |
+| `VAULT_ADMIN_DB_KEY` | falls back to `VAULT_DB_KEY` | Client key PEM path paired with `VAULT_ADMIN_DB_CERT` |
+| `VAULT_ADMIN_DB_CA` | falls back to `VAULT_DB_CA` → `VAULT_WORKLOAD_CA` | CA certificate PEM path for admin Postgres server verification |
+| `VAULT_WORKLOAD_CA` | — | Single workload CA root used as the fallback for every per-channel CA env var (`VAULT_DB_CA`, `VAULT_ADMIN_DB_CA`, `VAULT_NATS_CA`, `VAULT_SCIM_MTLS_CA`). Set this alone in deployments that issue all internal certs from one CA; set per-channel vars to override individually. |
 
 **TLS — server HTTPS (server always uses HTTPS; self-signed cert is generated if not configured):**
 
@@ -320,7 +321,7 @@ In local-key mode (`VAULT_MASTER_KEY` set), the master KEK doubles as the portal
 | `VAULT_API_CERT` | — | Path to PEM-encoded server certificate. If set, `VAULT_API_KEY` is also required. The cert is hot-reloaded per-handshake when the file changes, so certificate rotation (e.g. by a SPIFFE/SPIRE agent) never requires a restart. |
 | `VAULT_API_KEY` | — | Path to PEM-encoded private key paired with `VAULT_API_CERT`. |
 | `VAULT_API_CLIENT_CA` | — | Path to a PEM-encoded CA certificate. When set, the server requests a client certificate during the TLS handshake and verifies it against this CA. Used to enable SPIFFE/mTLS authentication (see [SPIFFE/mTLS Principals](#spiFFEmtls-principals)). |
-| `VAULT_SCIM_MTLS_CA` | — | Path to a PEM-encoded CA bundle for the IdP's client certificate (inbound SCIM). Merged into the same `ClientCAs` pool as `VAULT_API_CLIENT_CA`; either may be set independently. |
+| `VAULT_SCIM_MTLS_CA` | falls back to `VAULT_WORKLOAD_CA` | Path to a PEM-encoded CA bundle for the IdP's client certificate (inbound SCIM). Merged into the same `ClientCAs` pool as `VAULT_API_CLIENT_CA`; either may be set independently. |
 | `VAULT_SCIM_MTLS_SAN_DNS` | — | Comma-separated allow-list of DNS SANs that identify trusted IdPs for inbound SCIM. Required alongside `VAULT_SCIM_MTLS_CA`. The SCIM middleware accepts a peer cert whose DNS SAN matches one of these (case-insensitive) and skips the bearer-token check entirely — **no SCIM token mint needed**. CN is deliberately not consulted. Without these, inbound SCIM stays bearer-only. |
 
 **PostgreSQL TLS — client certificate auth for vault's own database connection:**
@@ -329,7 +330,7 @@ In local-key mode (`VAULT_MASTER_KEY` set), the master KEK doubles as the portal
 |---|---|---|
 | `VAULT_DB_CERT` | — | Path to PEM client certificate for the vault store PostgreSQL connection. |
 | `VAULT_DB_KEY` | — | Path to PEM private key paired with `VAULT_DB_CERT`. |
-| `VAULT_DB_CA` | — | Path to PEM CA certificate for server verification of the vault store connection. |
+| `VAULT_DB_CA` | falls back to `VAULT_WORKLOAD_CA` | Path to PEM CA certificate for server verification of the vault store connection. |
 
 Set all three `VAULT_DB_*` cert vars together to authenticate vault's admin database connection via client certificate instead of a password in the DSN.
 
@@ -378,7 +379,7 @@ Both readers use `journal/jetstream.Source` from `tokyo3-base`; same primitive, 
 | `VAULT_NATS_URL` | — | NATS server URL; enables audit publish + read (and op-log shipping) when set |
 | `VAULT_NATS_CERT` | — | mTLS client certificate PEM path |
 | `VAULT_NATS_KEY` | — | mTLS client key PEM path |
-| `VAULT_NATS_CA` | — | CA certificate PEM path for NATS server verification |
+| `VAULT_NATS_CA` | falls back to `VAULT_WORKLOAD_CA` | CA certificate PEM path for NATS server verification |
 
 ### vaultd subcommands
 

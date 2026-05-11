@@ -85,19 +85,19 @@ services:
     environment:
       VAULT_API_CERT:           /shared/certs/vaultd-server.crt
       VAULT_API_KEY:            /shared/certs/vaultd-server.key
+      # Single workload CA root — every internal mTLS channel inherits this
+      # unless overridden by a per-channel VAULT_*_CA below.
+      VAULT_WORKLOAD_CA:        /shared/certs/ca.crt
       VAULT_ADMIN_DB_CERT:      /shared/certs/vaultd-admin-db-client.crt
       VAULT_ADMIN_DB_KEY:       /shared/certs/vaultd-admin-db-client.key
-      VAULT_ADMIN_DB_CA:        /shared/certs/ca.crt
       # Cert auth: no password; cert CN authenticates the role.
       VAULT_ADMIN_DATABASE_URL: postgres://${VAULT_ADMIN_DB_USERNAME:-vault_admin}@db:5432/vault?sslmode=verify-full
       VAULT_DB_CERT:            /shared/certs/vaultd-app-db-client.crt
       VAULT_DB_KEY:             /shared/certs/vaultd-app-db-client.key
-      VAULT_DB_CA:              /shared/certs/ca.crt
       # Cert auth: no password; cert CN authenticates the role.
       VAULT_DATABASE_URL:       postgres://${VAULT_DB_USERNAME:-vault_app}@db:5432/vault?sslmode=verify-full
       VAULT_NATS_CERT:          /shared/certs/vaultd-nats-client.crt
       VAULT_NATS_KEY:           /shared/certs/vaultd-nats-client.key
-      VAULT_NATS_CA:            /shared/certs/ca.crt
       VAULT_NATS_URL:           tls://nats:4222
     volumes:
       - shared_data:/shared:ro

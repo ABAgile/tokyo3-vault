@@ -162,19 +162,16 @@ run-mtls: _gen-env _sync-pg-scripts _sync-certs
 	    VAULT_API_CERT=certs/vaultd-server.crt \
 	    VAULT_API_KEY=certs/vaultd-server.key \
 	    VAULT_API_CLIENT_CA=$$CA_PEM \
+	    VAULT_WORKLOAD_CA=$$CA_PEM \
 	    VAULT_ADMIN_DB_CERT=certs/vaultd-admin-db-client.crt \
 	    VAULT_ADMIN_DB_KEY=certs/vaultd-admin-db-client.key \
-	    VAULT_ADMIN_DB_CA=$$CA_PEM \
 	    VAULT_ADMIN_DATABASE_URL=postgres://$${VAULT_ADMIN_DB_USERNAME:-vault_admin}@db.localhost:$(POSTGRES_PORT)/vault?sslmode=verify-full \
 	    VAULT_DB_CERT=certs/vaultd-app-db-client.crt \
 	    VAULT_DB_KEY=certs/vaultd-app-db-client.key \
-	    VAULT_DB_CA=$$CA_PEM \
 	    VAULT_DATABASE_URL=postgres://$${VAULT_DB_USERNAME:-vault_app}@db.localhost:$(POSTGRES_PORT)/vault?sslmode=verify-full \
 	    VAULT_NATS_CERT=certs/vaultd-nats-client.crt \
 	    VAULT_NATS_KEY=certs/vaultd-nats-client.key \
-	    VAULT_NATS_CA=$$CA_PEM \
 	    VAULT_NATS_URL=tls://nats.localhost:$(NATS_PORT) \
-	    VAULT_SCIM_MTLS_CA=$$CA_PEM \
 	    VAULT_SCIM_MTLS_SAN_DNS=$${VAULT_SCIM_MTLS_SAN_DNS:-auth.localhost} \
 	    $(VAULTD_BIN)
 
