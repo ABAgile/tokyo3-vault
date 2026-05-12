@@ -80,11 +80,12 @@ services:
     volumes:
       - shared_data:/shared:ro
 
-  # ── vaultd: HTTPS + mTLS certs for NATS and Postgres ─────────────────────
+  # ── vaultd: add mTLS for NATS and Postgres ───────────────────────────────
+  # The base file already wires VAULT_API_CERT/KEY (mkcert-signed) and mounts
+  # shared_data:/shared, so this overlay only layers in the inter-service
+  # mTLS bits — DB cert auth + NATS client identity.
   vaultd:
     environment:
-      VAULT_API_CERT:           /shared/certs/vaultd-server.crt
-      VAULT_API_KEY:            /shared/certs/vaultd-server.key
       # Single workload CA root — every internal mTLS channel inherits this
       # unless overridden by a per-channel VAULT_*_CA below.
       VAULT_WORKLOAD_CA:        /shared/certs/ca.crt
@@ -99,5 +100,3 @@ services:
       VAULT_NATS_CERT:          /shared/certs/vaultd-nats-client.crt
       VAULT_NATS_KEY:           /shared/certs/vaultd-nats-client.key
       VAULT_NATS_URL:           tls://nats:4222
-    volumes:
-      - shared_data:/shared:ro

@@ -101,8 +101,9 @@ services:
 
   # ── API server ────────────────────────────────────────────────────────────
   # Exposes HTTPS on ${VAULT_PORT:-8443}. Browse https://vault.localhost:8443;
-  # the CLI uses --server https://vault.localhost:8443. Use mkcert (via
-  # certs/gen.sh) to issue a browser-trusted server cert.
+  # the CLI uses --server https://vault.localhost:8443. The mkcert-issued
+  # leaf in /shared/certs/ (populated by `make _sync-certs`) is trusted by
+  # browsers + the host OS, so OIDC redirects don't hit cert warnings.
   vaultd:
     build: .
     image: abagile/vault:${VERSION:-latest}
@@ -115,9 +116,17 @@ services:
       # Runtime DSN: DML-only after schema is in place.
       VAULT_DATABASE_URL:       postgres://${VAULT_DB_USERNAME:-vault_app}:${VAULT_DB_PASSWORD}@db:5432/vault?sslmode=disable
       VAULT_ADDR:               :443
+      # Self-service signup link on the portal login page.
+      VAULT_ALLOW_REGISTRATION: ${VAULT_ALLOW_REGISTRATION:-false}
+      # mkcert-signed API leaf. Overlays may point these elsewhere; unset to
+      # fall back to vaultd's in-process self-signed cert.
+      VAULT_API_CERT:           ${VAULT_API_CERT:-/shared/certs/vaultd-server.crt}
+      VAULT_API_KEY:            ${VAULT_API_KEY:-/shared/certs/vaultd-server.key}
       # Audit sink + source (live tail page + `vaultd audit-query` CLI):
       # publish to and read from the vault_audit JetStream stream.
       VAULT_NATS_URL:           nats://nats:4222
+    volumes:
+      - shared_data:/shared:ro
     depends_on:
       db:
         condition: service_healthy

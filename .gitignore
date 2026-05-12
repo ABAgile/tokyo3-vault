@@ -35,3 +35,5 @@ go.work.sum
 vault.db*
 
 bin/
+
+.claude

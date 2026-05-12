@@ -1,0 +1,184 @@
+# docker-compose.authentik.yml — Authentik IdP overlay (integration testing)
+#
+# Brings up a self-hosted Authentik (https://goauthentik.io/) alongside vaultd
+# so the OIDC SSO and SCIM provisioning paths can be exercised end-to-end
+# against the project's primary target IdP (see docs/oidc-sso-design.md).
+#
+# Services added by this overlay:
+#   authentik-postgresql   Authentik's own Postgres (separate from vault's db)
+#   authentik-server       Authentik web/API (HTTP :9000, HTTPS :9443)
+#   authentik-worker       Authentik background worker (provisioning, SCIM out)
+#
+# Recent Authentik releases dropped the Redis dependency — cache and the task
+# queue now live in Postgres, so this overlay only runs DB + server + worker.
+# Pin AUTHENTIK_TAG to a release that supports that (the default below does).
+#
+# The overlay also augments vaultd with VAULT_OIDC_* env vars so the running
+# server picks up OIDC login as soon as you've finished the manual provider
+# setup in the Authentik UI (Authentik does not yet ship a blueprint flow
+# friendly to fully unattended bootstrap of an OAuth2 provider + secret).
+#
+# ── Required env vars (set in shell or .env) ───────────────────────────────
+#   AUTHENTIK_SECRET_KEY    Random 50+ char string. Generate with:
+#                             openssl rand -base64 60 | tr -d '\n'
+#   AUTHENTIK_PG_PASSWORD   Password for Authentik's internal Postgres role
+#   (plus the base file's VAULT_MASTER_KEY / VAULT_*_DB_PASSWORD)
+#
+# ── Optional env vars ──────────────────────────────────────────────────────
+#   AUTHENTIK_TAG                Image tag (default 2025.10). See
+#                                https://github.com/goauthentik/authentik/releases
+#   AUTHENTIK_HTTP_PORT          Host port for Authentik HTTP (default 9000)
+#   AUTHENTIK_HTTPS_PORT         Host port for Authentik HTTPS (default 9443)
+#   AUTHENTIK_BOOTSTRAP_EMAIL    Email for the initial akadmin user
+#   AUTHENTIK_BOOTSTRAP_PASSWORD Password for the initial akadmin user
+#   AUTHENTIK_BOOTSTRAP_TOKEN    API token minted for akadmin at first boot
+#   VAULT_OIDC_CLIENT_ID         Pasted from the provider you create below
+#   VAULT_OIDC_CLIENT_SECRET     Pasted from the provider you create below
+#
+# ── Hostname strategy (important) ──────────────────────────────────────────
+# OIDC discovery returns absolute URLs based on the Host header Authentik
+# sees, so the browser and vaultd container must reach Authentik via the
+# *same* hostname. The overlay aliases authentik-server as `authentik` on
+# the compose network. Add the matching loopback entry on the host:
+#
+#   echo '127.0.0.1 authentik' | sudo tee -a /etc/hosts
+#
+# Then use http://authentik:${AUTHENTIK_HTTP_PORT:-9000} from your browser.
+# vaultd resolves the same name via Docker's internal DNS.
+#
+# ── Setup (one-time, per fresh Authentik volume) ───────────────────────────
+#   1. make docker-up-authentik
+#   2. Open http://authentik:9000/if/flow/initial-setup/ and create akadmin
+#      (or use the AUTHENTIK_BOOTSTRAP_* env vars above).
+#   3. Admin interface → Applications → Providers → Create
+#        Type:           OAuth2/OpenID Provider
+#        Name:           vault
+#        Client type:    Confidential
+#        Redirect URIs:  https://vault.localhost:8443/api/v1/auth/oidc/callback
+#        Signing key:    authentik Self-signed Certificate
+#        Scopes:         openid email profile
+#      Copy the Client ID / Client Secret it returns.
+#   4. Applications → Applications → Create, link the provider.
+#   5. Put the client ID/secret into .env as VAULT_OIDC_CLIENT_ID /
+#      VAULT_OIDC_CLIENT_SECRET, then re-run the up command to restart
+#      vaultd with the new env. Browse https://vault.localhost:8443/portal/
+#      and click "Continue with SSO".
+#   6. (Optional) SCIM: Admin → Applications → Providers → Create →
+#        SCIM Provider, URL https://vault.localhost:8443/scim/v2/, token
+#        from `vault scim token create`. Bind it to the same application.
+#
+# Usage:
+#   make run-authentik                # recommended for dev — vaultd runs on the
+#                                     # host so it and the browser hit Authentik
+#                                     # at the same URL, no /etc/hosts needed.
+#   make docker-up-authentik          # full compose (vaultd in a container);
+#                                     # requires /etc/hosts entry above so the
+#                                     # browser can resolve `authentik`.
+#   make docker-down                  # tear down (overlay-aware)
+
+services:
+
+  # ── Authentik's Postgres (separate DB from vault's) ──────────────────────
+  authentik-postgresql:
+    image: docker.io/library/postgres:16-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d authentik -U authentik"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    environment:
+      POSTGRES_USER:     authentik
+      POSTGRES_PASSWORD: ${AUTHENTIK_PG_PASSWORD:?AUTHENTIK_PG_PASSWORD is required}
+      POSTGRES_DB:       authentik
+    volumes:
+      - authentik_db:/var/lib/postgresql/data
+
+  # ── Authentik web/API server (browser hits this for login + admin UI) ────
+  authentik-server:
+    image: ghcr.io/goauthentik/server:${AUTHENTIK_TAG:-2025.10}
+    restart: unless-stopped
+    command: server
+    environment:
+      AUTHENTIK_POSTGRESQL__HOST:          authentik-postgresql
+      AUTHENTIK_POSTGRESQL__USER:          authentik
+      AUTHENTIK_POSTGRESQL__NAME:          authentik
+      AUTHENTIK_POSTGRESQL__PASSWORD:      ${AUTHENTIK_PG_PASSWORD}
+      AUTHENTIK_SECRET_KEY:                ${AUTHENTIK_SECRET_KEY:?AUTHENTIK_SECRET_KEY is required (openssl rand -base64 60)}
+      AUTHENTIK_ERROR_REPORTING__ENABLED:  "false"
+      AUTHENTIK_DISABLE_UPDATE_CHECK:      "true"
+      AUTHENTIK_DISABLE_STARTUP_ANALYTICS: "true"
+      AUTHENTIK_BOOTSTRAP_EMAIL:           ${AUTHENTIK_BOOTSTRAP_EMAIL:-akadmin@localhost}
+      AUTHENTIK_BOOTSTRAP_PASSWORD:        ${AUTHENTIK_BOOTSTRAP_PASSWORD:-}
+      AUTHENTIK_BOOTSTRAP_TOKEN:           ${AUTHENTIK_BOOTSTRAP_TOKEN:-}
+    ports:
+      - "${AUTHENTIK_HTTP_PORT:-9000}:9000"
+      - "${AUTHENTIK_HTTPS_PORT:-9443}:9443"
+    volumes:
+      - authentik_media:/media
+      - authentik_templates:/templates
+    networks:
+      default:
+        aliases:
+          # Match the hostname users put in /etc/hosts so the issuer URL
+          # discovery returns is reachable from both browser and vaultd.
+          - authentik
+    healthcheck:
+      # `ak healthcheck` is Authentik's documented readiness probe — passes
+      # only after DB migrations finish and the API can serve requests.
+      # `make run-authentik`'s --wait relies on this so vaultd's OIDC
+      # discovery at startup doesn't race the server boot.
+      test: ["CMD", "ak", "healthcheck"]
+      interval: 30s
+      timeout: 30s
+      retries: 3
+      start_period: 60s
+    depends_on:
+      authentik-postgresql:
+        condition: service_healthy
+
+  # ── Authentik background worker (handles SCIM, expressions, emails) ──────
+  authentik-worker:
+    image: ghcr.io/goauthentik/server:${AUTHENTIK_TAG:-2025.10}
+    restart: unless-stopped
+    command: worker
+    # user: root is what upstream recommends so the worker can read
+    # /var/run/docker.sock for outpost lifecycle. Not needed for the basic
+    # OIDC + SCIM flow against vault, so we drop the docker socket mount.
+    environment:
+      AUTHENTIK_POSTGRESQL__HOST:      authentik-postgresql
+      AUTHENTIK_POSTGRESQL__USER:      authentik
+      AUTHENTIK_POSTGRESQL__NAME:      authentik
+      AUTHENTIK_POSTGRESQL__PASSWORD:  ${AUTHENTIK_PG_PASSWORD}
+      AUTHENTIK_SECRET_KEY:            ${AUTHENTIK_SECRET_KEY}
+      AUTHENTIK_BOOTSTRAP_EMAIL:       ${AUTHENTIK_BOOTSTRAP_EMAIL:-akadmin@localhost}
+      AUTHENTIK_BOOTSTRAP_PASSWORD:    ${AUTHENTIK_BOOTSTRAP_PASSWORD:-}
+      AUTHENTIK_BOOTSTRAP_TOKEN:       ${AUTHENTIK_BOOTSTRAP_TOKEN:-}
+    volumes:
+      - authentik_media:/media
+      - authentik_templates:/templates
+      - authentik_certs:/certs
+    depends_on:
+      authentik-postgresql:
+        condition: service_healthy
+
+  # ── vaultd: pick up OIDC config so the portal shows "Continue with SSO" ──
+  # Values for VAULT_OIDC_CLIENT_ID / VAULT_OIDC_CLIENT_SECRET come from the
+  # provider you create in step 3 above; until they're set, vaultd treats
+  # OIDC as unconfigured and only local auth works.
+  vaultd:
+    environment:
+      VAULT_OIDC_ISSUER:        ${VAULT_OIDC_ISSUER:-http://authentik:9000/application/o/vault/}
+      VAULT_OIDC_CLIENT_ID:     ${VAULT_OIDC_CLIENT_ID:-}
+      VAULT_OIDC_CLIENT_SECRET: ${VAULT_OIDC_CLIENT_SECRET:-}
+      VAULT_OIDC_REDIRECT_URI:  ${VAULT_OIDC_REDIRECT_URI:-https://vault.localhost:8443/api/v1/auth/oidc/callback}
+      VAULT_OIDC_ENFORCE:       ${VAULT_OIDC_ENFORCE:-false}
+    depends_on:
+      authentik-server:
+        condition: service_started
+
+volumes:
+  authentik_db:
+  authentik_media:
+  authentik_templates:
+  authentik_certs:

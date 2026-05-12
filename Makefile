@@ -4,11 +4,13 @@
 ##   make build             Build vaultd + vault binaries to ./bin/
 ##   make run               Start vaultd with dev defaults (starts Postgres + NATS via compose)
 ##   make run-mtls          Start vaultd with mTLS (cert auth, no password in DSN; starts Postgres + NATS)
+##   make run-authentik     Start vaultd on host against Authentik IdP in compose (same URL from browser + vaultd)
 ##   make keygen            Generate a VAULT_MASTER_KEY
 ##   make check             Full pre-commit sequence (fmt + test + staticcheck + gopls + govulncheck)
 ##   make docker-build      Build Docker image
 ##   make docker-up         Start with docker compose (Postgres + NATS)
 ##   make docker-up-mtls    Start with docker compose + mTLS overlay (auto-generates certs)
+##   make docker-up-authentik  Start with docker compose + Authentik IdP overlay (OIDC/SCIM)
 ##   make docker-down       Stop docker compose (overlay-aware; safe in any mode)
 ##   make docker-down-all   Stop docker compose AND remove all volumes (nuclear — wipes DB/NATS state)
 ##   make gen-certs         Generate mTLS certs in certs/ (manual; auto-run by run-mtls/docker-up-mtls)
@@ -51,10 +53,10 @@ SHARED_VOLUME   := $(COMPOSE_PROJECT)_shared_data
 # ── Phony targets ─────────────────────────────────────────────────────────────
 
 .PHONY: all build build-server build-cli build-linux build-linux-amd64 build-darwin \
-        run run-mtls keygen gen-certs \
+        run run-mtls run-authentik keygen gen-certs \
         _gen-env _sync-pg-scripts _sync-certs \
         test test-verbose tidy vet lint check \
-        docker-build docker-build-amd64 docker-push docker-up docker-up-mtls docker-down docker-down-all docker-logs \
+        docker-build docker-build-amd64 docker-push docker-up docker-up-mtls docker-up-authentik docker-down docker-down-all docker-logs \
         install clean clean-all help
 
 all: build
@@ -123,6 +125,11 @@ _gen-env: build-server build-cli
 	    echo "# VAULT_OIDC_ISSUER=https://auth.localhost:8443"                                                                                                       >> .env; \
 	    echo "# VAULT_OIDC_REDIRECT_URI=https://vault.localhost:8443/api/v1/auth/oidc/callback"                                                                      >> .env; \
 	    echo "VAULT_OIDC_ENFORCE=false"                                                                                                                              >> .env; \
+	    echo ""                                                                                                                                                     >> .env; \
+	    echo "# Authentik IdP overlay (docker-compose.authentik.yml) — only consumed when"                                                                          >> .env; \
+	    echo "# you run \`make docker-up-authentik\`. Safe to leave in place otherwise."                                                                            >> .env; \
+	    echo "AUTHENTIK_PG_PASSWORD=$$(openssl rand -hex 16)"                                                                                                        >> .env; \
+	    echo "AUTHENTIK_SECRET_KEY=$$(openssl rand -base64 60 | tr -d '\n')"                                                                                         >> .env; \
 	    echo "  generated .env"; \
 	fi
 
@@ -172,6 +179,25 @@ run-mtls: _gen-env _sync-pg-scripts _sync-certs
 	    VAULT_NATS_KEY=certs/vaultd-nats-client.key \
 	    VAULT_NATS_URL=tls://nats.localhost:$(NATS_PORT) \
 	    VAULT_SCIM_MTLS_SAN_DNS=$${VAULT_SCIM_MTLS_SAN_DNS:-auth.localhost} \
+	    $(VAULTD_BIN)
+
+## run-authentik: Start vaultd on the host against an Authentik IdP running in compose.
+## Both vaultd and the browser reach Authentik at http://localhost:${AUTHENTIK_HTTP_PORT:-9000},
+## so Authentik's discovery + redirect URLs are identical on both sides — no /etc/hosts
+## entry and no docker-network alias needed (the issue docker-up-authentik runs into).
+## After first boot, finish Authentik provider setup (see docker-compose.authentik.yml
+## header), paste VAULT_OIDC_CLIENT_ID / VAULT_OIDC_CLIENT_SECRET into .env, re-run.
+run-authentik: _gen-env _sync-pg-scripts _sync-certs
+	@docker compose -f docker-compose.yml -f docker-compose.authentik.yml up -d \
+	    db nats natsbox authentik-postgresql authentik-server authentik-worker --wait 2>/dev/null || true
+	@export $$(grep -v '^#' .env | xargs) && \
+	    if [ -n "$$VAULT_OIDC_CLIENT_ID" ]; then \
+	        : "$${VAULT_OIDC_ISSUER:=http://authentik.localhost:$${AUTHENTIK_HTTP_PORT:-9000}/application/o/vault/}"; \
+	        : "$${VAULT_OIDC_REDIRECT_URI:=https://vault.localhost:8443/api/v1/auth/oidc/callback}"; \
+	        export VAULT_OIDC_ISSUER VAULT_OIDC_REDIRECT_URI; \
+	    fi; \
+	    VAULT_API_CERT=certs/vaultd-server.crt \
+	    VAULT_API_KEY=certs/vaultd-server.key \
 	    $(VAULTD_BIN)
 
 ## keygen: Print a fresh random master key
@@ -237,21 +263,25 @@ docker-push: docker-build
 	docker push $(IMAGE_NAME):$(IMAGE_TAG)
 	docker push $(IMAGE_NAME):latest
 
-## docker-up: Start vaultd with docker compose (Postgres + NATS)
-docker-up: _sync-pg-scripts
+## docker-up: Start vaultd with docker compose (Postgres + NATS); mkcert-signed API cert
+docker-up: _gen-env _sync-pg-scripts _sync-certs
 	docker compose up -d
 
-## docker-up-mtls: Start with docker compose + mTLS overlay (auto-generates certs on first run)
-docker-up-mtls: _sync-pg-scripts _sync-certs
+## docker-up-mtls: Start with docker compose + mTLS overlay (DB + NATS use cert auth too)
+docker-up-mtls: _gen-env _sync-pg-scripts _sync-certs
 	docker compose -f docker-compose.yml -f docker-compose.mtls.yml up -d --remove-orphans
+
+## docker-up-authentik: Start with docker compose + Authentik IdP overlay (OIDC/SCIM integration testing)
+docker-up-authentik: _gen-env _sync-pg-scripts _sync-certs
+	docker compose -f docker-compose.yml -f docker-compose.authentik.yml up -d --remove-orphans
 
 ## docker-down: Stop all compose services (overlay-aware; safe to run in any mode)
 docker-down:
-	docker compose -f docker-compose.yml -f docker-compose.mtls.yml down
+	docker compose -f docker-compose.yml -f docker-compose.mtls.yml -f docker-compose.authentik.yml down
 
-## docker-down-all: Stop services AND remove named volumes (db, NATS, shared_data)
+## docker-down-all: Stop services AND remove named volumes (db, NATS, shared_data, authentik)
 docker-down-all:
-	docker compose -f docker-compose.yml -f docker-compose.mtls.yml down -v --remove-orphans
+	docker compose -f docker-compose.yml -f docker-compose.mtls.yml -f docker-compose.authentik.yml down -v --remove-orphans
 
 ## docker-logs: Tail vaultd logs
 docker-logs:
