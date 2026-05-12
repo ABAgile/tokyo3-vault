@@ -369,7 +369,7 @@ func (s *Server) handlePortalRegisterPOST(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	rawToken, tok, err := auth.IssueUserToken(r.Context(), s.store, user.ID, tokenNamePortal, time.Now().UTC())
+	rawToken, tok, err := auth.IssueUserToken(r.Context(), s.store, user.ID, tokenNamePortal, time.Now().UTC(), "")
 	if err != nil {
 		s.log.Error("portal register issue token", "err", err)
 		flashRedirect(w, r, "/portal/login", "error", "Registered. Please sign in.")
@@ -412,7 +412,7 @@ func (s *Server) handlePortalLoginPOST(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rawToken, tok, err := auth.IssueUserToken(r.Context(), s.store, user.ID, tokenNamePortal, time.Now().UTC())
+	rawToken, tok, err := auth.IssueUserToken(r.Context(), s.store, user.ID, tokenNamePortal, time.Now().UTC(), "")
 	if err != nil {
 		s.log.Error("portal issue token", "err", err)
 		flashRedirect(w, r, "/portal/login", "error", "Sign-in failed.")

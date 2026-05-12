@@ -80,7 +80,7 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rawToken, _, err := auth.IssueUserToken(r.Context(), s.store, user.ID, sessionName(req.Name), time.Now().UTC())
+	rawToken, _, err := auth.IssueUserToken(r.Context(), s.store, user.ID, sessionName(req.Name), time.Now().UTC(), "")
 	if err != nil {
 		s.log.Error("issue token", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -119,7 +119,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rawToken, _, err := auth.IssueUserToken(r.Context(), s.store, user.ID, sessionName(req.Name), time.Now().UTC())
+	rawToken, _, err := auth.IssueUserToken(r.Context(), s.store, user.ID, sessionName(req.Name), time.Now().UTC(), "")
 	if err != nil {
 		s.log.Error("issue token", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")

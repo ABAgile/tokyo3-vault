@@ -92,8 +92,13 @@ func HashToken(raw string) string {
 // auth_time claim so the absolute session cap follows the human
 // authentication clock rather than the credential mint clock.
 //
+// oidcSessionID is the IdP's `sid` claim — persisted on the token row so a
+// future back-channel logout from the IdP can target exactly the tokens
+// minted under that OP session. Empty string for local-login flows or when
+// the IdP doesn't emit `sid`.
+//
 // Returns the raw token (sent to client once, never stored) and the DB record.
-func IssueUserToken(ctx context.Context, st store.Store, userID, name string, authTime time.Time) (rawToken string, t *model.Token, err error) {
+func IssueUserToken(ctx context.Context, st store.Store, userID, name string, authTime time.Time, oidcSessionID string) (rawToken string, t *model.Token, err error) {
 	rawToken, err = GenerateRawToken()
 	if err != nil {
 		return "", nil, fmt.Errorf("generate token: %w", err)
@@ -110,6 +115,9 @@ func IssueUserToken(ctx context.Context, st store.Store, userID, name string, au
 		ExpiresAt: &exp,
 		AuthTime:  &at,
 		CreatedAt: now,
+	}
+	if oidcSessionID != "" {
+		t.OIDCSessionID = &oidcSessionID
 	}
 	if err := st.CreateToken(ctx, t); err != nil {
 		return "", nil, fmt.Errorf("store token: %w", err)

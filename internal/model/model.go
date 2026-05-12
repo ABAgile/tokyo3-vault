@@ -69,7 +69,13 @@ type Token struct {
 	IsSession bool // true only for interactive user sessions — enables sliding expiry
 	ExpiresAt *time.Time
 	AuthTime  *time.Time
-	CreatedAt time.Time
+	// OIDCSessionID is the IdP's `sid` claim from the ID token that bootstrapped
+	// this session — copied verbatim from auth's ID token at mint time. Lets a
+	// future OIDC Back-Channel Logout 1.0 POST from the IdP target exactly the
+	// vault tokens minted under that OP session. Nil for local-login sessions
+	// and machine tokens.
+	OIDCSessionID *string
+	CreatedAt     time.Time
 }
 
 // CertPrincipal maps a certificate identity to vault authorization scope.

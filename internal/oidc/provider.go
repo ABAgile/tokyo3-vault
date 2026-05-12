@@ -17,11 +17,18 @@ import (
 // authenticated at the OP (password+MFA), distinct from when the ID token
 // itself was minted. Zero value when the IdP omitted the claim; callers
 // fall back to time.Now() in that case.
+//
+// SessionID is the IdP's `sid` claim — a stable identifier for the OP-side
+// session, persisted on each vault token at mint time so a future OIDC
+// Back-Channel Logout 1.0 POST from the IdP can target exactly the vault
+// tokens minted under that OP session. Empty when the IdP doesn't emit
+// `sid` (back-channel logout would then fall back to sub-based deletion).
 type Claims struct {
-	Issuer   string
-	Subject  string
-	Email    string
-	AuthTime time.Time
+	Issuer    string
+	Subject   string
+	Email     string
+	AuthTime  time.Time
+	SessionID string
 }
 
 // Provider manages the OIDC Authorization Code + PKCE flow.
@@ -126,6 +133,7 @@ func (p *Provider) CompleteAuth(ctx context.Context, code, state string) (claims
 	var raw struct {
 		Email    string `json:"email"`
 		AuthTime int64  `json:"auth_time"`
+		SID      string `json:"sid"`
 	}
 	if err := idToken.Claims(&raw); err != nil {
 		return nil, "", fmt.Errorf("extract claims: %w", err)
@@ -139,9 +147,10 @@ func (p *Provider) CompleteAuth(ctx context.Context, code, state string) (claims
 	}
 
 	return &Claims{
-		Issuer:   idToken.Issuer,
-		Subject:  idToken.Subject,
-		Email:    raw.Email,
-		AuthTime: authTime,
+		Issuer:    idToken.Issuer,
+		Subject:   idToken.Subject,
+		Email:     raw.Email,
+		AuthTime:  authTime,
+		SessionID: raw.SID,
 	}, cliCallback, nil
 }

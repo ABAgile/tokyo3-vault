@@ -41,7 +41,7 @@ func (m *mockStore) GetTokenByHash(_ context.Context, hash string) (*model.Token
 
 func TestIssueUserToken(t *testing.T) {
 	st := newMockStore()
-	raw, tok, err := IssueUserToken(context.Background(), st, "user-1", "session", time.Now())
+	raw, tok, err := IssueUserToken(context.Background(), st, "user-1", "session", time.Now(), "")
 	if err != nil {
 		t.Fatalf("IssueUserToken: %v", err)
 	}
@@ -78,8 +78,8 @@ func TestIssueUserToken(t *testing.T) {
 
 func TestIssueUserToken_TwoCallsProduceDifferentTokens(t *testing.T) {
 	st := newMockStore()
-	raw1, _, _ := IssueUserToken(context.Background(), st, "u1", "s", time.Now())
-	raw2, _, _ := IssueUserToken(context.Background(), st, "u1", "s", time.Now())
+	raw1, _, _ := IssueUserToken(context.Background(), st, "u1", "s", time.Now(), "")
+	raw2, _, _ := IssueUserToken(context.Background(), st, "u1", "s", time.Now(), "")
 	if raw1 == raw2 {
 		t.Error("two IssueUserToken calls produced the same raw token")
 	}
@@ -145,7 +145,7 @@ func TestIssueMachineToken_WithExpiry(t *testing.T) {
 
 func TestValidate_OK(t *testing.T) {
 	st := newMockStore()
-	raw, issued, _ := IssueUserToken(context.Background(), st, "u1", "s", time.Now())
+	raw, issued, _ := IssueUserToken(context.Background(), st, "u1", "s", time.Now(), "")
 
 	found, err := Validate(context.Background(), st, raw)
 	if err != nil {

@@ -9,11 +9,11 @@ import (
 	"github.com/abagile/tokyo3-vault/internal/store"
 )
 
-const tokenCols = `id, user_id, token_hash, name, project_id, env_id, read_only, is_session, expires_at, auth_time, created_at`
+const tokenCols = `id, user_id, token_hash, name, project_id, env_id, read_only, is_session, expires_at, auth_time, oidc_session_id, created_at`
 
 func scanToken(s interface{ Scan(...any) error }) (*model.Token, error) {
 	t := &model.Token{}
-	err := s.Scan(&t.ID, &t.UserID, &t.TokenHash, &t.Name, &t.ProjectID, &t.EnvID, &t.ReadOnly, &t.IsSession, &t.ExpiresAt, &t.AuthTime, &t.CreatedAt)
+	err := s.Scan(&t.ID, &t.UserID, &t.TokenHash, &t.Name, &t.ProjectID, &t.EnvID, &t.ReadOnly, &t.IsSession, &t.ExpiresAt, &t.AuthTime, &t.OIDCSessionID, &t.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, store.ErrNotFound
 	}
@@ -22,9 +22,9 @@ func scanToken(s interface{ Scan(...any) error }) (*model.Token, error) {
 
 func (s *DB) CreateToken(ctx context.Context, t *model.Token) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO tokens (id, user_id, token_hash, name, project_id, env_id, read_only, is_session, expires_at, auth_time, created_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-		t.ID, t.UserID, t.TokenHash, t.Name, t.ProjectID, t.EnvID, t.ReadOnly, t.IsSession, t.ExpiresAt, t.AuthTime, t.CreatedAt,
+		`INSERT INTO tokens (id, user_id, token_hash, name, project_id, env_id, read_only, is_session, expires_at, auth_time, oidc_session_id, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+		t.ID, t.UserID, t.TokenHash, t.Name, t.ProjectID, t.EnvID, t.ReadOnly, t.IsSession, t.ExpiresAt, t.AuthTime, t.OIDCSessionID, t.CreatedAt,
 	)
 	return err
 }
