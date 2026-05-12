@@ -86,6 +86,7 @@ type Server struct {
 	// scimAllowedSANs lower-cased; empty = inbound SCIM accepts bearer only.
 	scimAllowedSANs []string
 	auditSrc        journal.Source // backs /portal/admin/audit live stream; NoopSource when not wired
+	bcLogoutJTI     *jtiCache      // dedup window for inbound OIDC back-channel logout_tokens
 }
 
 // New returns a configured Server.
@@ -138,6 +139,7 @@ func New(st store.Store, kp bcrypto.KeyProvider, projectKP *bcrypto.KeyProviderC
 		allowReg:        cfg.AllowRegistration && !cfg.OIDCEnforce,
 		scimAllowedSANs: allowedSANs,
 		auditSrc:        src,
+		bcLogoutJTI:     newJTICache(),
 	}
 	if len(cfg.CookieKey) == 32 {
 		tm, err := newTmplManager("base_portal.html")
@@ -164,6 +166,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/auth/oidc/config", s.handleOIDCConfig)
 	mux.HandleFunc("GET /api/v1/auth/oidc/login", s.handleOIDCLogin)
 	mux.HandleFunc("GET /api/v1/auth/oidc/callback", s.handleOIDCCallback)
+	// OIDC Back-Channel Logout 1.0 — public (JWT signature is the auth).
+	mux.HandleFunc("POST /api/v1/auth/oidc/backchannel-logout", s.handleOIDCBackchannelLogout)
 
 	// SCIM 2.0 provisioning (IdP push)
 	mux.HandleFunc("GET /scim/v2/ServiceProviderConfig", s.handleSCIMServiceProviderConfig)

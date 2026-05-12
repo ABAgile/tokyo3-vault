@@ -154,3 +154,66 @@ func (p *Provider) CompleteAuth(ctx context.Context, code, state string) (claims
 		SessionID: raw.SID,
 	}, cliCallback, nil
 }
+
+// LogoutClaims is the verified subset of an OIDC Back-Channel Logout 1.0
+// logout_token (§2.4). Subject and/or SessionID will be non-empty after a
+// successful Verify — the spec guarantees at least one of them is present.
+// JTI is exposed so callers can implement replay protection across their
+// own replica set / process boundaries.
+type LogoutClaims struct {
+	Issuer    string
+	Subject   string
+	SessionID string
+	JTI       string
+	IssuedAt  time.Time
+	ExpiresAt time.Time
+}
+
+// VerifyLogoutToken validates an OIDC Back-Channel Logout 1.0 logout_token
+// per §2.6 — signature + standard claims via the same JWKS-backed verifier
+// used for ID tokens, plus the back-channel-specific rules:
+//
+//   - `events` MUST contain the back-channel-logout event URI as a member
+//     whose value is the empty object.
+//   - `nonce` MUST NOT be present (defense against ID-token replay).
+//   - At least one of `sub` and `sid` MUST be present.
+//
+// JTI replay protection is the caller's responsibility (typically a small
+// time-bounded cache keyed on JTI).
+func (p *Provider) VerifyLogoutToken(ctx context.Context, raw string) (*LogoutClaims, error) {
+	tok, err := p.verifier.Verify(ctx, raw)
+	if err != nil {
+		return nil, fmt.Errorf("verify logout token: %w", err)
+	}
+	var body struct {
+		SID    string                    `json:"sid"`
+		Nonce  string                    `json:"nonce"`
+		JTI    string                    `json:"jti"`
+		IAT    int64                     `json:"iat"`
+		Exp    int64                     `json:"exp"`
+		Events map[string]map[string]any `json:"events"`
+	}
+	if err := tok.Claims(&body); err != nil {
+		return nil, fmt.Errorf("decode logout claims: %w", err)
+	}
+	if body.Nonce != "" {
+		return nil, fmt.Errorf("logout_token has nonce claim (forbidden by spec §2.6)")
+	}
+	if _, ok := body.Events["http://schemas.openid.net/event/backchannel-logout"]; !ok {
+		return nil, fmt.Errorf("logout_token missing backchannel-logout event")
+	}
+	if tok.Subject == "" && body.SID == "" {
+		return nil, fmt.Errorf("logout_token missing both sub and sid claims")
+	}
+	if body.JTI == "" {
+		return nil, fmt.Errorf("logout_token missing jti")
+	}
+	return &LogoutClaims{
+		Issuer:    tok.Issuer,
+		Subject:   tok.Subject,
+		SessionID: body.SID,
+		JTI:       body.JTI,
+		IssuedAt:  time.Unix(body.IAT, 0).UTC(),
+		ExpiresAt: time.Unix(body.Exp, 0).UTC(),
+	}, nil
+}

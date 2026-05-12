@@ -92,6 +92,17 @@ func (s *DB) DeleteToken(ctx context.Context, id, userID string) error {
 	return nil
 }
 
+func (s *DB) DeleteTokensByOIDCSession(ctx context.Context, oidcSessionID string) (int64, error) {
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM tokens WHERE oidc_session_id = ?`, oidcSessionID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
 func (s *DB) ExtendTokenExpiry(ctx context.Context, tokenHash string, newExpiry time.Time) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE tokens SET expires_at = ? WHERE token_hash = ? AND is_session = true`,

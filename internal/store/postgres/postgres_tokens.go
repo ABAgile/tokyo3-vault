@@ -78,6 +78,17 @@ func (s *DB) ListTokensWithAccess(ctx context.Context, projectID, envID string) 
 	return tokens, rows.Err()
 }
 
+func (s *DB) DeleteTokensByOIDCSession(ctx context.Context, oidcSessionID string) (int64, error) {
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM tokens WHERE oidc_session_id = $1`, oidcSessionID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
 func (s *DB) ExtendTokenExpiry(ctx context.Context, tokenHash string, newExpiry time.Time) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE tokens SET expires_at = $1 WHERE token_hash = $2 AND is_session = true`,

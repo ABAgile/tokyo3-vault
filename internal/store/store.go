@@ -72,6 +72,13 @@ type TokenStore interface {
 	DeleteToken(ctx context.Context, id, userID string) error
 	// DeleteAllTokensForUser removes every token owned by the given user (used during SCIM deactivation).
 	DeleteAllTokensForUser(ctx context.Context, userID string) error
+	// DeleteTokensByOIDCSession removes every token row whose oidc_session_id
+	// matches the IdP-supplied session identifier. Used by the back-channel
+	// logout endpoint to target exactly the tokens chained to one OP session
+	// (multiple vault tokens can share an OIDC sid because each silent-SSO
+	// re-issuance mints a fresh vault token under the same OP session).
+	// Returns the number of rows deleted.
+	DeleteTokensByOIDCSession(ctx context.Context, oidcSessionID string) (int64, error)
 	// ExtendTokenExpiry slides the expiry of a session token forward.
 	// Only rows with is_session=true are updated; machine tokens are unaffected.
 	ExtendTokenExpiry(ctx context.Context, tokenHash string, newExpiry time.Time) error

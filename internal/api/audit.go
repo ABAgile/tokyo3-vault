@@ -57,6 +57,11 @@ const (
 	ActionAuthOIDCLogin          = "auth.oidc.login"
 	ActionAuthOIDCJITProvision   = "auth.oidc.jit_provision"
 	ActionAuthOIDCIdentityLinked = "auth.oidc.identity_linked"
+	// ActionAuthOIDCBackchannelLogout records each OIDC Back-Channel Logout
+	// 1.0 notification this RP receives. One entry per successful POST;
+	// metadata carries the session scope (sid vs. sub) and the count of
+	// tokens deleted so log readers can verify the cleanup landed.
+	ActionAuthOIDCBackchannelLogout = "auth.oidc.backchannel_logout"
 
 	ActionSCIMUserCreate          = "scim.user.create"
 	ActionSCIMUserCreateBootstrap = "scim.user.create.bootstrap_admin"
