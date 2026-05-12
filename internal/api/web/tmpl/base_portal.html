@@ -19,6 +19,7 @@
       <a href="/portal" {{if eq .ActivePage "home"}}class="active"{{end}}>Overview</a>
       <a href="/portal/projects" {{if eq .ActivePage "projects"}}class="active"{{end}}>Projects</a>
       <a href="/portal/tokens" {{if eq .ActivePage "tokens"}}class="active"{{end}}>Machine tokens</a>
+      <a href="/portal/principals" {{if eq .ActivePage "principals"}}class="active"{{end}}>Cert principals</a>
       {{if .IsAdmin}}
       <hr style="border:0;border-top:1px solid rgba(255,255,255,.07);margin:8px 0">
       <a href="/portal/admin/users" {{if eq .ActivePage "admin-users"}}class="active"{{end}}>Users</a>

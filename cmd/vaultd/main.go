@@ -43,7 +43,11 @@
 //	                      an ephemeral self-signed certificate is generated (dev only).
 //	VAULT_API_CLIENT_CA   Path to CA certificate PEM used to verify client certificates.
 //	                      When set, enables mTLS: clients may authenticate via SPIFFE cert
-//	                      instead of a Bearer token.
+//	                      instead of a Bearer token. Falls back to VAULT_WORKLOAD_CA
+//	                      when unset — most API mTLS callers are workload services
+//	                      using the same workload CA as DB/NATS, so the default
+//	                      "set workload CA, leave per-channel CAs empty" deployment
+//	                      pattern gets API mTLS for free.
 //
 // Inbound SCIM mTLS (optional — when set, the IdP can call /scim/v2/* with a
 // client cert instead of minting a SCIM bearer token):
@@ -435,7 +439,7 @@ func runMigrateKeys(ctx context.Context, st store.Store, kp bcrypto.KeyProvider,
 func buildServerTLS(log *slog.Logger) (*tls.Config, error) {
 	certFile := os.Getenv("VAULT_API_CERT")
 	keyFile := os.Getenv("VAULT_API_KEY")
-	clientCAFile := os.Getenv("VAULT_API_CLIENT_CA")
+	clientCAFile := envFirst("VAULT_API_CLIENT_CA", "VAULT_WORKLOAD_CA")
 	scimCAFile := envFirst("VAULT_SCIM_MTLS_CA", "VAULT_WORKLOAD_CA")
 
 	if (certFile == "") != (keyFile == "") {

@@ -161,7 +161,6 @@ run-mtls: _gen-env _sync-pg-scripts _sync-certs
 	    fi; \
 	    VAULT_API_CERT=certs/vaultd-server.crt \
 	    VAULT_API_KEY=certs/vaultd-server.key \
-	    VAULT_API_CLIENT_CA=$$CA_PEM \
 	    VAULT_WORKLOAD_CA=$$CA_PEM \
 	    VAULT_ADMIN_DB_CERT=certs/vaultd-admin-db-client.crt \
 	    VAULT_ADMIN_DB_KEY=certs/vaultd-admin-db-client.key \

@@ -284,6 +284,10 @@ func (s *Server) Routes() http.Handler {
 		mux.HandleFunc("POST /portal/tokens/new", s.portalAuth(s.handlePortalTokenNew))
 		mux.HandleFunc("POST /portal/tokens/{id}/delete", s.portalAuth(s.handlePortalTokenDelete))
 
+		mux.HandleFunc("GET /portal/principals", s.portalAuth(s.handlePortalPrincipals))
+		mux.HandleFunc("POST /portal/principals/new", s.portalAuth(s.handlePortalPrincipalNew))
+		mux.HandleFunc("POST /portal/principals/{id}/delete", s.portalAuth(s.handlePortalPrincipalDelete))
+
 		mux.HandleFunc("GET /portal/admin/users", s.portalAdminAuth(s.handlePortalAdminUsers))
 		mux.HandleFunc("GET /portal/admin/users/new", s.portalAdminAuth(s.handlePortalAdminUserNew))
 		mux.HandleFunc("POST /portal/admin/users/new", s.portalAdminAuth(s.handlePortalAdminUserNew))

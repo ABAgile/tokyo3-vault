@@ -1,0 +1,92 @@
+{{template "base" .}}
+
+{{define "title"}}Cert principals{{end}}
+{{define "pagetitle"}}Cert principals{{end}}
+
+{{define "content"}}
+{{if .Success}}<div class="alert alert-success">{{.Success}}</div>{{end}}
+{{if .Error}}<div class="alert alert-error">{{.Error}}</div>{{end}}
+
+<p class="text-muted" style="max-width:720px;margin-bottom:16px">
+  mTLS principals map a client certificate's <span class="mono">SPIFFE</span> URI SAN or <span class="mono">email</span> SAN to vault authorization scope. Callers presenting a matching cert authenticate without a bearer token — they get the scope (project / env, optional read-only flag) configured below. Workload services typically register a SPIFFE ID; human admins with corporate PKI cards register an email SAN. The cert itself is never stored — only the SAN string and scope.
+</p>
+
+<div class="card mb-4" style="max-width:680px">
+  <div class="card-header"><h2>Register principal</h2></div>
+  <div class="card-body">
+    <form method="POST" action="/portal/principals/new">
+      <div class="form-group">
+        <label for="description">Description</label>
+        <input type="text" id="description" name="description" placeholder="prod CI runner" required>
+      </div>
+      <div class="form-group">
+        <label for="identifier">Identifier</label>
+        <input type="text" id="identifier" name="identifier" placeholder="spiffe://cluster.local/ns/prod/sa/ci-runner  or  alice@corp.example.com" required>
+        <div class="text-muted" style="font-size:12px;margin-top:4px">SPIFFE URI (<span class="mono">spiffe://…</span>) for workload identity, or an email address for human admin certs. The format is auto-detected. Workload SANs are checked first at mTLS handshake; email SANs are the fallback.</div>
+      </div>
+      <div class="form-group">
+        <label for="scope">Scope <span class="text-muted" style="font-weight:400">(project required)</span></label>
+        <select id="scope" name="scope" required>
+          {{range $p := .ScopeProjects}}
+          <optgroup label="{{$p.ProjectName}}">
+            {{if $p.HasProjectLevel}}<option value="{{$p.Slug}}">{{$p.Slug}} — all environments</option>{{end}}
+            {{range $p.Envs}}
+            <option value="{{$p.Slug}}/{{.Slug}}">{{$p.Slug}} / {{.Slug}}</option>
+            {{end}}
+          </optgroup>
+          {{end}}
+        </select>
+        <div class="text-muted" style="font-size:12px;margin-top:4px">Principals must be scoped — the picker shows only projects + envs you have access to. "All environments in &lt;project&gt;" requires project-level membership.</div>
+      </div>
+      <div class="form-group">
+        <label for="expires_in">Expires in <span class="text-muted" style="font-weight:400">(optional)</span></label>
+        <input type="text" id="expires_in" name="expires_in" placeholder="leave blank for 1-year default — examples: 24h, 168h, 8760h">
+      </div>
+      <div class="form-group">
+        <label style="display:flex;align-items:center;gap:8px;font-weight:400">
+          <input type="checkbox" id="read_only" name="read_only" value="1">
+          Read-only (cannot perform write operations)
+        </label>
+      </div>
+      <button type="submit" class="btn btn-primary">Register principal</button>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header"><h2>Your principals</h2></div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Description</th>
+          <th>Identifier</th>
+          <th>Scope</th>
+          <th>Registered</th>
+          <th>Expires</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Principals}}
+        <tr>
+          <td>{{.Description}}</td>
+          <td class="mono">{{.Identifier}}{{if .ReadOnly}} <span class="badge badge-gray">Read-only</span>{{end}}</td>
+          <td class="mono">{{.Scope}}</td>
+          <td class="text-muted">{{.CreatedAt.Format "Jan 2, 2006"}}</td>
+          <td class="text-muted">{{if .ExpiresAt}}{{.ExpiresAt.Format "Jan 2, 2006"}}{{else}}—{{end}}</td>
+          <td style="white-space:nowrap">
+            <form method="POST" action="/portal/principals/{{.ID}}/delete" style="display:inline"
+                  onsubmit="return confirm('Revoke this principal? Any cert presenting this identifier will lose access.')">
+              <button type="submit" class="btn btn-secondary btn-sm">Revoke</button>
+            </form>
+          </td>
+        </tr>
+        {{else}}
+        <tr><td colspan="6" class="text-muted" style="text-align:center;padding:28px">No principals yet.</td></tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+</div>
+{{end}}
