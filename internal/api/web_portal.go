@@ -279,7 +279,42 @@ func (s *Server) portalAuthorizeProject(w http.ResponseWriter, r *http.Request, 
 
 // ── Login / logout ────────────────────────────────────────────────────────────
 
+// portalSessionValid is a non-mutating probe — does this request already
+// present a live portal session? Used by the login/register GET handlers
+// to bounce already-signed-in users to /portal instead of showing a form
+// they don't need. Cheap on the hot path (single DB lookup) and quiet:
+// failures don't clear the cookie or redirect; that's the middleware's
+// job, not a passive probe's.
+func (s *Server) portalSessionValid(r *http.Request) bool {
+	raw, err := s.readPortalCookie(r)
+	if err != nil || raw == "" {
+		return false
+	}
+	tok, err := auth.Validate(r.Context(), s.store, raw)
+	if err != nil || tok.UserID == nil {
+		return false
+	}
+	if tok.ExpiresAt != nil && time.Now().UTC().After(*tok.ExpiresAt) {
+		return false
+	}
+	if tok.IsSession && auth.SessionAbsoluteCapExceeded(tok, time.Now().UTC()) {
+		return false
+	}
+	user, err := s.store.GetUserByID(r.Context(), *tok.UserID)
+	if err != nil || !user.Active {
+		return false
+	}
+	return true
+}
+
 func (s *Server) handlePortalLoginGET(w http.ResponseWriter, r *http.Request) {
+	// Already-signed-in users get bounced to the dashboard. Escape hatch:
+	// ?prompt=login forces the form so a user can authenticate as someone
+	// different in the same browser.
+	if r.URL.Query().Get("prompt") != "login" && s.portalSessionValid(r) {
+		http.Redirect(w, r, "/portal", http.StatusFound)
+		return
+	}
 	s.portalTmpl.render(w, "portal_login.html", struct {
 		Error, Email  string
 		OIDCEnabled   bool
@@ -303,6 +338,11 @@ func (s *Server) handlePortalLoginGET(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handlePortalRegisterGET(w http.ResponseWriter, r *http.Request) {
 	if !s.allowReg {
 		http.Redirect(w, r, "/portal/login", http.StatusFound)
+		return
+	}
+	// Already-signed-in users have nothing to register — bounce to dashboard.
+	if s.portalSessionValid(r) {
+		http.Redirect(w, r, "/portal", http.StatusFound)
 		return
 	}
 	s.portalTmpl.render(w, "portal_register.html", struct {

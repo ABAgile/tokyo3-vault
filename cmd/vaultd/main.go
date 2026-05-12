@@ -325,10 +325,15 @@ func main() {
 
 	scimAllowedSANs := splitCSV(os.Getenv("VAULT_SCIM_MTLS_SAN_DNS"))
 	if len(scimAllowedSANs) > 0 {
-		if os.Getenv("VAULT_SCIM_MTLS_CA") == "" {
-			log.Warn("VAULT_SCIM_MTLS_SAN_DNS is set but VAULT_SCIM_MTLS_CA is not — inbound SCIM mTLS will not work; the TLS handshake has no CA to verify the IdP cert against")
+		// Resolve through the same fallback chain buildServerTLS uses for the
+		// ClientCAs pool. Without this check the warning fires even on
+		// correctly-configured deployments that set VAULT_WORKLOAD_CA and
+		// leave VAULT_SCIM_MTLS_CA unset (the intended simple setup).
+		scimCAFile := envFirst("VAULT_SCIM_MTLS_CA", "VAULT_WORKLOAD_CA")
+		if scimCAFile == "" {
+			log.Warn("VAULT_SCIM_MTLS_SAN_DNS is set but neither VAULT_SCIM_MTLS_CA nor VAULT_WORKLOAD_CA is — inbound SCIM mTLS will not work; the TLS handshake has no CA to verify the IdP cert against")
 		} else {
-			log.Info("inbound SCIM mTLS enabled", "allowed_sans", scimAllowedSANs)
+			log.Info("inbound SCIM mTLS enabled", "allowed_sans", scimAllowedSANs, "ca", scimCAFile)
 		}
 	}
 

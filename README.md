@@ -322,7 +322,7 @@ In local-key mode (`VAULT_MASTER_KEY` set), the master KEK doubles as the portal
 | `VAULT_API_KEY` | — | Path to PEM-encoded private key paired with `VAULT_API_CERT`. |
 | `VAULT_API_CLIENT_CA` | — | Path to a PEM-encoded CA certificate. When set, the server requests a client certificate during the TLS handshake and verifies it against this CA. Used to enable SPIFFE/mTLS authentication (see [SPIFFE/mTLS Principals](#spiFFEmtls-principals)). |
 | `VAULT_SCIM_MTLS_CA` | falls back to `VAULT_WORKLOAD_CA` | Path to a PEM-encoded CA bundle for the IdP's client certificate (inbound SCIM). Merged into the same `ClientCAs` pool as `VAULT_API_CLIENT_CA`; either may be set independently. |
-| `VAULT_SCIM_MTLS_SAN_DNS` | — | Comma-separated allow-list of DNS SANs that identify trusted IdPs for inbound SCIM. Required alongside `VAULT_SCIM_MTLS_CA`. The SCIM middleware accepts a peer cert whose DNS SAN matches one of these (case-insensitive) and skips the bearer-token check entirely — **no SCIM token mint needed**. CN is deliberately not consulted. Without these, inbound SCIM stays bearer-only. |
+| `VAULT_SCIM_MTLS_SAN_DNS` | — | Comma-separated allow-list of DNS SANs that identify trusted IdPs for inbound SCIM. Required alongside `VAULT_SCIM_MTLS_CA` (or its `VAULT_WORKLOAD_CA` fallback). The SCIM middleware accepts a peer cert whose DNS SAN matches one of these (case-insensitive) and skips the bearer-token check entirely — **no SCIM token mint needed**. CN is deliberately not consulted. Without these, inbound SCIM stays bearer-only. |
 
 **PostgreSQL TLS — client certificate auth for vault's own database connection:**
 
