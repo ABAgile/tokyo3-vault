@@ -25,7 +25,7 @@ make run-server
 make docker-up
 
 # mTLS overlay (generates certs first, then brings up with mutual TLS)
-bash certs/gen.sh
+bash shared/certs/gen.sh
 make docker-up-mtls
 ```
 
@@ -50,8 +50,9 @@ internal/
     postgres/   PostgreSQL implementation + migrations
     sqlite/     SQLite implementation + migrations (same schema)
   tlsutil/      TLS certificate loading + self-signed cert generation
-certs/          gen.sh — generates CA + server/client certs for the mTLS overlay
-postgres/       DB init scripts (role creation; schema managed by migrations)
+shared/         Files staged into the shared_data Docker volume (mounted at /shared)
+  certs/        gen.sh — generates CA + server/client certs for the mTLS overlay
+  postgres/     DB init scripts (role creation; schema managed by migrations)
 docs/           Architecture and reference documentation
 ```
 
@@ -207,7 +208,7 @@ VAULT_NATS_KEY=/etc/vault/nats.key
 VAULT_NATS_CA=/etc/vault/nats-ca.crt
 ```
 
-The `docker-compose.mtls.yml` overlay ships a reference implementation of this mode. Run `bash certs/gen.sh` to generate development certificates, then `make docker-up-mtls`.
+The `docker-compose.mtls.yml` overlay ships a reference implementation of this mode. Run `bash shared/certs/gen.sh` to generate development certificates, then `make docker-up-mtls`.
 
 ---
 

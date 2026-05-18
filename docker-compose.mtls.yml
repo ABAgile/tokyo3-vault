@@ -10,10 +10,10 @@
 #   1. make docker-up-mtls        # auto-generates leaf certs (signed by mkcert's
 #                                 # root) and populates shared_data volume.
 #                                 # The root CA is mkcert's, kept at $(mkcert -CAROOT)
-#                                 # — _sync-certs stages it into /shared/certs/ca.crt
+#                                 # — _sync-shared stages it into /shared/certs/ca.crt
 #                                 # for the mounts referenced below.
 #
-#   To regenerate leaf certs: rm certs/vaultd-server.crt, then re-run make docker-up-mtls.
+#   To regenerate leaf certs: rm shared/certs/vaultd-server.crt, then re-run make docker-up-mtls.
 #   To rotate the root CA:    mkcert -uninstall && mkcert -install on the host.
 #
 # PostgreSQL cert auth:
@@ -27,7 +27,7 @@
 services:
 
   # ── Main vault database: enable server TLS + cert auth ────────────────────
-  # shared_data:/shared is already mounted by the base file (for pg-scripts).
+  # shared_data:/shared is already mounted by the base file (for postgres scripts).
   db:
     environment:
       POSTGRES_SSL_CERT: /shared/certs/db-server.crt

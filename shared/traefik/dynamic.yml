@@ -1,0 +1,52 @@
+# Loaded by the traefik service via --providers.file.filename.
+# Staged into shared_data:/shared/traefik/ by `make _sync-shared`.
+#
+# Routing summary:
+#   - vault.localhost  -> vaultd:443       (HTTPS upstream, mkcert-signed)
+#   - auth.localhost   -> authentik:9000   (HTTP upstream)
+#
+# `auth.localhost` currently fronts Authentik; the same router can later be
+# repointed at tokyo3-auth (https://auth:443 upstream) without touching the
+# stack's hostname conventions or SAN list.
+#
+# TLS terminates at Traefik using the mkcert-issued vaultd-server cert; the
+# cert's SAN list covers both virtual hosts. Upstream connections use
+# insecureSkipVerify because the docker service-name SNI (`vaultd`) doesn't
+# match the cert in all cases — adequate for a dev rig.
+
+http:
+  routers:
+    vault:
+      rule: "Host(`vault.localhost`)"
+      entryPoints: [websecure]
+      service: vault
+      tls: {}
+
+    auth:
+      rule: "Host(`auth.localhost`)"
+      entryPoints: [websecure]
+      service: authentik
+      tls: {}
+
+  services:
+    vault:
+      loadBalancer:
+        servers:
+          - url: "https://vaultd:443"
+        serversTransport: skipverify
+        passHostHeader: true
+
+    authentik:
+      loadBalancer:
+        servers:
+          - url: "http://authentik-server:9000"
+        passHostHeader: true
+
+  serversTransports:
+    skipverify:
+      insecureSkipVerify: true
+
+tls:
+  certificates:
+    - certFile: /shared/certs/vaultd-server.crt
+      keyFile: /shared/certs/vaultd-server.key

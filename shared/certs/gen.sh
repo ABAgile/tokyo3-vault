@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Generate TLS/mTLS leaf certs for the docker compose mTLS overlay, signed by
-# mkcert's local CA. Run from the repo root:  bash certs/gen.sh
+# mkcert's local CA. Run from the repo root:  bash shared/certs/gen.sh
 # Requires: mkcert (auto-installed via `go install` if missing — Go environment
 # must already be set up so the mkcert binary lands on PATH).
 #
@@ -19,7 +19,7 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # Load .env from the repo root if present — mirrors docker compose behaviour so
 # VAULT_ADMIN_DB_USERNAME / VAULT_DB_USERNAME stay in sync with the DSNs.
-REPO_ROOT="$(cd "$DIR/.." && pwd)"
+REPO_ROOT="$(cd "$DIR/../.." && pwd)"
 if [[ -f "$REPO_ROOT/.env" ]]; then
   set -a
   # shellcheck source=/dev/null
@@ -72,7 +72,7 @@ mkc_client() {
 # `.localhost` and any subdomain are reserved (RFC 6761) and resolve to
 # 127.0.0.1 on modern systems — no /etc/hosts entries needed. The docker
 # service hostname covers in-network access.
-mkc_server "vaultd-server" vaultd vault.localhost
+mkc_server "vaultd-server" vaultd vault.localhost auth.localhost localhost 127.0.0.1
 mkc_server "nats-server"   nats   nats.localhost
 mkc_server "db-server"     db     db.localhost
 
@@ -88,6 +88,6 @@ mkc_client "vaultd-app-db-client"   "$APP_USERNAME"   vaultd
 mkc_client "webapp-vaultd-workload" spiffe://vault.internal/workload/webapp
 
 echo ""
-echo "leaf certs written to certs/"
+echo "leaf certs written to shared/certs/"
 echo "CA: $CAROOT/rootCA.pem (mkcert root, trusted via mkcert -install)"
 echo "next: docker compose -f docker-compose.yml -f docker-compose.mtls.yml up -d"

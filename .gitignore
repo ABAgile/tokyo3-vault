@@ -27,6 +27,11 @@ go.work.sum
 # env file
 .env
 
+# Generated leaf certs under shared/certs/ — gen.sh is tracked.
+shared/certs/*.crt
+shared/certs/*.key
+shared/certs/*.srl
+
 # Editor/IDE
 # .idea/
 # .vscode/

@@ -554,10 +554,10 @@ func buildOIDCProvider(ctx context.Context, log *slog.Logger) (*oidcpkg.Provider
 	clientSecret := os.Getenv("VAULT_OIDC_CLIENT_SECRET")
 	redirectURI := os.Getenv("VAULT_OIDC_REDIRECT_URI")
 
-	if issuer == "" && clientID == "" {
+	if clientID == "" {
 		return nil, false, nil // OIDC not configured
 	}
-	if issuer == "" || clientID == "" || clientSecret == "" || redirectURI == "" {
+	if issuer == "" || clientSecret == "" || redirectURI == "" {
 		return nil, false, fmt.Errorf("VAULT_OIDC_ISSUER, VAULT_OIDC_CLIENT_ID, VAULT_OIDC_CLIENT_SECRET, and VAULT_OIDC_REDIRECT_URI must all be set")
 	}
 	enforce := os.Getenv("VAULT_OIDC_ENFORCE") == "true"

@@ -1,36 +1,76 @@
-# docker-compose.yml — sample deployment: vaultd + Postgres + NATS JetStream
+# docker-compose.yml — full dev rig: Postgres + NATS + vaultd + Traefik + Authentik
 #
-# This sample wires the three components together without inter-service mTLS.
-# For production hardening add:
-#   VAULT_NATS_CERT / VAULT_NATS_KEY / VAULT_NATS_CA   (vaultd publisher + reader)
+# Default stack brings up everything:
+#     make docker-up
 #
-# Required env vars (set in shell or .env file):
-#   VAULT_MASTER_KEY            64-char hex key  (vault keygen)
+# Hardened mTLS variant (TLS on every inter-service hop):
+#     make docker-up-mtls    # layers docker-compose.mtls.yml on top
+#
+# ── First-time setup ──────────────────────────────────────────────────────────
+#
+# 1. `make docker-up` brings the stack up. vaultd's OIDC stays disabled until
+#    you finish the Authentik provider wiring (steps 2–4 below).
+#
+# 2. Browse https://auth.localhost → "Continue with email" → akadmin
+#    (use AUTHENTIK_BOOTSTRAP_* in .env to skip the initial-setup flow, or
+#     hit https://auth.localhost/if/flow/initial-setup/ directly).
+#
+# 3. Admin interface → Applications → Providers → Create
+#      Type:           OAuth2/OpenID Provider
+#      Name:           vault
+#      Client type:    Confidential
+#      Redirect URIs:  https://vault.localhost/api/v1/auth/oidc/callback
+#      Signing key:    authentik Self-signed Certificate
+#      Scopes:         openid email profile
+#    Copy the Client ID / Client Secret it returns. Then Applications →
+#    Applications → Create, link the provider.
+#
+# 4. Paste the values into .env and re-run `make docker-up`:
+#      VAULT_OIDC_CLIENT_ID=<id>
+#      VAULT_OIDC_CLIENT_SECRET=<secret>
+#
+# 5. Browse https://vault.localhost → "Continue with SSO".
+#
+# ── Required env vars (set in shell or .env file) ─────────────────────────────
+#   VAULT_MASTER_KEY            64-char hex key (vault keygen)
 #   VAULT_ADMIN_DB_PASSWORD     main vault DB admin password (DDL owner, runs migrations)
 #   VAULT_DB_PASSWORD           main vault DB app password (DML-only)
+#   AUTHENTIK_SECRET_KEY        random 50+ char string (openssl rand -base64 60)
+#   AUTHENTIK_PG_PASSWORD       password for Authentik's internal Postgres role
 #
 # Optional (usernames default to vault_admin / vault_app):
-#   VAULT_ADMIN_DB_USERNAME  main vault DB admin username (default: vault_admin)
-#   VAULT_DB_USERNAME        main vault DB app username   (default: vault_app)
+#   VAULT_ADMIN_DB_USERNAME     main vault DB admin username (default: vault_admin)
+#   VAULT_DB_USERNAME           main vault DB app username   (default: vault_app)
 #
-# Note: DB credentials and usernames above are only applied on first startup when
-# the data volume is empty (postgres initdb). Changing them after the volume is
-# built has no effect — use ALTER ROLE in psql to update an existing database,
-# then update .env to match.
+# Note: DB credentials and usernames above are only applied on first startup
+# when the data volume is empty (postgres initdb). Changing them after the
+# volume is built has no effect — use ALTER ROLE in psql to update an existing
+# database, then update .env to match.
 #
-# Usage:
-#   docker compose up -d
+# ── Architecture ──────────────────────────────────────────────────────────────
+#   Browser ─https─> host:443 ─> Traefik
+#                                  ├─ Host: vault.localhost  ─> vaultd:443      (HTTPS)
+#                                  └─ Host: auth.localhost   ─> authentik:9000  (HTTP)
+#
+#   vaultd  ─https─> auth.localhost:443 ─> Traefik ─> authentik:9000
+#                    (resolved via the auth.localhost alias on the traefik
+#                     service; vaultd trusts the mkcert CA via SSL_CERT_FILE).
+#
+# The `auth.localhost` virtual host currently routes to Authentik; the same
+# entry can later swap to tokyo3-auth without touching anything else in the
+# stack. Traefik holds a single mkcert-issued cert with SANs for
+# vault.localhost + auth.localhost + localhost.
 
 services:
 
   # ── Main vault database ───────────────────────────────────────────────────
   db:
     image: postgres:17-alpine
-    entrypoint: ["sh", "/shared/pg-scripts/pg-entrypoint.sh"]
+    entrypoint: ["sh", "/shared/postgres/pg-entrypoint.sh"]
     ports:
       - "${POSTGRES_PORT:-5433}:5432"
     environment:
-      PG_INIT_SCRIPT:    /shared/pg-scripts/db-init.sh
+      PG_INIT_SCRIPT:    /shared/postgres/db-init.sh
       POSTGRES_USER:     ${VAULT_ADMIN_DB_USERNAME:-vault_admin}
       POSTGRES_PASSWORD: ${VAULT_ADMIN_DB_PASSWORD:?VAULT_ADMIN_DB_PASSWORD is required}
       POSTGRES_DB:       vault
@@ -42,9 +82,10 @@ services:
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${VAULT_ADMIN_DB_USERNAME:-vault_admin} -d vault"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
 
   # ── NATS JetStream (authoritative audit event store) ──────────────────────
   nats:
@@ -57,9 +98,10 @@ services:
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8222/healthz"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      interval: 2s
+      timeout: 2s
+      retries: 15
+      start_period: 3s
 
   # ── nats-box: stream provisioner + interactive shell ──────────────────────
   # On startup, ensures the vault_audit JetStream stream exists. Without it,
@@ -72,7 +114,9 @@ services:
   #   docker compose exec natsbox nats stream info vault_audit
   #   docker compose exec natsbox nats sub 'vault.audit.events'
   natsbox:
-    image: natsio/nats-box:latest
+    # Pinned (not :latest) so docker doesn't query the registry on every up
+    # to check for a digest update.
+    image: natsio/nats-box:${NATSBOX_VERSION:-0.19.5}
     depends_on:
       nats:
         condition: service_healthy
@@ -94,37 +138,55 @@ services:
         exec tail -f /dev/null
     healthcheck:
       test: ["CMD-SHELL", "nats stream info vault_audit > /dev/null 2>&1"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
+      interval: 2s
+      timeout: 2s
+      retries: 20
+      start_period: 3s
     restart: unless-stopped
 
   # ── API server ────────────────────────────────────────────────────────────
-  # Exposes HTTPS on ${VAULT_PORT:-8443}. Browse https://vault.localhost:8443;
-  # the CLI uses --server https://vault.localhost:8443. The mkcert-issued
-  # leaf in /shared/certs/ (populated by `make _sync-certs`) is trusted by
-  # browsers + the host OS, so OIDC redirects don't hit cert warnings.
+  # Reached via Traefik at https://vault.localhost (host:443). The CLI uses
+  # --server https://vault.localhost. mkcert-issued server cert (staged into
+  # shared_data by `make _sync-shared`) is trusted by browsers + the host OS,
+  # so OIDC redirects don't hit cert warnings. No host port mapping — all
+  # browser traffic goes through Traefik; in-cluster traffic uses the
+  # vault.localhost network alias below.
   vaultd:
     build: .
-    image: abagile/vault:${VERSION:-latest}
-    ports:
-      - "${VAULT_PORT:-8443}:443"
+    image: abagile/tokyo3-vault:${VERSION:-latest}
+    networks:
+      default:
+        # So Traefik (and anything else in the docker network) can resolve
+        # `vault.localhost` directly to the vaultd container.
+        aliases:
+          - vault.localhost
     environment:
-      VAULT_MASTER_KEY:         ${VAULT_MASTER_KEY:?VAULT_MASTER_KEY is required}
+      VAULT_MASTER_KEY:          ${VAULT_MASTER_KEY:?VAULT_MASTER_KEY is required}
+      VAULT_ADDR:                ${VAULT_ADDR:-:443}
       # Admin DSN: schema migration only (DDL privileges).
-      VAULT_ADMIN_DATABASE_URL: postgres://${VAULT_ADMIN_DB_USERNAME:-vault_admin}:${VAULT_ADMIN_DB_PASSWORD}@db:5432/vault?sslmode=disable
+      VAULT_ADMIN_DATABASE_URL:  ${VAULT_ADMIN_DATABASE_URL:-postgres://${VAULT_ADMIN_DB_USERNAME:-vault_admin}:${VAULT_ADMIN_DB_PASSWORD}@db:5432/vault?sslmode=disable}
       # Runtime DSN: DML-only after schema is in place.
-      VAULT_DATABASE_URL:       postgres://${VAULT_DB_USERNAME:-vault_app}:${VAULT_DB_PASSWORD}@db:5432/vault?sslmode=disable
-      VAULT_ADDR:               :443
-      # Self-service signup link on the portal login page.
-      VAULT_ALLOW_REGISTRATION: ${VAULT_ALLOW_REGISTRATION:-false}
+      VAULT_DATABASE_URL:        ${VAULT_DATABASE_URL:-postgres://${VAULT_DB_USERNAME:-vault_app}:${VAULT_DB_PASSWORD}@db:5432/vault?sslmode=disable}
+      VAULT_NATS_URL:            ${VAULT_NATS_URL:-nats://nats:4222}
+      VAULT_ALLOW_REGISTRATION:  ${VAULT_ALLOW_REGISTRATION:-false}
       # mkcert-signed API leaf. Overlays may point these elsewhere; unset to
       # fall back to vaultd's in-process self-signed cert.
-      VAULT_API_CERT:           ${VAULT_API_CERT:-/shared/certs/vaultd-server.crt}
-      VAULT_API_KEY:            ${VAULT_API_KEY:-/shared/certs/vaultd-server.key}
-      # Audit sink + source (live tail page + `vaultd audit-query` CLI):
-      # publish to and read from the vault_audit JetStream stream.
-      VAULT_NATS_URL:           nats://nats:4222
+      VAULT_API_CERT:            ${VAULT_API_CERT:-/shared/certs/vaultd-server.crt}
+      VAULT_API_KEY:             ${VAULT_API_KEY:-/shared/certs/vaultd-server.key}
+      # Trust the mkcert root CA so outbound HTTPS to https://auth.localhost
+      # (OIDC discovery + token + userinfo + JWKS) validates against the
+      # Traefik-presented cert. Go's crypto/x509 SystemCertPool falls back
+      # to SSL_CERT_FILE on Linux.
+      SSL_CERT_FILE:             /shared/certs/ca.crt
+      # OIDC SSO via Authentik. CLIENT_ID/SECRET get filled in after you
+      # create the OAuth2/OpenID provider in Authentik's admin UI (see
+      # 'First-time setup' header above). Until they're set, vaultd treats
+      # OIDC as unconfigured and only local auth works.
+      VAULT_OIDC_ISSUER:         ${VAULT_OIDC_ISSUER:-https://auth.localhost/application/o/vault/}
+      VAULT_OIDC_CLIENT_ID:      ${VAULT_OIDC_CLIENT_ID:-}
+      VAULT_OIDC_CLIENT_SECRET:  ${VAULT_OIDC_CLIENT_SECRET:-}
+      VAULT_OIDC_REDIRECT_URI:   ${VAULT_OIDC_REDIRECT_URI:-https://vault.localhost/api/v1/auth/oidc/callback}
+      VAULT_OIDC_ENFORCE:        ${VAULT_OIDC_ENFORCE:-false}
     volumes:
       - shared_data:/shared:ro
     depends_on:
@@ -134,15 +196,154 @@ services:
         condition: service_healthy
       natsbox:
         condition: service_healthy
+      authentik-server:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "--no-check-certificate", "https://localhost:443/api/v1/projects"]
-      interval: 30s
+      # /auth/oidc/config is one of the few unauthenticated routes — every other
+      # /api/v1 path runs through s.auth and would 401 here, which wget treats
+      # as a failure. start_period covers first-boot migrations.
+      test: ["CMD", "wget", "-qO-", "--no-check-certificate", "https://localhost:443/api/v1/auth/oidc/config"]
+      interval: 10s
       timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # ── Front-proxy ───────────────────────────────────────────────────────────
+  # Listens on host:443, terminates TLS with the mkcert-issued vaultd-server
+  # cert (SANs cover vault.localhost + auth.localhost + localhost), and
+  # routes by Host header per /shared/traefik/dynamic.yml. Dashboard on
+  # host:${TRAEFIK_DASHBOARD_PORT:-8080}.
+  #
+  # Network aliases here are the *resolution targets* used by anything else
+  # in the docker network (e.g. vaultd dialing https://auth.localhost for
+  # OIDC discovery) — Traefik then proxies based on Host header.
+  traefik:
+    image: ${TRAEFIK_IMAGE:-traefik:v3.2}
+    ports:
+      - "${TRAEFIK_HTTPS_PORT:-443}:443"
+      - "${TRAEFIK_DASHBOARD_PORT:-8080}:8080"
+    depends_on:
+      vaultd:
+        condition: service_started
+    command:
+      - "--api.dashboard=true"
+      - "--api.insecure=true"
+      - "--entrypoints.websecure.address=:443"
+      - "--providers.file.filename=/shared/traefik/dynamic.yml"
+      - "--providers.file.watch=true"
+      - "--log.level=INFO"
+      - "--accesslog=true"
+    networks:
+      default:
+        aliases:
+          - vault.localhost
+          - auth.localhost
+    volumes:
+      - shared_data:/shared:ro
+    restart: unless-stopped
+
+  # ── Authentik's Postgres (separate DB from vault's) ───────────────────────
+  authentik-postgresql:
+    image: docker.io/library/postgres:16-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d authentik -U authentik"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    environment:
+      POSTGRES_USER:     authentik
+      POSTGRES_PASSWORD: ${AUTHENTIK_PG_PASSWORD:?AUTHENTIK_PG_PASSWORD is required}
+      POSTGRES_DB:       authentik
+    volumes:
+      - authentik_db:/var/lib/postgresql/data
+
+  # ── Authentik web/API server (browser hits this for login + admin UI) ─────
+  # Reached via Traefik at https://auth.localhost — no host port mapping.
+  # Recent Authentik releases dropped the Redis dependency (cache + task
+  # queue live in Postgres), so this stack runs DB + server + worker only.
+  # Pin AUTHENTIK_TAG to a release that supports that (the default below
+  # does — see https://github.com/goauthentik/authentik/releases).
+  authentik-server:
+    image: ghcr.io/goauthentik/server:${AUTHENTIK_TAG:-2025.10}
+    restart: unless-stopped
+    command: server
+    environment:
+      AUTHENTIK_POSTGRESQL__HOST:          authentik-postgresql
+      AUTHENTIK_POSTGRESQL__USER:          authentik
+      AUTHENTIK_POSTGRESQL__NAME:          authentik
+      AUTHENTIK_POSTGRESQL__PASSWORD:      ${AUTHENTIK_PG_PASSWORD}
+      AUTHENTIK_SECRET_KEY:                ${AUTHENTIK_SECRET_KEY:?AUTHENTIK_SECRET_KEY is required (openssl rand -base64 60)}
+      AUTHENTIK_ERROR_REPORTING__ENABLED:  "false"
+      AUTHENTIK_DISABLE_UPDATE_CHECK:      "true"
+      AUTHENTIK_DISABLE_STARTUP_ANALYTICS: "true"
+      AUTHENTIK_BOOTSTRAP_EMAIL:           ${AUTHENTIK_BOOTSTRAP_EMAIL:-akadmin@localhost}
+      AUTHENTIK_BOOTSTRAP_PASSWORD:        ${AUTHENTIK_BOOTSTRAP_PASSWORD:-}
+      AUTHENTIK_BOOTSTRAP_TOKEN:           ${AUTHENTIK_BOOTSTRAP_TOKEN:-}
+      # Trust the mkcert root CA so Authentik can POST OIDC Back-Channel
+      # Logout notifications to https://vault.localhost without hitting a
+      # TLS verify error. Python's `requests` honours SSL_CERT_FILE the
+      # same way Go's crypto/x509 does.
+      SSL_CERT_FILE:                       /shared/certs/ca.crt
+      REQUESTS_CA_BUNDLE:                  /shared/certs/ca.crt
+    volumes:
+      - authentik_media:/media
+      - authentik_templates:/templates
+      - shared_data:/shared:ro
+    healthcheck:
+      # `ak healthcheck` is Authentik's documented readiness probe — passes
+      # only after DB migrations finish and the API can serve requests.
+      test: ["CMD", "ak", "healthcheck"]
+      interval: 30s
+      timeout: 30s
       retries: 3
-      start_period: 10s
+      start_period: 60s
+    depends_on:
+      authentik-postgresql:
+        condition: service_healthy
+
+  # ── Authentik background worker (handles SCIM, expressions, emails) ───────
+  # user: root is what upstream recommends so the worker can read
+  # /var/run/docker.sock for outpost lifecycle. Not needed for the basic
+  # OIDC + SCIM flow against vault, so we drop the docker socket mount.
+  authentik-worker:
+    image: ghcr.io/goauthentik/server:${AUTHENTIK_TAG:-2025.10}
+    restart: unless-stopped
+    command: worker
+    environment:
+      AUTHENTIK_POSTGRESQL__HOST:      authentik-postgresql
+      AUTHENTIK_POSTGRESQL__USER:      authentik
+      AUTHENTIK_POSTGRESQL__NAME:      authentik
+      AUTHENTIK_POSTGRESQL__PASSWORD:  ${AUTHENTIK_PG_PASSWORD}
+      AUTHENTIK_SECRET_KEY:            ${AUTHENTIK_SECRET_KEY}
+      AUTHENTIK_BOOTSTRAP_EMAIL:       ${AUTHENTIK_BOOTSTRAP_EMAIL:-akadmin@localhost}
+      AUTHENTIK_BOOTSTRAP_PASSWORD:    ${AUTHENTIK_BOOTSTRAP_PASSWORD:-}
+      AUTHENTIK_BOOTSTRAP_TOKEN:       ${AUTHENTIK_BOOTSTRAP_TOKEN:-}
+      # The worker dispatches OIDC Back-Channel Logout POSTs to RPs. It
+      # needs to trust the mkcert root CA to call https://vault.localhost
+      # without a TLS verify error.
+      SSL_CERT_FILE:                   /shared/certs/ca.crt
+      REQUESTS_CA_BUNDLE:              /shared/certs/ca.crt
+    volumes:
+      - authentik_media:/media
+      - authentik_templates:/templates
+      - authentik_certs:/certs
+      - shared_data:/shared:ro
+    depends_on:
+      authentik-postgresql:
+        condition: service_healthy
 
 volumes:
+  # External: populated by `make _sync-shared` (certs + postgres scripts
+  # + traefik config tar-piped in). Marking it external keeps compose from
+  # creating or destroying it — `docker-down-all -v` won't wipe the staged
+  # contents.
   shared_data:
+    external: true
   db_data:
   nats_data:
+  authentik_db:
+  authentik_media:
+  authentik_templates:
+  authentik_certs:

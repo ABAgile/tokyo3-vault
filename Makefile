@@ -2,20 +2,18 @@
 ##
 ## Usage:
 ##   make build             Build vaultd + vault binaries to ./bin/
-##   make run               Start vaultd with dev defaults (starts Postgres + NATS via compose)
-##   make run-mtls          Start vaultd with mTLS (cert auth, no password in DSN; starts Postgres + NATS)
-##   make run-authentik     Start vaultd on host against Authentik IdP in compose (same URL from browser + vaultd)
+##   make run               Start vaultd with dev defaults (Postgres + NATS via compose)
+##   make run-mtls          Start vaultd with mTLS (cert auth, no password in DSN)
 ##   make keygen            Generate a VAULT_MASTER_KEY
 ##   make check             Full pre-commit sequence (fmt + test + staticcheck + gopls + govulncheck)
 ##   make docker-build      Build Docker image
-##   make docker-up         Start with docker compose (Postgres + NATS)
-##   make docker-up-mtls    Start with docker compose + mTLS overlay (auto-generates certs)
-##   make docker-up-authentik  Start with docker compose + Authentik IdP overlay (OIDC/SCIM)
-##   make docker-down       Stop docker compose (overlay-aware; safe in any mode)
-##   make docker-down-all   Stop docker compose AND remove all volumes (nuclear — wipes DB/NATS state)
-##   make gen-certs         Generate mTLS certs in certs/ (manual; auto-run by run-mtls/docker-up-mtls)
+##   make docker-up         Bring up the full stack (Postgres + NATS + vaultd + Traefik + Authentik)
+##   make docker-up-mtls    Bring up the full stack + mTLS overlay (auto-generates certs)
+##   make docker-down       Stop the stack (overlay-aware; safe in any mode)
+##   make docker-down-all   Stop + remove orphan containers AND named volumes (destroys DB/NATS state)
+##   make gen-certs         Generate mTLS certs in shared/certs/ (manual; auto-run elsewhere)
 ##   make clean             Remove ./bin/
-##   make clean-all         Remove ./bin/, generated certs, and .env (full reset)
+##   make clean-all         Remove ./bin/, shared/certs/*.{crt,key,srl}, and .env (full reset)
 ##   make test              Run tests
 ##   make help              Show this help
 
@@ -39,24 +37,28 @@ LDFLAGS := -s -w
 GO      := go
 GOFLAGS :=
 
-IMAGE_NAME    ?= abagile/vault
+IMAGE_NAME    ?= abagile/tokyo3-vault
 IMAGE_TAG     ?= $(VERSION)
-VAULT_ADDR    ?= :8443
+# VAULT_PORT is the host-side port `make run` / `run-mtls` listen on. VAULT_ADDR
+# is derived so both stay in sync. In compose, vaultd listens on :443 inside
+# the container (set inline on the service in docker-compose.yml).
+VAULT_PORT    ?= 8443
+VAULT_ADDR    ?= :$(VAULT_PORT)
 POSTGRES_PORT ?= 35432
 NATS_PORT     ?= 34222
 
-# Docker Compose project name (defaults to directory basename, matching Compose behaviour).
-# Used to derive the shared named volume name for pre-population via tar pipe (no bind mounts).
-COMPOSE_PROJECT := $(notdir $(CURDIR))
-SHARED_VOLUME   := $(COMPOSE_PROJECT)_shared_data
+# Name of the external named volume populated via tar pipe (no bind mounts).
+# Declared `external: true` in docker-compose.yml so compose neither creates
+# nor destroys it — `_sync-shared` is the sole owner of its lifecycle.
+SHARED_VOLUME := shared_data
 
 # ── Phony targets ─────────────────────────────────────────────────────────────
 
 .PHONY: all build build-server build-cli build-linux build-linux-amd64 build-darwin \
-        run run-mtls run-authentik keygen gen-certs \
-        _gen-env _sync-pg-scripts _sync-certs \
+        run run-mtls keygen gen-certs \
+        _gen-env _sync-shared \
         test test-verbose tidy vet lint check \
-        docker-build docker-build-amd64 docker-push docker-up docker-up-mtls docker-up-authentik docker-down docker-down-all docker-logs \
+        docker-build docker-build-amd64 docker-push docker-up docker-up-mtls docker-down docker-down-all docker-logs \
         install clean clean-all help
 
 all: build
@@ -100,104 +102,99 @@ build-darwin: $(BIN_DIR)
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
-# Generate .env with dev defaults on first run. Used by run / run-mtls.
-# DSNs use password auth; the mTLS run target overrides with cert-auth DSNs at process launch time.
+# Generate .env with dev defaults on first run. Used by run / run-mtls and the
+# compose stack. Notable omissions:
+#   - VAULT_ADDR is NOT seeded: compose's container needs :443 (Traefik
+#     upstream) while `make run` listens on :$(VAULT_PORT) on the host. Set
+#     inline in the run targets, not here.
+#   - VAULT_ADMIN_DATABASE_URL / VAULT_DATABASE_URL / VAULT_NATS_URL are
+#     likewise NOT seeded — compose builds the container-internal DSN
+#     (db:5432 / nats:4222) from the password vars; `make run` / `run-mtls`
+#     construct the host-side DSN (db.localhost:POSTGRES_PORT) inline.
 _gen-env: build-server build-cli
 	@if [ ! -f .env ]; then \
 	    KEY=$$($(VAULT_BIN) keygen); \
 	    echo "VAULT_MASTER_KEY=$$KEY"                                                                                                                                 > .env; \
-	    echo "VAULT_ADDR=$(VAULT_ADDR)"                                                                                                                              >> .env; \
 	    echo "POSTGRES_PORT=$(POSTGRES_PORT)"                                                                                                                        >> .env; \
 	    echo "VAULT_ADMIN_DB_PASSWORD=changeme"                                                                                                                      >> .env; \
 	    echo "VAULT_DB_PASSWORD=changeme"                                                                                                                            >> .env; \
-	    echo "VAULT_ADMIN_DATABASE_URL=postgres://$${VAULT_ADMIN_DB_USERNAME:-vault_admin}:changeme@db.localhost:$(POSTGRES_PORT)/vault?sslmode=disable"             >> .env; \
-	    echo "VAULT_DATABASE_URL=postgres://$${VAULT_DB_USERNAME:-vault_app}:changeme@db.localhost:$(POSTGRES_PORT)/vault?sslmode=disable"                          >> .env; \
 	    echo "NATS_PORT=$(NATS_PORT)"                                                                                                                                >> .env; \
-	    echo "VAULT_NATS_URL=nats://nats.localhost:$(NATS_PORT)"                                                                                                     >> .env; \
 	    echo "VAULT_ALLOW_REGISTRATION=true"                                                                                                                         >> .env; \
 	    echo ""                                                                                                                                                     >> .env; \
-	    echo "# OIDC SSO via auth — paste CLIENT_ID/SECRET from \`authd\`'s /admin/clients (POST) or"                                                               >> .env; \
-	    echo "# /portal/admin/clients/new. Leave both blank to keep OIDC disabled. When CLIENT_ID is"                                                               >> .env; \
-	    echo "# set, run-mtls auto-defaults VAULT_OIDC_ISSUER + VAULT_OIDC_REDIRECT_URI to the values"                                                              >> .env; \
-	    echo "# below — override here if your auth/vault hosts/ports differ."                                                                                      >> .env; \
-	    echo "VAULT_OIDC_CLIENT_ID="                                                                                                                                 >> .env; \
-	    echo "VAULT_OIDC_CLIENT_SECRET="                                                                                                                             >> .env; \
-	    echo "# VAULT_OIDC_ISSUER=https://auth.localhost:8443"                                                                                                       >> .env; \
-	    echo "# VAULT_OIDC_REDIRECT_URI=https://vault.localhost:8443/api/v1/auth/oidc/callback"                                                                      >> .env; \
+	    echo "# ── OIDC SSO via Authentik ────────────────────────────────────────────"                                                                              >> .env; \
+	    echo "# Fill CLIENT_ID/SECRET after creating the OAuth2/OpenID provider in"                                                                                  >> .env; \
+	    echo "# Authentik's admin UI (see 'First-time setup' section at the top of"                                                                                  >> .env; \
+	    echo "# docker-compose.yml). Defaults for ISSUER + REDIRECT_URI in compose"                                                                                  >> .env; \
+	    echo "# already point at https://auth.localhost / https://vault.localhost;"                                                                                  >> .env; \
+	    echo "# set them here only to override."                                                                                                                     >> .env; \
+	    echo "VAULT_OIDC_CLIENT_ID="                                                                                                                                  >> .env; \
+	    echo "VAULT_OIDC_CLIENT_SECRET="                                                                                                                              >> .env; \
 	    echo "VAULT_OIDC_ENFORCE=false"                                                                                                                              >> .env; \
 	    echo ""                                                                                                                                                     >> .env; \
-	    echo "# Authentik IdP overlay (docker-compose.authentik.yml) — only consumed when"                                                                          >> .env; \
-	    echo "# you run \`make docker-up-authentik\`. Safe to leave in place otherwise."                                                                            >> .env; \
-	    echo "AUTHENTIK_PG_PASSWORD=$$(openssl rand -hex 16)"                                                                                                        >> .env; \
-	    echo "AUTHENTIK_SECRET_KEY=$$(openssl rand -base64 60 | tr -d '\n')"                                                                                         >> .env; \
+	    echo "# ── Authentik (now part of the default stack) ────────────────────────"                                                                               >> .env; \
+	    echo "AUTHENTIK_PG_PASSWORD=$$(openssl rand -hex 16)"                                                                                                         >> .env; \
+	    echo "AUTHENTIK_SECRET_KEY=$$(openssl rand -base64 60 | tr -d '\n')"                                                                                          >> .env; \
 	    echo "  generated .env"; \
 	fi
 
-# Push local postgres/ scripts into shared_data:/shared/pg-scripts (no bind mount needed).
-# Re-runs on every invoke so changes to init scripts are always picked up.
-_sync-pg-scripts:
+# Tar-pipe the entire shared/ tree (certs/ + postgres/ + traefik/) into the
+# shared_data named volume. Single source of truth for everything containers
+# read under /shared. Uses a tar pipe rather than a bind mount so it works
+# when `docker compose` itself runs inside a container — the daemon would
+# see the OUTER host filesystem, not ours. Leaf certs are generated on first
+# run if absent; mkcert's root CA is staged in as ca.crt for the mtls overlay
+# mounts and cleaned up locally afterwards so shared/certs/ stays free of
+# the CA.
+_sync-shared: _gen-env
+	@if [ ! -f shared/certs/vaultd-server.crt ]; then bash shared/certs/gen.sh; fi
 	@docker volume create $(SHARED_VOLUME) 2>&1 >/dev/null || true
-	@tar -cf - -C postgres . | docker run --rm -i -v $(SHARED_VOLUME):/shared alpine:3.21 sh -c "mkdir -p /shared/pg-scripts && tar -xf - -C /shared/pg-scripts && chmod +x /shared/pg-scripts/*.sh"
-
-# Generate leaf certs if absent, then push local certs/ + mkcert's root CA
-# into shared_data:/shared/certs (root CA staged as ca.crt for compose mounts;
-# removed locally after the volume copy so certs/ stays free of the CA).
-_sync-certs:
-	@if [ ! -f certs/vaultd-server.crt ]; then bash certs/gen.sh; fi
-	@docker volume create $(SHARED_VOLUME) 2>&1 >/dev/null || true
-	@cp $$(mkcert -CAROOT)/rootCA.pem certs/ca.crt
-	@tar -cf - -C certs . | docker run --rm -i -v $(SHARED_VOLUME):/shared alpine:3.21 sh -c "mkdir -p /shared/certs && tar -xf - -C /shared/certs"
-	@rm -f certs/ca.crt
+	@cp $$(mkcert -CAROOT)/rootCA.pem shared/certs/ca.crt
+	@tar -cf - --exclude='gen.sh' -C shared . | docker run --rm -i -v $(SHARED_VOLUME):/shared alpine:3.21 sh -c "tar -xf - -C /shared && find /shared/postgres -name '*.sh' -exec chmod +x {} \;"
+	@rm -f shared/certs/ca.crt
+	@echo "  synced shared/ → /shared"
 
 # ── Dev ───────────────────────────────────────────────────────────────────────
 
-## run: Build and start vaultd with dev defaults (auto-generates .env on first run)
-run: _gen-env _sync-pg-scripts
+## run: Build and start vaultd with dev defaults (auto-generates .env on first run).
+## DSNs, AUTH cert/key paths, and AUTH_ADDR are NOT read from .env — they're
+## set inline to target host-side filesystem paths and port mappings
+## (db.localhost / nats.localhost / shared/certs/...), so .env stays usable
+## as the single source of truth for `docker-up` too (where the container
+## sees /shared/certs/... and db:5432).
+##
+## Without VAULT_API_CERT/KEY here, vaultd would mint an ephemeral self-signed
+## cert at startup instead of using the mkcert-issued one — browsers would
+## then show a cert warning when hitting https://localhost:$(VAULT_PORT).
+run: _sync-shared
 	@docker compose up -d db nats natsbox --wait 2>/dev/null || true
-	@export $$(grep -v '^#' .env | xargs) && $(VAULTD_BIN)
+	@export $$(grep -v '^#' .env | xargs) && \
+	    VAULT_ADDR=$(VAULT_ADDR) \
+	    VAULT_API_CERT=shared/certs/vaultd-server.crt \
+	    VAULT_API_KEY=shared/certs/vaultd-server.key \
+	    VAULT_ADMIN_DATABASE_URL=postgres://$${VAULT_ADMIN_DB_USERNAME:-vault_admin}:$${VAULT_ADMIN_DB_PASSWORD}@db.localhost:$(POSTGRES_PORT)/vault?sslmode=disable \
+	    VAULT_DATABASE_URL=postgres://$${VAULT_DB_USERNAME:-vault_app}:$${VAULT_DB_PASSWORD}@db.localhost:$(POSTGRES_PORT)/vault?sslmode=disable \
+	    VAULT_NATS_URL=nats://nats.localhost:$(NATS_PORT) \
+	    $(VAULTD_BIN)
 
 ## run-mtls: Build and start vaultd with mTLS (cert auth; overrides DSNs — no password)
-run-mtls: _gen-env _sync-pg-scripts _sync-certs
+run-mtls: _sync-shared
 	@docker compose -f docker-compose.yml -f docker-compose.mtls.yml up -d db nats natsbox --wait 2>/dev/null || true
 	@CA_PEM=$$(mkcert -CAROOT)/rootCA.pem; \
 	    export $$(grep -v '^#' .env | xargs) && \
-	    if [ -n "$$VAULT_OIDC_CLIENT_ID" ]; then \
-	        : "$${VAULT_OIDC_ISSUER:=https://auth.localhost:8443}"; \
-	        : "$${VAULT_OIDC_REDIRECT_URI:=https://vault.localhost:8443/api/v1/auth/oidc/callback}"; \
-	        export VAULT_OIDC_ISSUER VAULT_OIDC_REDIRECT_URI; \
-	    fi; \
-	    VAULT_API_CERT=certs/vaultd-server.crt \
-	    VAULT_API_KEY=certs/vaultd-server.key \
+	    VAULT_ADDR=$(VAULT_ADDR) \
+	    VAULT_API_CERT=shared/certs/vaultd-server.crt \
+	    VAULT_API_KEY=shared/certs/vaultd-server.key \
 	    VAULT_WORKLOAD_CA=$$CA_PEM \
-	    VAULT_ADMIN_DB_CERT=certs/vaultd-admin-db-client.crt \
-	    VAULT_ADMIN_DB_KEY=certs/vaultd-admin-db-client.key \
+	    VAULT_ADMIN_DB_CERT=shared/certs/vaultd-admin-db-client.crt \
+	    VAULT_ADMIN_DB_KEY=shared/certs/vaultd-admin-db-client.key \
 	    VAULT_ADMIN_DATABASE_URL=postgres://$${VAULT_ADMIN_DB_USERNAME:-vault_admin}@db.localhost:$(POSTGRES_PORT)/vault?sslmode=verify-full \
-	    VAULT_DB_CERT=certs/vaultd-app-db-client.crt \
-	    VAULT_DB_KEY=certs/vaultd-app-db-client.key \
+	    VAULT_DB_CERT=shared/certs/vaultd-app-db-client.crt \
+	    VAULT_DB_KEY=shared/certs/vaultd-app-db-client.key \
 	    VAULT_DATABASE_URL=postgres://$${VAULT_DB_USERNAME:-vault_app}@db.localhost:$(POSTGRES_PORT)/vault?sslmode=verify-full \
-	    VAULT_NATS_CERT=certs/vaultd-nats-client.crt \
-	    VAULT_NATS_KEY=certs/vaultd-nats-client.key \
+	    VAULT_NATS_CERT=shared/certs/vaultd-nats-client.crt \
+	    VAULT_NATS_KEY=shared/certs/vaultd-nats-client.key \
 	    VAULT_NATS_URL=tls://nats.localhost:$(NATS_PORT) \
 	    VAULT_SCIM_MTLS_SAN_DNS=$${VAULT_SCIM_MTLS_SAN_DNS:-auth.localhost} \
-	    $(VAULTD_BIN)
-
-## run-authentik: Start vaultd on the host against an Authentik IdP running in compose.
-## Both vaultd and the browser reach Authentik at http://localhost:${AUTHENTIK_HTTP_PORT:-9000},
-## so Authentik's discovery + redirect URLs are identical on both sides — no /etc/hosts
-## entry and no docker-network alias needed (the issue docker-up-authentik runs into).
-## After first boot, finish Authentik provider setup (see docker-compose.authentik.yml
-## header), paste VAULT_OIDC_CLIENT_ID / VAULT_OIDC_CLIENT_SECRET into .env, re-run.
-run-authentik: _gen-env _sync-pg-scripts _sync-certs
-	@docker compose -f docker-compose.yml -f docker-compose.authentik.yml up -d \
-	    db nats natsbox authentik-postgresql authentik-server authentik-worker --wait 2>/dev/null || true
-	@export $$(grep -v '^#' .env | xargs) && \
-	    if [ -n "$$VAULT_OIDC_CLIENT_ID" ]; then \
-	        : "$${VAULT_OIDC_ISSUER:=http://authentik.localhost:$${AUTHENTIK_HTTP_PORT:-9000}/application/o/vault/}"; \
-	        : "$${VAULT_OIDC_REDIRECT_URI:=https://vault.localhost:8443/api/v1/auth/oidc/callback}"; \
-	        export VAULT_OIDC_ISSUER VAULT_OIDC_REDIRECT_URI; \
-	    fi; \
-	    VAULT_API_CERT=certs/vaultd-server.crt \
-	    VAULT_API_KEY=certs/vaultd-server.key \
 	    $(VAULTD_BIN)
 
 ## keygen: Print a fresh random master key
@@ -206,7 +203,7 @@ keygen: build-cli
 
 ## gen-certs: Generate mTLS certificates for the docker compose overlay
 gen-certs:
-	@bash certs/gen.sh
+	@bash shared/certs/gen.sh
 
 # ── Quality ───────────────────────────────────────────────────────────────────
 
@@ -263,25 +260,21 @@ docker-push: docker-build
 	docker push $(IMAGE_NAME):$(IMAGE_TAG)
 	docker push $(IMAGE_NAME):latest
 
-## docker-up: Start vaultd with docker compose (Postgres + NATS); mkcert-signed API cert
-docker-up: _gen-env _sync-pg-scripts _sync-certs
-	docker compose up -d
+## docker-up: Bring up the full stack (Postgres + NATS + vaultd + Traefik + Authentik).
+docker-up: _sync-shared
+	docker compose up -d --build --wait --remove-orphans
 
-## docker-up-mtls: Start with docker compose + mTLS overlay (DB + NATS use cert auth too)
-docker-up-mtls: _gen-env _sync-pg-scripts _sync-certs
-	docker compose -f docker-compose.yml -f docker-compose.mtls.yml up -d --remove-orphans
-
-## docker-up-authentik: Start with docker compose + Authentik IdP overlay (OIDC/SCIM integration testing)
-docker-up-authentik: _gen-env _sync-pg-scripts _sync-certs
-	docker compose -f docker-compose.yml -f docker-compose.authentik.yml up -d --remove-orphans
+## docker-up-mtls: Bring up the full stack + mTLS overlay (auto-generates certs on first run)
+docker-up-mtls: _sync-shared
+	docker compose -f docker-compose.yml -f docker-compose.mtls.yml up -d --build --wait --remove-orphans
 
 ## docker-down: Stop all compose services (overlay-aware; safe to run in any mode)
 docker-down:
-	docker compose -f docker-compose.yml -f docker-compose.mtls.yml -f docker-compose.authentik.yml down
+	docker compose -f docker-compose.yml -f docker-compose.mtls.yml down
 
-## docker-down-all: Stop services AND remove named volumes (db, NATS, shared_data, authentik)
+## docker-down-all: Stop services AND remove named volumes (db, NATS, authentik); shared_data is external and preserved
 docker-down-all:
-	docker compose -f docker-compose.yml -f docker-compose.mtls.yml -f docker-compose.authentik.yml down -v --remove-orphans
+	docker compose -f docker-compose.yml -f docker-compose.mtls.yml down -v --remove-orphans
 
 ## docker-logs: Tail vaultd logs
 docker-logs:
@@ -303,9 +296,9 @@ clean:
 
 ## clean-all: Remove build artifacts, generated certs, and .env (full reset)
 clean-all: clean
-	rm -f certs/*.crt certs/*.key certs/ca.srl
+	rm -f shared/certs/*.crt shared/certs/*.key shared/certs/ca.srl
 	rm -f .env
-	@echo "  removed certs/* and .env"
+	@echo "  removed shared/certs/*.{crt,key}, shared/certs/ca.srl, and .env"
 
 # ── Help ──────────────────────────────────────────────────────────────────────
 
