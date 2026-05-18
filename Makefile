@@ -7,7 +7,8 @@
 ##   make keygen            Generate a VAULT_MASTER_KEY
 ##   make check             Full pre-commit sequence (fmt + test + staticcheck + gopls + govulncheck)
 ##   make docker-build      Build Docker image
-##   make docker-up         Bring up the full stack (Postgres + NATS + vaultd + Traefik + Authentik)
+##   make docker-up         Bring up the full stack with tokyo3-auth as the IdP (default)
+##   make docker-up-authentik  Bring up the full stack with Authentik as the IdP instead
 ##   make docker-up-mtls    Bring up the full stack + mTLS overlay (auto-generates certs)
 ##   make docker-down       Stop the stack (overlay-aware; safe in any mode)
 ##   make docker-down-all   Stop + remove orphan containers AND named volumes (destroys DB/NATS state)
@@ -58,7 +59,7 @@ SHARED_VOLUME := shared_data
         run run-mtls keygen gen-certs \
         _gen-env _sync-shared \
         test test-verbose tidy vet lint check \
-        docker-build docker-build-amd64 docker-push docker-up docker-up-mtls docker-down docker-down-all docker-logs \
+        docker-build docker-build-amd64 docker-push docker-up docker-up-authentik docker-up-mtls docker-down docker-down-all docker-logs \
         install clean clean-all help
 
 all: build
@@ -114,6 +115,7 @@ build-darwin: $(BIN_DIR)
 _gen-env: build-server build-cli
 	@if [ ! -f .env ]; then \
 	    KEY=$$($(VAULT_BIN) keygen); \
+	    AUTH_KEY=$$($(VAULT_BIN) keygen); \
 	    echo "VAULT_MASTER_KEY=$$KEY"                                                                                                                                 > .env; \
 	    echo "POSTGRES_PORT=$(POSTGRES_PORT)"                                                                                                                        >> .env; \
 	    echo "VAULT_ADMIN_DB_PASSWORD=changeme"                                                                                                                      >> .env; \
@@ -121,19 +123,26 @@ _gen-env: build-server build-cli
 	    echo "NATS_PORT=$(NATS_PORT)"                                                                                                                                >> .env; \
 	    echo "VAULT_ALLOW_REGISTRATION=true"                                                                                                                         >> .env; \
 	    echo ""                                                                                                                                                     >> .env; \
-	    echo "# ── OIDC SSO via Authentik ────────────────────────────────────────────"                                                                              >> .env; \
-	    echo "# Fill CLIENT_ID/SECRET after creating the OAuth2/OpenID provider in"                                                                                  >> .env; \
-	    echo "# Authentik's admin UI (see 'First-time setup' section at the top of"                                                                                  >> .env; \
-	    echo "# docker-compose.yml). Defaults for ISSUER + REDIRECT_URI in compose"                                                                                  >> .env; \
-	    echo "# already point at https://auth.localhost / https://vault.localhost;"                                                                                  >> .env; \
-	    echo "# set them here only to override."                                                                                                                     >> .env; \
-	    echo "VAULT_OIDC_CLIENT_ID="                                                                                                                                  >> .env; \
-	    echo "VAULT_OIDC_CLIENT_SECRET="                                                                                                                              >> .env; \
+	    echo "# ── OIDC SSO ──────────────────────────────────────────────────────────"                                                                              >> .env; \
+	    echo "# Default IdP is tokyo3-auth at https://auth.localhost (started by"                                                                                    >> .env; \
+	    echo "# \`make docker-up\`). To switch to Authentik instead, run"                                                                                            >> .env; \
+	    echo "# \`make docker-up-authentik\` and override VAULT_OIDC_ISSUER below to"                                                                                >> .env; \
+	    echo "# https://authentik.localhost/application/o/vault/ . Fill CLIENT_ID +"                                                                                 >> .env; \
+	    echo "# SECRET after creating the OAuth client in the IdP's admin UI (see"                                                                                   >> .env; \
+	    echo "# 'First-time setup' headers in docker-compose.yml)."                                                                                                  >> .env; \
+	    echo "VAULT_OIDC_CLIENT_ID="                                                                                                                                 >> .env; \
+	    echo "VAULT_OIDC_CLIENT_SECRET="                                                                                                                             >> .env; \
+	    echo "# VAULT_OIDC_ISSUER=https://authentik.localhost/application/o/vault/"                                                                                  >> .env; \
 	    echo "VAULT_OIDC_ENFORCE=false"                                                                                                                              >> .env; \
 	    echo ""                                                                                                                                                     >> .env; \
-	    echo "# ── Authentik (now part of the default stack) ────────────────────────"                                                                               >> .env; \
-	    echo "AUTHENTIK_PG_PASSWORD=$$(openssl rand -hex 16)"                                                                                                         >> .env; \
-	    echo "AUTHENTIK_SECRET_KEY=$$(openssl rand -base64 60 | tr -d '\n')"                                                                                          >> .env; \
+	    echo "# ── tokyo3-auth (default IdP, --profile tokyo3-auth) ─────────────────"                                                                               >> .env; \
+	    echo "AUTH_MASTER_KEY=$$AUTH_KEY"                                                                                                                            >> .env; \
+	    echo "AUTH_ADMIN_DB_PASSWORD=$$(openssl rand -hex 16)"                                                                                                       >> .env; \
+	    echo "AUTH_DB_PASSWORD=$$(openssl rand -hex 16)"                                                                                                             >> .env; \
+	    echo ""                                                                                                                                                     >> .env; \
+	    echo "# ── Authentik (only consumed by --profile authentik) ─────────────────"                                                                               >> .env; \
+	    echo "AUTHENTIK_PG_PASSWORD=$$(openssl rand -hex 16)"                                                                                                        >> .env; \
+	    echo "AUTHENTIK_SECRET_KEY=$$(openssl rand -base64 60 | tr -d '\n')"                                                                                         >> .env; \
 	    echo "  generated .env"; \
 	fi
 
@@ -260,21 +269,29 @@ docker-push: docker-build
 	docker push $(IMAGE_NAME):$(IMAGE_TAG)
 	docker push $(IMAGE_NAME):latest
 
-## docker-up: Bring up the full stack (Postgres + NATS + vaultd + Traefik + Authentik).
+## docker-up: Bring up the full stack with tokyo3-auth as the IdP (default).
+## Activates the `tokyo3-auth` profile so auth-db + auth come up; the
+## `authentik` profile services stay defined-but-stopped.
 docker-up: _sync-shared
-	docker compose up -d --build --wait --remove-orphans
+	docker compose --profile tokyo3-auth up -d --build --wait --remove-orphans
 
-## docker-up-mtls: Bring up the full stack + mTLS overlay (auto-generates certs on first run)
+## docker-up-authentik: Bring up the full stack with Authentik as the IdP instead.
+## Switch flow: `make docker-down && make docker-up-authentik` (compose does
+## not stop tokyo3-auth services when you flip the active profile).
+docker-up-authentik: _sync-shared
+	docker compose --profile authentik up -d --build --wait --remove-orphans
+
+## docker-up-mtls: Bring up the full stack + mTLS overlay with tokyo3-auth (auto-generates certs on first run)
 docker-up-mtls: _sync-shared
-	docker compose -f docker-compose.yml -f docker-compose.mtls.yml up -d --build --wait --remove-orphans
+	docker compose --profile tokyo3-auth -f docker-compose.yml -f docker-compose.mtls.yml up -d --build --wait --remove-orphans
 
-## docker-down: Stop all compose services (overlay-aware; safe to run in any mode)
+## docker-down: Stop all compose services (overlay- and profile-aware; safe to run in any mode)
 docker-down:
-	docker compose -f docker-compose.yml -f docker-compose.mtls.yml down
+	docker compose --profile tokyo3-auth --profile authentik -f docker-compose.yml -f docker-compose.mtls.yml down
 
-## docker-down-all: Stop services AND remove named volumes (db, NATS, authentik); shared_data is external and preserved
+## docker-down-all: Stop services AND remove named volumes (db, NATS, auth-db, authentik); shared_data is external and preserved
 docker-down-all:
-	docker compose -f docker-compose.yml -f docker-compose.mtls.yml down -v --remove-orphans
+	docker compose --profile tokyo3-auth --profile authentik -f docker-compose.yml -f docker-compose.mtls.yml down -v --remove-orphans
 
 ## docker-logs: Tail vaultd logs
 docker-logs:

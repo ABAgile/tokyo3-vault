@@ -1,29 +1,40 @@
-# docker-compose.yml — full dev rig: Postgres + NATS + vaultd + Traefik + Authentik
+# docker-compose.yml — full dev rig: Postgres + NATS + vaultd + Traefik + IdP
 #
-# Default stack brings up everything:
+# Default stack uses tokyo3-auth as the IdP at https://auth.localhost:
 #     make docker-up
+#
+# Authentik variant (swap IdPs — Authentik takes over at https://authentik.localhost
+# while the tokyo3-auth profile stays down):
+#     make docker-up-authentik
 #
 # Hardened mTLS variant (TLS on every inter-service hop):
 #     make docker-up-mtls    # layers docker-compose.mtls.yml on top
 #
-# ── First-time setup ──────────────────────────────────────────────────────────
+# Switching between IdPs is `make docker-down && make docker-up-<choice>` —
+# profiles gate which IdP starts, but compose does not stop the other one
+# when you switch, so a clean down avoids running both at once.
 #
-# 1. `make docker-up` brings the stack up. vaultd's OIDC stays disabled until
-#    you finish the Authentik provider wiring (steps 2–4 below).
+# ── First-time setup (default: tokyo3-auth) ──────────────────────────────────
 #
-# 2. Browse https://auth.localhost → "Continue with email" → akadmin
-#    (use AUTHENTIK_BOOTSTRAP_* in .env to skip the initial-setup flow, or
-#     hit https://auth.localhost/if/flow/initial-setup/ directly).
+# 0. Build the tokyo3-auth image once (vault's compose pulls
+#    `abagile/tokyo3-auth:latest` by image tag, not by source path):
 #
-# 3. Admin interface → Applications → Providers → Create
-#      Type:           OAuth2/OpenID Provider
+#        cd ../auth && make docker-build && cd -
+#
+# 1. `make docker-up` brings up Postgres + NATS + vaultd + Traefik + tokyo3-auth.
+#    vaultd's OIDC stays disabled until you finish the auth-client wiring
+#    (steps 2–4 below).
+#
+# 2. Browse https://auth.localhost → "Register" to seat the first admin user
+#    (AUTH_ALLOW_REGISTRATION=true on the dev rig). The first registered user
+#    is promoted to admin automatically.
+#
+# 3. Admin portal → /portal/admin/clients/new
 #      Name:           vault
-#      Client type:    Confidential
 #      Redirect URIs:  https://vault.localhost/api/v1/auth/oidc/callback
-#      Signing key:    authentik Self-signed Certificate
-#      Scopes:         openid email profile
-#    Copy the Client ID / Client Secret it returns. Then Applications →
-#    Applications → Create, link the provider.
+#      Backchannel:    https://vault.localhost/api/v1/auth/oidc/backchannel-logout
+#      Scopes:         openid email profile offline_access
+#    Copy the Client ID / Client Secret it returns.
 #
 # 4. Paste the values into .env and re-run `make docker-up`:
 #      VAULT_OIDC_CLIENT_ID=<id>
@@ -31,16 +42,48 @@
 #
 # 5. Browse https://vault.localhost → "Continue with SSO".
 #
+# ── First-time setup (alternative: Authentik) ────────────────────────────────
+#
+# 1. `make docker-up-authentik` brings the same core stack up with Authentik
+#    at https://authentik.localhost (the tokyo3-auth profile is not started).
+#
+# 2. Browse https://authentik.localhost → akadmin (use AUTHENTIK_BOOTSTRAP_*
+#    in .env to skip the initial-setup flow, or hit
+#    https://authentik.localhost/if/flow/initial-setup/ directly).
+#
+# 3. Admin interface → Applications → Providers → Create
+#      Type:           OAuth2/OpenID Provider
+#      Name:           vault
+#      Client type:    Confidential
+#      Redirect URIs:  https://vault.localhost/api/v1/auth/oidc/callback
+#      Backchannel:    https://vault.localhost/api/v1/auth/oidc/backchannel-logout
+#      Signing key:    authentik Self-signed Certificate
+#      Scopes:         openid email profile
+#    Copy the Client ID / Client Secret. Then Applications → Applications →
+#    Create, link the provider.
+#
+# 4. Paste into .env, plus override the issuer so vaultd points at Authentik
+#    rather than the tokyo3-auth default:
+#      VAULT_OIDC_ISSUER=https://authentik.localhost/application/o/vault/
+#      VAULT_OIDC_CLIENT_ID=<id>
+#      VAULT_OIDC_CLIENT_SECRET=<secret>
+#    Then `make docker-up-authentik` again.
+#
 # ── Required env vars (set in shell or .env file) ─────────────────────────────
 #   VAULT_MASTER_KEY            64-char hex key (vault keygen)
 #   VAULT_ADMIN_DB_PASSWORD     main vault DB admin password (DDL owner, runs migrations)
 #   VAULT_DB_PASSWORD           main vault DB app password (DML-only)
-#   AUTHENTIK_SECRET_KEY        random 50+ char string (openssl rand -base64 60)
-#   AUTHENTIK_PG_PASSWORD       password for Authentik's internal Postgres role
+#   AUTH_MASTER_KEY             64-char hex key for tokyo3-auth (`docker compose run --rm auth keygen`)
+#   AUTH_ADMIN_DB_PASSWORD      tokyo3-auth admin DB password
+#   AUTH_DB_PASSWORD            tokyo3-auth app DB password
+#   AUTHENTIK_SECRET_KEY        random 50+ char string (openssl rand -base64 60); only consumed by --profile authentik
+#   AUTHENTIK_PG_PASSWORD       password for Authentik's internal Postgres role; only consumed by --profile authentik
 #
-# Optional (usernames default to vault_admin / vault_app):
+# Optional (usernames default to *_admin / *_app):
 #   VAULT_ADMIN_DB_USERNAME     main vault DB admin username (default: vault_admin)
 #   VAULT_DB_USERNAME           main vault DB app username   (default: vault_app)
+#   AUTH_ADMIN_DB_USERNAME      tokyo3-auth admin DB username (default: auth_admin)
+#   AUTH_DB_USERNAME            tokyo3-auth app DB username   (default: auth_app)
 #
 # Note: DB credentials and usernames above are only applied on first startup
 # when the data volume is empty (postgres initdb). Changing them after the
@@ -49,17 +92,16 @@
 #
 # ── Architecture ──────────────────────────────────────────────────────────────
 #   Browser ─https─> host:443 ─> Traefik
-#                                  ├─ Host: vault.localhost  ─> vaultd:443      (HTTPS)
-#                                  └─ Host: auth.localhost   ─> authentik:9000  (HTTP)
+#                                  ├─ Host: vault.localhost       ─> vaultd:443             (HTTPS)
+#                                  ├─ Host: auth.localhost        ─> auth:443               (HTTPS, tokyo3-auth, default)
+#                                  └─ Host: authentik.localhost   ─> authentik-server:9000  (HTTP, --profile authentik)
 #
-#   vaultd  ─https─> auth.localhost:443 ─> Traefik ─> authentik:9000
-#                    (resolved via the auth.localhost alias on the traefik
-#                     service; vaultd trusts the mkcert CA via SSL_CERT_FILE).
+#   vaultd  ─https─> {auth,authentik}.localhost:443 ─> Traefik ─> chosen IdP
+#                    (hostnames resolve via traefik's network aliases;
+#                     vaultd trusts the mkcert CA via SSL_CERT_FILE).
 #
-# The `auth.localhost` virtual host currently routes to Authentik; the same
-# entry can later swap to tokyo3-auth without touching anything else in the
-# stack. Traefik holds a single mkcert-issued cert with SANs for
-# vault.localhost + auth.localhost + localhost.
+# Traefik holds a single mkcert-issued cert with SANs covering
+# vault.localhost + auth.localhost + authentik.localhost + localhost.
 
 services:
 
@@ -104,10 +146,12 @@ services:
       start_period: 3s
 
   # ── nats-box: stream provisioner + interactive shell ──────────────────────
-  # On startup, ensures the vault_audit JetStream stream exists. Without it,
-  # vaultd's first audit publish would fail (no stream covers the subject)
-  # and every audit-emitting handler would 503 fail-closed. Provisioning it
-  # here keeps vaultd's NATS credential PUBLISH+CONSUME-only.
+  # On startup, ensures the vault_audit JetStream stream exists (always) plus
+  # auth_audit (tokyo3-auth's audit sink — created unconditionally since the
+  # auth service is in the default profile and would 503 fail-closed without
+  # its stream). Without these streams, the producing service's first audit
+  # publish would fail and every audit-emitting handler would 503 fail-closed.
+  # Provisioning here keeps each service's NATS credential PUBLISH-only.
   #
   # After provisioning the container stays alive (tail -f /dev/null) so you
   # can:
@@ -126,18 +170,23 @@ services:
     command:
       - |
         set -e
-        nats stream info vault_audit > /dev/null 2>&1 || \
-          nats stream add vault_audit \
-            --subjects 'vault.audit.events' \
-            --retention limits \
-            --storage file \
-            --max-age 9600h \
-            --deny-delete \
-            --deny-purge \
-            --defaults
+        ensure_stream() {
+          name=$$1; subject=$$2
+          nats stream info "$$name" > /dev/null 2>&1 || \
+            nats stream add "$$name" \
+              --subjects "$$subject" \
+              --retention limits \
+              --storage file \
+              --max-age 9600h \
+              --deny-delete \
+              --deny-purge \
+              --defaults
+        }
+        ensure_stream vault_audit 'vault.audit.events'
+        ensure_stream auth_audit  'auth.audit.events'
         exec tail -f /dev/null
     healthcheck:
-      test: ["CMD-SHELL", "nats stream info vault_audit > /dev/null 2>&1"]
+      test: ["CMD-SHELL", "nats stream info vault_audit > /dev/null 2>&1 && nats stream info auth_audit > /dev/null 2>&1"]
       interval: 2s
       timeout: 2s
       retries: 20
@@ -178,11 +227,13 @@ services:
       # Traefik-presented cert. Go's crypto/x509 SystemCertPool falls back
       # to SSL_CERT_FILE on Linux.
       SSL_CERT_FILE:             /shared/certs/ca.crt
-      # OIDC SSO via Authentik. CLIENT_ID/SECRET get filled in after you
-      # create the OAuth2/OpenID provider in Authentik's admin UI (see
-      # 'First-time setup' header above). Until they're set, vaultd treats
-      # OIDC as unconfigured and only local auth works.
-      VAULT_OIDC_ISSUER:         ${VAULT_OIDC_ISSUER:-https://auth.localhost/application/o/vault/}
+      # OIDC SSO. Default issuer points at tokyo3-auth (default IdP); to use
+      # Authentik instead, override VAULT_OIDC_ISSUER in .env to
+      # https://authentik.localhost/application/o/vault/ and run
+      # `make docker-up-authentik`. CLIENT_ID/SECRET come from the IdP's
+      # admin UI — see 'First-time setup' headers above. Until CLIENT_ID
+      # is set, vaultd treats OIDC as unconfigured and only local auth works.
+      VAULT_OIDC_ISSUER:         ${VAULT_OIDC_ISSUER:-https://auth.localhost}
       VAULT_OIDC_CLIENT_ID:      ${VAULT_OIDC_CLIENT_ID:-}
       VAULT_OIDC_CLIENT_SECRET:  ${VAULT_OIDC_CLIENT_SECRET:-}
       VAULT_OIDC_REDIRECT_URI:   ${VAULT_OIDC_REDIRECT_URI:-https://vault.localhost/api/v1/auth/oidc/callback}
@@ -196,17 +247,20 @@ services:
         condition: service_healthy
       natsbox:
         condition: service_healthy
-      authentik-server:
-        condition: service_healthy
+      # No depends_on for the IdP: which one runs depends on the active
+      # compose profile (tokyo3-auth vs authentik), and a missing/down
+      # backend just makes OIDC discovery fail at vaultd startup —
+      # `restart: unless-stopped` then recovers it once the IdP is up.
     restart: unless-stopped
     healthcheck:
-      # /auth/oidc/config is one of the few unauthenticated routes — every other
-      # /api/v1 path runs through s.auth and would 401 here, which wget treats
-      # as a failure. start_period covers first-boot migrations.
-      test: ["CMD", "wget", "-qO-", "--no-check-certificate", "https://localhost:443/api/v1/auth/oidc/config"]
+      # /portal/login is unauthenticated, renders from in-memory state only
+      # (no DB / OIDC / external dependency), and returns 200 for any client
+      # without a portal-session cookie — which the wget probe never has.
+      # start_period covers first-boot migrations.
+      test: ["CMD", "wget", "-qO-", "--no-check-certificate", "https://localhost:443/portal/login"]
       interval: 10s
       timeout: 5s
-      retries: 10
+      retries: 20
       start_period: 30s
 
   # ── Front-proxy ───────────────────────────────────────────────────────────
@@ -239,14 +293,89 @@ services:
         aliases:
           - vault.localhost
           - auth.localhost
+          - authentik.localhost
     volumes:
       - shared_data:/shared:ro
     restart: unless-stopped
+
+  # ── tokyo3-auth: default IdP at https://auth.localhost ────────────────────
+  # Separate Postgres database from vault's (auth runs its own schema +
+  # migrations against authdb). Shares the same NATS instance, publishing to
+  # the `auth_audit` stream (provisioned by natsbox above).
+  #
+  # tokyo3-auth listens on :443 inside the container with a mkcert-signed
+  # cert at /shared/certs/authd-server.*. Traefik fronts it on host:443 for
+  # the auth.localhost virtual host. SSL_CERT_FILE is set so auth's outbound
+  # back-channel-logout POSTs to https://vault.localhost (its RPs) validate
+  # the mkcert CA without a TLS verify error — same plumbing as vaultd.
+  auth-db:
+    image: postgres:17-alpine
+    entrypoint: ["sh", "/shared/postgres/pg-entrypoint.sh"]
+    environment:
+      PG_INIT_SCRIPT:    /shared/postgres/db-init.sh
+      POSTGRES_USER:     ${AUTH_ADMIN_DB_USERNAME:-auth_admin}
+      POSTGRES_PASSWORD: ${AUTH_ADMIN_DB_PASSWORD:?AUTH_ADMIN_DB_PASSWORD is required}
+      POSTGRES_DB:       authdb
+      # db-init.sh reads VAULT_DB_USERNAME / VAULT_DB_PASSWORD to provision
+      # the app role. We reuse the same script by aliasing AUTH_* into those
+      # names — the script is name-agnostic, the env-var names just happen
+      # to read "VAULT_*" for historical reasons.
+      VAULT_DB_USERNAME: ${AUTH_DB_USERNAME:-auth_app}
+      VAULT_DB_PASSWORD: ${AUTH_DB_PASSWORD:?AUTH_DB_PASSWORD is required}
+    volumes:
+      - shared_data:/shared:ro
+      - auth_db_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    profiles: ["tokyo3-auth"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${AUTH_ADMIN_DB_USERNAME:-auth_admin} -d authdb"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  auth:
+    image: abagile/tokyo3-auth:${TOKYO3_AUTH_VERSION:-latest}
+    networks:
+      default:
+        aliases:
+          - auth.localhost
+    environment:
+      AUTH_MASTER_KEY:           ${AUTH_MASTER_KEY:?AUTH_MASTER_KEY is required (64 hex chars)}
+      AUTH_ADDR:                 ${AUTH_ADDR:-:443}
+      AUTH_ISSUER:               ${AUTH_ISSUER:-https://auth.localhost}
+      AUTH_API_CERT:             ${AUTH_API_CERT:-/shared/certs/authd-server.crt}
+      AUTH_API_KEY:              ${AUTH_API_KEY:-/shared/certs/authd-server.key}
+      AUTH_ADMIN_DATABASE_URL:   ${AUTH_ADMIN_DATABASE_URL:-postgres://${AUTH_ADMIN_DB_USERNAME:-auth_admin}:${AUTH_ADMIN_DB_PASSWORD}@auth-db:5432/authdb?sslmode=disable}
+      AUTH_DATABASE_URL:         ${AUTH_DATABASE_URL:-postgres://${AUTH_DB_USERNAME:-auth_app}:${AUTH_DB_PASSWORD}@auth-db:5432/authdb?sslmode=disable}
+      AUTH_NATS_URL:             ${AUTH_NATS_URL:-nats://nats:4222}
+      AUTH_ALLOW_REGISTRATION:   ${AUTH_ALLOW_REGISTRATION:-true}
+      # Trust the mkcert root CA so back-channel logout POSTs from auth
+      # to its RPs (https://vault.localhost/...) verify cleanly.
+      SSL_CERT_FILE:             /shared/certs/ca.crt
+    volumes:
+      - shared_data:/shared:ro
+    depends_on:
+      auth-db:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      natsbox:
+        condition: service_healthy
+    restart: unless-stopped
+    profiles: ["tokyo3-auth"]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "--no-check-certificate", "https://localhost:443/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
 
   # ── Authentik's Postgres (separate DB from vault's) ───────────────────────
   authentik-postgresql:
     image: docker.io/library/postgres:16-alpine
     restart: unless-stopped
+    profiles: ["authentik"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -d authentik -U authentik"]
       interval: 10s
@@ -254,7 +383,7 @@ services:
       retries: 5
     environment:
       POSTGRES_USER:     authentik
-      POSTGRES_PASSWORD: ${AUTHENTIK_PG_PASSWORD:?AUTHENTIK_PG_PASSWORD is required}
+      POSTGRES_PASSWORD: ${AUTHENTIK_PG_PASSWORD:?AUTHENTIK_PG_PASSWORD is required (only when using --profile authentik)}
       POSTGRES_DB:       authentik
     volumes:
       - authentik_db:/var/lib/postgresql/data
@@ -268,13 +397,14 @@ services:
   authentik-server:
     image: ghcr.io/goauthentik/server:${AUTHENTIK_TAG:-2025.10}
     restart: unless-stopped
+    profiles: ["authentik"]
     command: server
     environment:
       AUTHENTIK_POSTGRESQL__HOST:          authentik-postgresql
       AUTHENTIK_POSTGRESQL__USER:          authentik
       AUTHENTIK_POSTGRESQL__NAME:          authentik
       AUTHENTIK_POSTGRESQL__PASSWORD:      ${AUTHENTIK_PG_PASSWORD}
-      AUTHENTIK_SECRET_KEY:                ${AUTHENTIK_SECRET_KEY:?AUTHENTIK_SECRET_KEY is required (openssl rand -base64 60)}
+      AUTHENTIK_SECRET_KEY:                ${AUTHENTIK_SECRET_KEY:?AUTHENTIK_SECRET_KEY is required (only when using --profile authentik; openssl rand -base64 60)}
       AUTHENTIK_ERROR_REPORTING__ENABLED:  "false"
       AUTHENTIK_DISABLE_UPDATE_CHECK:      "true"
       AUTHENTIK_DISABLE_STARTUP_ANALYTICS: "true"
@@ -310,6 +440,7 @@ services:
   authentik-worker:
     image: ghcr.io/goauthentik/server:${AUTHENTIK_TAG:-2025.10}
     restart: unless-stopped
+    profiles: ["authentik"]
     command: worker
     environment:
       AUTHENTIK_POSTGRESQL__HOST:      authentik-postgresql
@@ -343,6 +474,7 @@ volumes:
     external: true
   db_data:
   nats_data:
+  auth_db_data:
   authentik_db:
   authentik_media:
   authentik_templates:

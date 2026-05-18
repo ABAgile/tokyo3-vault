@@ -348,8 +348,8 @@ All four base vars (`VAULT_OIDC_ISSUER`, `VAULT_OIDC_CLIENT_ID`, `VAULT_OIDC_CLI
 
 | Variable | Default | Description |
 |---|---|---|
-| `VAULT_OIDC_ISSUER` | — | IdP issuer URL (e.g. `https://accounts.google.com`). Enables OIDC when set. |
-| `VAULT_OIDC_CLIENT_ID` | — | OAuth2 client ID registered with the IdP |
+| `VAULT_OIDC_ISSUER` | — | IdP issuer URL (e.g. `https://accounts.google.com`) |
+| `VAULT_OIDC_CLIENT_ID` | — | OAuth2 client ID registered with the IdP. Setting this turns the OIDC code path on; the other three then become required. |
 | `VAULT_OIDC_CLIENT_SECRET` | — | OAuth2 client secret |
 | `VAULT_OIDC_REDIRECT_URI` | — | Callback URL registered with the IdP (e.g. `https://vault.example.com/auth/oidc/callback`) |
 | `VAULT_OIDC_ENFORCE` | `false` | Set to `"true"` to disable local `/auth/login` and `/auth/signup`, making OIDC the only login path |

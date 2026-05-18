@@ -100,3 +100,30 @@ services:
       VAULT_NATS_CERT:          /shared/certs/vaultd-nats-client.crt
       VAULT_NATS_KEY:           /shared/certs/vaultd-nats-client.key
       VAULT_NATS_URL:           tls://nats:4222
+
+  # ── tokyo3-auth DB: enable server TLS + cert auth ─────────────────────────
+  # Mirrors the `db` block above. Shares db-server.crt — its SAN list covers
+  # both `db` and `auth-db` hostnames (see shared/certs/gen.sh).
+  auth-db:
+    environment:
+      POSTGRES_SSL_CERT: /shared/certs/db-server.crt
+      POSTGRES_SSL_KEY:  /shared/certs/db-server.key
+      POSTGRES_SSL_CA:   /shared/certs/ca.crt
+
+  # ── tokyo3-auth: add mTLS for NATS and Postgres ──────────────────────────
+  # Same pattern as vaultd above — the base file wires AUTH_API_CERT/KEY for
+  # the HTTPS API; this overlay only layers the inter-service mTLS material.
+  # Without these env vars set, NATS's --tlsverify rejects auth's plain-text
+  # connection with `tls: certificate required` and the service fails to boot.
+  auth:
+    environment:
+      AUTH_WORKLOAD_CA:        /shared/certs/ca.crt
+      AUTH_ADMIN_DB_CERT:      /shared/certs/authd-admin-db-client.crt
+      AUTH_ADMIN_DB_KEY:       /shared/certs/authd-admin-db-client.key
+      AUTH_ADMIN_DATABASE_URL: postgres://${AUTH_ADMIN_DB_USERNAME:-auth_admin}@auth-db:5432/authdb?sslmode=verify-full
+      AUTH_DB_CERT:            /shared/certs/authd-app-db-client.crt
+      AUTH_DB_KEY:             /shared/certs/authd-app-db-client.key
+      AUTH_DATABASE_URL:       postgres://${AUTH_DB_USERNAME:-auth_app}@auth-db:5432/authdb?sslmode=verify-full
+      AUTH_NATS_CERT:          /shared/certs/authd-nats-client.crt
+      AUTH_NATS_KEY:           /shared/certs/authd-nats-client.key
+      AUTH_NATS_URL:           tls://nats:4222

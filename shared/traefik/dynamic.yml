@@ -2,17 +2,21 @@
 # Staged into shared_data:/shared/traefik/ by `make _sync-shared`.
 #
 # Routing summary:
-#   - vault.localhost  -> vaultd:443       (HTTPS upstream, mkcert-signed)
-#   - auth.localhost   -> authentik:9000   (HTTP upstream)
+#   - vault.localhost       -> vaultd:443             (HTTPS upstream, mkcert-signed)
+#   - auth.localhost        -> auth:443               (HTTPS upstream — tokyo3-auth, default IdP)
+#   - authentik.localhost   -> authentik-server:9000  (HTTP upstream — optional, --profile authentik)
 #
-# `auth.localhost` currently fronts Authentik; the same router can later be
-# repointed at tokyo3-auth (https://auth:443 upstream) without touching the
-# stack's hostname conventions or SAN list.
+# Mutually-exclusive IdPs are gated via compose profiles (tokyo3-auth is the
+# default profile; authentik lives behind --profile authentik). Traefik
+# itself doesn't know about profiles — it just keeps a router for each host,
+# and the router whose backend isn't running simply 502s until you switch
+# profile. No config change is needed when you flip IdPs.
 #
 # TLS terminates at Traefik using the mkcert-issued vaultd-server cert; the
-# cert's SAN list covers both virtual hosts. Upstream connections use
-# insecureSkipVerify because the docker service-name SNI (`vaultd`) doesn't
-# match the cert in all cases — adequate for a dev rig.
+# cert's SAN list covers all three virtual hosts. Upstream connections to
+# HTTPS backends use insecureSkipVerify because the docker service-name SNI
+# (`vaultd`, `auth`) doesn't match the SAN in all cases — adequate for a
+# dev rig.
 
 http:
   routers:
@@ -25,6 +29,12 @@ http:
     auth:
       rule: "Host(`auth.localhost`)"
       entryPoints: [websecure]
+      service: auth
+      tls: {}
+
+    authentik:
+      rule: "Host(`authentik.localhost`)"
+      entryPoints: [websecure]
       service: authentik
       tls: {}
 
@@ -33,6 +43,13 @@ http:
       loadBalancer:
         servers:
           - url: "https://vaultd:443"
+        serversTransport: skipverify
+        passHostHeader: true
+
+    auth:
+      loadBalancer:
+        servers:
+          - url: "https://auth:443"
         serversTransport: skipverify
         passHostHeader: true
 

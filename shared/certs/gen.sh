@@ -28,6 +28,8 @@ if [[ -f "$REPO_ROOT/.env" ]]; then
 fi
 ADMIN_USERNAME="${VAULT_ADMIN_DB_USERNAME:-vault_admin}"
 APP_USERNAME="${VAULT_DB_USERNAME:-vault_app}"
+AUTH_ADMIN_USERNAME="${AUTH_ADMIN_DB_USERNAME:-auth_admin}"
+AUTH_APP_USERNAME="${AUTH_DB_USERNAME:-auth_app}"
 
 step() { printf '  %-34s' "$1..."; }
 ok()   { echo "ok"; }
@@ -72,17 +74,29 @@ mkc_client() {
 # `.localhost` and any subdomain are reserved (RFC 6761) and resolve to
 # 127.0.0.1 on modern systems — no /etc/hosts entries needed. The docker
 # service hostname covers in-network access.
-mkc_server "vaultd-server" vaultd vault.localhost auth.localhost localhost 127.0.0.1
+#
+# vaultd-server is the cert Traefik presents on the front for every virtual
+# host it routes (vault.localhost + auth.localhost + authentik.localhost) —
+# SANs must therefore cover the whole set, even though the upstream services
+# behind those hosts speak TLS with their own per-service certs.
+mkc_server "vaultd-server" vaultd vault.localhost auth.localhost authentik.localhost localhost 127.0.0.1
+mkc_server "authd-server"  authd  auth.localhost  localhost  127.0.0.1
 mkc_server "nats-server"   nats   nats.localhost
-mkc_server "db-server"     db     db.localhost
+# Single Postgres server cert covers both DB services (vault's `db` and
+# tokyo3-auth's `auth-db`) so the mTLS overlay doesn't need a separate cert
+# per database service.
+mkc_server "db-server"     db     db.localhost  auth-db  auth-db.localhost
 
 # ── Client certs — NATS (transport identity only) ────────────────────────────
 mkc_client "vaultd-nats-client" vaultd
+mkc_client "authd-nats-client"  authd
 
 # ── Client certs — PostgreSQL (CN must match the DB role for cert auth) ──────
 # Role name first → fork sets it as Subject CN. SAN follows.
-mkc_client "vaultd-admin-db-client" "$ADMIN_USERNAME" vaultd
-mkc_client "vaultd-app-db-client"   "$APP_USERNAME"   vaultd
+mkc_client "vaultd-admin-db-client" "$ADMIN_USERNAME"      vaultd
+mkc_client "vaultd-app-db-client"   "$APP_USERNAME"        vaultd
+mkc_client "authd-admin-db-client"  "$AUTH_ADMIN_USERNAME" authd
+mkc_client "authd-app-db-client"    "$AUTH_APP_USERNAME"   authd
 
 # ── Workload cert — SPIFFE URI SAN for vault API principal auth ──────────────
 mkc_client "webapp-vaultd-workload" spiffe://vault.internal/workload/webapp
