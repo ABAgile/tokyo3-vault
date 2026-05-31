@@ -23,11 +23,14 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
 FROM alpine:3.21
 
 # ca-certificates is required for TLS connections to Postgres, NATS, and KMS.
-RUN apk add --no-cache ca-certificates
+# tini runs as PID 1 to reap orphaned children (e.g. the ssl_client that
+# busybox-wget healthchecks orphan) and forward signals for clean shutdown.
+# A bare Go PID 1 doesn't reap, so cgroup pids.current would climb forever.
+RUN apk add --no-cache ca-certificates tini
 
 COPY --from=builder /out/vaultd /usr/local/bin/vaultd
 COPY --from=builder /out/vault  /usr/local/bin/vault
 
 EXPOSE 443
 
-ENTRYPOINT ["/usr/local/bin/vaultd"]
+ENTRYPOINT ["/sbin/tini", "--", "/usr/local/bin/vaultd"]
