@@ -80,7 +80,7 @@ Set `VAULT_KMS_KEY_ID` to the key ID, ARN, or alias. AWS credentials are loaded 
 **SQLite — local key (development):**
 
 ```sh
-VAULT_MASTER_KEY=<key> VAULT_DB_PATH=vault.db vaultd
+VAULT_MASTER_KEY=<key> VAULT_DATABASE_URL=sqlite:vault.db vaultd
 ```
 
 **PostgreSQL — KMS (production):**
@@ -180,7 +180,7 @@ Dynamic backend connection strings follow the same hierarchy using their own per
 Projects created before PEK support was added have `encrypted_pek = NULL`. Those projects use the server KEK directly to wrap DEKs (the original two-level scheme) until migrated. Run once after upgrading:
 
 ```sh
-VAULT_MASTER_KEY=<key> VAULT_DB_PATH=vault.db vaultd migrate-keys
+VAULT_MASTER_KEY=<key> VAULT_DATABASE_URL=sqlite:vault.db vaultd migrate-keys
 ```
 
 The command is idempotent — already-migrated projects are skipped. All secrets remain readable before and after migration.
@@ -296,12 +296,11 @@ In local-key mode (`VAULT_MASTER_KEY` set), the master KEK doubles as the portal
 | `VAULT_MASTER_KEY` | 64-char hex key (32 bytes). Generate with `vault keygen`. Development only — store securely. |
 | `VAULT_KMS_KEY_ID` | AWS KMS key ID, ARN, or alias (e.g. `alias/vault-prod`). Recommended for production. AWS credentials loaded from the standard chain. |
 
-**Storage — exactly one must be set:**
+**Storage:**
 
 | Variable | Default | Description |
 |---|---|---|
-| `VAULT_DATABASE_URL` | — | PostgreSQL DSN, e.g. `postgres://user:pass@host/db` |
-| `VAULT_DB_PATH` | `vault.db` | SQLite file path |
+| `VAULT_DATABASE_URL` | `sqlite:vault.db` | Store backend selector. A `sqlite:<path>` URL uses the embedded SQLite backend (`sqlite::memory:` for an ephemeral in-memory DB); any other value is a PostgreSQL DSN, e.g. `postgres://user:pass@host/db`. |
 
 **PostgreSQL schema migrations — admin/DDL role (Postgres only):**
 
@@ -341,6 +340,7 @@ Set all three `VAULT_DB_*` cert vars together to authenticate vault's admin data
 |---|---|---|
 | `VAULT_ADDR` | `:8443` | TCP listen address |
 | `VAULT_PROJECT_KEY_CACHE_TTL` | `5m` | How long a project's plaintext project envelope key (PEK) is cached in memory. Longer = fewer KMS calls; shorter = faster effect after PEK rotation. Accepts Go duration strings (`5m`, `1h`). |
+| `VAULT_DEBUG_ADDR` | — | Plaintext address for the diagnostics server (`net/http/pprof` + a goroutine/OS-thread stats log), e.g. `127.0.0.1:6060`. Unset disables it. Never expose publicly — it serves unauthenticated profiling off the main TLS API. |
 
 **OIDC / SSO (optional):**
 
@@ -378,8 +378,8 @@ Both readers use `journal/jetstream.Source` from `tokyo3-base`; same primitive, 
 | Variable | Default | Description |
 |---|---|---|
 | `VAULT_NATS_URL` | — | NATS server URL; enables audit publish + read (and op-log shipping) when set |
-| `VAULT_NATS_CERT` | — | mTLS client certificate PEM path |
-| `VAULT_NATS_KEY` | — | mTLS client key PEM path |
+| `VAULT_NATS_CERT` | falls back to `VAULT_WORKLOAD_CERT` | mTLS client certificate PEM path |
+| `VAULT_NATS_KEY` | falls back to `VAULT_WORKLOAD_KEY` | mTLS client key PEM path |
 | `VAULT_NATS_CA` | falls back to `VAULT_WORKLOAD_CA` | CA certificate PEM path for NATS server verification |
 
 ### vaultd subcommands
@@ -388,9 +388,9 @@ Both readers use `journal/jetstream.Source` from `tokyo3-base`; same primitive, 
 |---|---|
 | `vaultd` (no arg) | Start the API server (default) |
 | `vaultd migrate-keys` | Migrate existing projects to per-project envelope keys (PEKs). For each project without a PEK, generates a 32-byte PEK, wraps it with the server KEK/KMS, and re-wraps all secret DEKs so they are encrypted under the project PEK instead of the server KEK directly. Idempotent — already-migrated projects are skipped. New projects created after this version are migrated automatically at creation time. |
-| `vaultd audit-query [--limit N]` | Print the most recent N audit events from the JetStream journal as JSON (default 100). Reads via `VAULT_NATS_URL` + `VAULT_NATS_CERT/KEY/CA` — no DB required. |
+| `vaultd audit-query [--limit N]` | Print the most recent N audit events from the JetStream journal as JSON (default 100). Reads via `VAULT_NATS_URL` + `VAULT_NATS_CERT/KEY/CA` (cert/key/CA falling back to `VAULT_WORKLOAD_*`) — no DB required. |
 
-`vaultd migrate-keys` requires the same env vars as the server (`VAULT_MASTER_KEY`/`VAULT_KMS_KEY_ID` and `VAULT_DATABASE_URL`/`VAULT_DB_PATH`). Run it once after upgrading to activate the three-level encryption hierarchy.
+`vaultd migrate-keys` requires the same env vars as the server (`VAULT_MASTER_KEY`/`VAULT_KMS_KEY_ID` and `VAULT_DATABASE_URL`). Run it once after upgrading to activate the three-level encryption hierarchy.
 
 ### CLI configuration
 

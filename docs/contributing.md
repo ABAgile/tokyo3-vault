@@ -144,7 +144,7 @@ No external dependencies. `make run-server` auto-generates this file on first ru
 
 ```
 VAULT_MASTER_KEY=<64-char hex>   # vault keygen
-VAULT_DB_PATH=vault.db
+VAULT_DATABASE_URL=sqlite:vault.db
 VAULT_ADDR=:8443
 ```
 

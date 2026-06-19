@@ -7,10 +7,12 @@
 //	VAULT_KMS_KEY_ID      AWS KMS key ID, ARN, or alias — recommended for production
 //	                      AWS credentials loaded from the standard chain (env, IAM role, etc.)
 //
-// Storage — exactly one must be set:
+// Storage:
 //
-//	VAULT_DATABASE_URL      Postgres DSN (postgres://...) — uses Postgres store (vault_app user, DML-only)
-//	VAULT_DB_PATH           SQLite file path (default: vault.db) — uses SQLite store
+//	VAULT_DATABASE_URL  Store backend selector. A "sqlite:<path>" URL uses the embedded
+//	                    SQLite backend (dev/test; "sqlite::memory:" is ephemeral); any other
+//	                    value is a Postgres DSN (postgres://...; vault_app user, DML-only).
+//	                    Unset defaults to "sqlite:vault.db".
 //
 // Workload CA (single root for every internal mTLS channel — DB, NATS, SCIM):
 //
@@ -99,14 +101,20 @@
 //	                              is promoted to admin if no admin exists yet. Ignored when
 //	                              VAULT_OIDC_ENFORCE=true (local accounts are off entirely).
 //	                              Default: false (admins manage users via /portal/admin/users).
+//	VAULT_DEBUG_ADDR              Optional plaintext address for the diagnostics server
+//	                              (net/http/pprof + a goroutine/OS-thread stats log), e.g.
+//	                              "127.0.0.1:6060". Unset ⇒ disabled. Never expose publicly — it
+//	                              serves unauthenticated profiling off the main TLS API.
 //
 // NATS / Audit sink (serve subcommand):
 //
 //	VAULT_NATS_URL    NATS server URL. When set, audit events are published to
 //	                  JetStream (fail-closed: the request returns HTTP 500 if the
-//	                  publish fails). Omit only in development.
+//	                  publish fails) and operational logs ship to app_log.vaultd.
+//	                  Omit only in development.
 //	VAULT_NATS_CERT   mTLS client certificate PEM path (publisher credential).
-//	VAULT_NATS_KEY    mTLS client key PEM path.
+//	                  Falls back to VAULT_WORKLOAD_CERT when unset.
+//	VAULT_NATS_KEY    mTLS client key PEM path. Falls back to VAULT_WORKLOAD_KEY.
 //	VAULT_NATS_CA     CA certificate PEM path for NATS server verification.
 //	                  Falls back to VAULT_WORKLOAD_CA when unset.
 //
@@ -115,6 +123,8 @@
 //	vaultd serve           Start the server (default when no subcommand is given)
 //	vaultd migrate-keys    Migrate all projects to use per-project envelope keys (PEKs).
 //	                       Safe to re-run (idempotent). Requires the same env vars as serve.
+//	vaultd audit-query     Print the most recent audit events from the JetStream journal as
+//	                       JSON (--limit N, default 100). Reads via VAULT_NATS_URL only.
 //	vaultd version         Print version information and exit.
 package main
 
@@ -128,18 +138,14 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/signal"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
-	"github.com/abagile/tokyo3-base/applog"
+	"github.com/abagile/tokyo3-base/cli"
 	bcrypto "github.com/abagile/tokyo3-base/crypto"
-	"github.com/abagile/tokyo3-base/journal"
-	"github.com/abagile/tokyo3-base/journal/jetstream"
-	bnats "github.com/abagile/tokyo3-base/nats"
 	btls "github.com/abagile/tokyo3-base/tls"
+	"github.com/abagile/tokyo3-base/tls/reloader"
 	"github.com/abagile/tokyo3-vault/internal/api"
 	"github.com/abagile/tokyo3-vault/internal/audit"
 	"github.com/abagile/tokyo3-vault/internal/build"
@@ -149,74 +155,64 @@ import (
 	"github.com/abagile/tokyo3-vault/internal/store"
 	"github.com/abagile/tokyo3-vault/internal/store/postgres"
 	"github.com/abagile/tokyo3-vault/internal/store/sqlite"
-	"github.com/nats-io/nats.go"
+	"github.com/spf13/cobra"
 )
 
-const appName = "vaultd"
+const (
+	appName   = "vaultd"
+	envPrefix = "VAULT"
+
+	// defaultDatabaseURL is the store backend used when VAULT_DATABASE_URL is
+	// unset — the embedded SQLite backend at ./vault.db, for zero-config dev.
+	defaultDatabaseURL = "sqlite:vault.db"
+)
 
 func main() {
-	logNATS, logNATSErr := openLogNATS()
-	if logNATS != nil {
-		defer logNATS.Drain()
-	}
-
-	writerOpts := []applog.WriterOption{applog.WithStdout()}
-	if logNATS != nil {
-		writerOpts = append(writerOpts, applog.WithAsyncNats(logNATS))
-	}
-	log, _ := applog.AppLogger(appName, writerOpts...)
-
-	if logNATSErr != nil {
-		log.Warn("operational log shipping disabled", "err", logNATSErr)
-	} else if logNATS != nil {
-		log.Info("operational logs shipping to NATS", "subject", "app_log."+appName)
-	}
-
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
-
-	subcommand := "serve"
-	if len(os.Args) > 1 {
-		subcommand = os.Args[1]
-	}
-
-	if subcommand == "version" {
-		commitTime := build.CommitTime
-		if t, err := time.Parse(time.RFC3339, build.CommitTime); err == nil {
-			commitTime = t.Local().Format("2006-01-02 15:04:05 MST")
-		}
-		fmt.Printf("vaultd %s (commit %s, committed %s)\n", build.Version, build.Commit, commitTime)
-		return
-	}
-
-	if subcommand == "audit-query" {
-		// Dispatch before any DB / key-provider init — `audit-query` is a
-		// pure NATS reader that needs nothing else.
-		limit := 100
-		for i := 2; i+1 < len(os.Args); i += 2 {
-			if os.Args[i] == "--limit" {
-				if n, err := strconv.Atoi(os.Args[i+1]); err == nil {
-					limit = n
-				}
-			}
-		}
-		if err := runAuditQuery(ctx, limit); err != nil {
-			fmt.Fprintf(os.Stderr, "audit-query: %v\n", err)
-			os.Exit(1)
-		}
-		return
-	}
-
-	kp, err := openKeyProvider(ctx, log)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "key provider: %v\n", err)
+	if err := rootCmd().Execute(); err != nil {
 		os.Exit(1)
 	}
+}
 
-	st, err := openStore(log)
+func rootCmd() *cobra.Command {
+	root := &cobra.Command{
+		Use:   appName,
+		Short: "Vault secret manager server",
+	}
+	root.AddCommand(serveCmd(), migrateKeysCmd(), auditQueryCmd(), versionCmd())
+	// The container ENTRYPOINT runs a bare `vaultd` (no subcommand) and the
+	// docs document `vaultd` as "start the server"; default to serve when no
+	// subcommand is given so that invocation keeps working.
+	if len(os.Args) < 2 {
+		root.SetArgs([]string{"serve"})
+	}
+	return root
+}
+
+// ── serve ───────────────────────────────────────────────────────────────────
+
+func serveCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "serve",
+		Short: "Start the Vault HTTPS API server (default when no subcommand is given)",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runServe(cmd.Context())
+		},
+	}
+}
+
+func runServe(ctx context.Context) error {
+	rt := cli.App{Name: appName, EnvPrefix: envPrefix}.Setup(ctx)
+	defer rt.Shutdown()
+	log := rt.Log
+
+	kp, err := openKeyProvider(rt.Ctx, log)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "open store: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("key provider: %w", err)
+	}
+
+	st, err := openStore(rt)
+	if err != nil {
+		return fmt.Errorf("open store: %w", err)
 	}
 	if closer, ok := st.(interface{ Close() error }); ok {
 		defer closer.Close()
@@ -232,29 +228,19 @@ func main() {
 	}
 	projectKP := bcrypto.NewKeyProviderCache(kp, cacheT)
 
-	if subcommand == "migrate-keys" {
-		if err := runMigrateKeys(ctx, st, kp, log); err != nil {
-			fmt.Fprintf(os.Stderr, "migrate-keys: %v\n", err)
-			os.Exit(1)
-		}
-		return
-	}
-
-	auditSink, err := openAuditSink(log)
+	auditSink, err := cli.AuditSink[audit.Entry](rt, audit.Subject)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "audit sink: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("audit sink: %w", err)
 	}
 	defer auditSink.Close()
-	auditSource, err := openAuditSource(log)
+	auditSource, err := cli.AuditSource(rt, audit.StreamName, audit.Subject)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "audit source: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("audit source: %w", err)
 	}
 	defer auditSource.Close()
 
 	revoker := dynamic.NewRevoker(st, kp, projectKP, log)
-	go revoker.Run(ctx)
+	go revoker.Run(rt.Ctx)
 
 	// ── configurable parameters ────────────────────────────────────────────────
 
@@ -288,8 +274,8 @@ func main() {
 	}
 	pruneMinAge := time.Duration(pruneMinDays) * 24 * time.Hour
 
-	go newVersionPruner(st, log, pruneMinCount, pruneMinAge).Run(ctx)
-	go newTokenPruner(st, log).Run(ctx)
+	go newVersionPruner(st, log, pruneMinCount, pruneMinAge).Run(rt.Ctx)
+	go newTokenPruner(st, log).Run(rt.Ctx)
 
 	rotationPeriod := 90 * 24 * time.Hour
 	if v := os.Getenv("VAULT_PEK_ROTATION_PERIOD"); v != "" {
@@ -301,7 +287,7 @@ func main() {
 	}
 	if rotationPeriod > 0 {
 		rotator := newPEKRotator(st, kp, projectKP, auditSink, rotationPeriod, log)
-		go rotator.Run(ctx)
+		go rotator.Run(rt.Ctx)
 	}
 
 	addr := os.Getenv("VAULT_ADDR")
@@ -311,20 +297,17 @@ func main() {
 
 	tlsCfg, err := buildServerTLS(log)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "tls config: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("tls config: %w", err)
 	}
 
-	oidcProvider, oidcEnforce, err := buildOIDCProvider(ctx, log)
+	oidcProvider, oidcEnforce, err := buildOIDCProvider(rt.Ctx, log)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "oidc config: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("oidc config: %w", err)
 	}
 
 	cookieKey, err := portalCookieKey(log)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "portal cookie key: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("portal cookie key: %w", err)
 	}
 
 	scimAllowedSANs := splitCSV(os.Getenv("VAULT_SCIM_MTLS_SAN_DNS"))
@@ -365,23 +348,92 @@ func main() {
 		// would wait its full 10s deadline for each open SSE tab; with
 		// it, ctx cancels propagate down the SSE → Source.Subscribe →
 		// jetstream consumer chain in milliseconds.
-		BaseContext: func(net.Listener) context.Context { return ctx },
+		BaseContext: func(net.Listener) context.Context { return rt.Ctx },
 	}
 
 	log.Info("vaultd starting", "addr", addr, "tls", true)
+	serveErr := make(chan error, 1)
 	go func() {
 		if err := httpSrv.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
-			fmt.Fprintf(os.Stderr, "server error: %v\n", err)
-			os.Exit(1)
+			serveErr <- err
 		}
 	}()
 
-	<-ctx.Done()
+	select {
+	case <-rt.Ctx.Done():
+	case err := <-serveErr:
+		return fmt.Errorf("server error: %w", err)
+	}
+
 	log.Info("vaultd shutting down")
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
 	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
-		fmt.Fprintf(os.Stderr, "shutdown error: %v\n", err)
+		return fmt.Errorf("shutdown error: %w", err)
+	}
+	return nil
+}
+
+// ── migrate-keys ──────────────────────────────────────────────────────────────
+
+func migrateKeysCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "migrate-keys",
+		Short: "Migrate all projects to per-project envelope keys (PEKs); idempotent",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runMigrateKeysCmd(cmd.Context())
+		},
+	}
+}
+
+func runMigrateKeysCmd(ctx context.Context) error {
+	rt := cli.App{Name: appName, EnvPrefix: envPrefix}.Setup(ctx)
+	defer rt.Shutdown()
+	log := rt.Log
+
+	kp, err := openKeyProvider(rt.Ctx, log)
+	if err != nil {
+		return fmt.Errorf("key provider: %w", err)
+	}
+	st, err := openStore(rt)
+	if err != nil {
+		return fmt.Errorf("open store: %w", err)
+	}
+	if closer, ok := st.(interface{ Close() error }); ok {
+		defer closer.Close()
+	}
+	return runMigrateKeys(rt.Ctx, st, kp, log)
+}
+
+// ── audit-query ───────────────────────────────────────────────────────────────
+
+func auditQueryCmd() *cobra.Command {
+	limit := 100
+	cmd := &cobra.Command{
+		Use:   "audit-query",
+		Short: "Print the most recent audit events from the NATS journal as JSON",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			n := cli.App{Name: appName, EnvPrefix: envPrefix}.NATS()
+			return runAuditQuery(cmd.Context(), n, limit)
+		},
+	}
+	cmd.Flags().IntVar(&limit, "limit", 100, "maximum number of events to print (1-1000)")
+	return cmd
+}
+
+// ── version ─────────────────────────────────────────────────────────────────
+
+func versionCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Print version information and exit",
+		Run: func(_ *cobra.Command, _ []string) {
+			commitTime := build.CommitTime
+			if t, err := time.Parse(time.RFC3339, build.CommitTime); err == nil {
+				commitTime = t.Local().Format("2006-01-02 15:04:05 MST")
+			}
+			fmt.Printf("%s %s (commit %s, committed %s)\n", appName, build.Version, build.Commit, commitTime)
+		},
 	}
 }
 
@@ -450,7 +502,7 @@ func buildServerTLS(log *slog.Logger) (*tls.Config, error) {
 
 	if certFile != "" {
 		log.Info("TLS: using certificate files (hot-reload enabled)", "cert", certFile)
-		loader := btls.NewCertLoader(certFile, keyFile)
+		loader := reloader.NewCertLoader(certFile, keyFile)
 		cfg.GetCertificate = loader.GetCertificate
 	} else {
 		log.Warn("TLS: no certificate configured, using self-signed (not for production)")
@@ -575,147 +627,56 @@ func buildOIDCProvider(ctx context.Context, log *slog.Logger) (*oidcpkg.Provider
 	return provider, enforce, nil
 }
 
-// openLogNATS dials a NATS connection used by AppLogger's WithAsyncNats
-// writer to ship operational log lines (subject is derived by base from
-// the AppLogger app name as `app_log.<app>`).
-// Returns (nil, nil) when VAULT_NATS_URL is unset (no log shipping). On
-// dial failure returns (nil, err) — main treats this as non-fatal: log
-// shipping is observability, not evidence, and falls back to stdout-only.
-//
-// Connect timeout 1s (vs the nats.go default 2s) and DrainTimeout 500ms
-// keep startup fast and bound shutdown when the async writer's 200-entry
-// channel still has pending entries at SIGTERM.
-func openLogNATS() (*nats.Conn, error) {
-	url := os.Getenv("VAULT_NATS_URL")
-	if url == "" {
-		return nil, nil
-	}
-	nc, err := bnats.Dial(url,
-		os.Getenv("VAULT_NATS_CERT"),
-		os.Getenv("VAULT_NATS_KEY"),
-		os.Getenv("VAULT_NATS_CA"),
-		nats.Timeout(1*time.Second),
-		nats.DrainTimeout(500*time.Millisecond),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("log shipping: %w", err)
-	}
-	return nc, nil
-}
-
-// openAuditSink opens the NATS JetStream publisher used by the serve path.
-// When VAULT_NATS_URL is unset a NoopSink is returned (dev only).
-// mTLS is enabled when VAULT_NATS_CERT/KEY/CA are all set.
-func openAuditSink(log *slog.Logger) (audit.Sink, error) {
-	url := os.Getenv("VAULT_NATS_URL")
-	if url == "" {
-		log.Warn("VAULT_NATS_URL not set — audit sink is no-op; not for production")
-		return audit.NoopSink, nil
-	}
-	tlsCfg, err := btls.FromFiles(
-		os.Getenv("VAULT_NATS_CERT"),
-		os.Getenv("VAULT_NATS_KEY"),
-		envFirst("VAULT_NATS_CA", "VAULT_WORKLOAD_CA"),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("nats audit TLS: %w", err)
-	}
-	if tlsCfg != nil {
-		log.Info("audit sink: NATS JetStream with mTLS", "url", url)
-	} else {
-		log.Warn("audit sink: VAULT_NATS_CERT not set — connecting without mTLS (not for production)")
-	}
-	jSink, err := jetstream.NewSink(jetstream.SinkConfig{
-		URL:     url,
-		Subject: audit.Subject,
-		TLS:     tlsCfg,
-	})
-	if err != nil {
-		return nil, err
-	}
-	return journal.NewJSONSink[audit.Entry](jSink), nil
-}
-
-// openAuditSource is the read-side counterpart of openAuditSink: returns a
-// journal.Source attached to the same NATS URL + stream + subject so the
-// portal admin /portal/admin/audit page can tail the audit log live. When
-// VAULT_NATS_URL is empty, returns NoopSource — the page renders but stays
-// empty. mTLS is shared with the publisher via VAULT_NATS_CERT/KEY/CA.
-func openAuditSource(log *slog.Logger) (journal.Source, error) {
-	url := os.Getenv("VAULT_NATS_URL")
-	if url == "" {
-		log.Warn("VAULT_NATS_URL not set — audit source is no-op; admin audit page will be empty")
-		return journal.NoopSource{}, nil
-	}
-	tlsCfg, err := btls.FromFiles(
-		os.Getenv("VAULT_NATS_CERT"),
-		os.Getenv("VAULT_NATS_KEY"),
-		envFirst("VAULT_NATS_CA", "VAULT_WORKLOAD_CA"),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("nats audit source TLS: %w", err)
-	}
-	return jetstream.NewSource(jetstream.SourceConfig{
-		URL:        url,
-		StreamName: audit.StreamName,
-		Subject:    audit.Subject,
-		TLS:        tlsCfg,
-	})
-}
-
-// openStore selects SQLite or Postgres based on environment variables.
-// For Postgres, runs schema migrations with the admin DSN first, then opens
-// the runtime connection. VAULT_DB_CERT/KEY/CA enable client certificate auth.
-// migrateVaultDB runs schema migrations with the admin DSN before the runtime
-// connection is opened. Falls back to VAULT_DATABASE_URL with a warning when
-// VAULT_ADMIN_DATABASE_URL is not set.
-func migrateVaultDB(log *slog.Logger) error {
-	adminDSN := envFirst("VAULT_ADMIN_DATABASE_URL", "VAULT_DATABASE_URL")
+// migrateVaultDB runs Postgres schema migrations with the admin (DDL) DSN before
+// the runtime connection is opened. cli.App.AdminDB() resolves the admin material
+// from VAULT_ADMIN_DATABASE_URL → VAULT_DATABASE_URL and the
+// VAULT_ADMIN_DB_CERT/KEY/CA → VAULT_DB_CERT/KEY/CA → VAULT_WORKLOAD_CA fallback
+// chain; we warn when no dedicated admin DSN is configured (the runtime DSN then
+// needs DDL rights — not for production).
+func migrateVaultDB(rt cli.Runtime) error {
 	if os.Getenv("VAULT_ADMIN_DATABASE_URL") == "" {
-		log.Warn("VAULT_ADMIN_DATABASE_URL not set — using VAULT_DATABASE_URL for schema migration (not for production)")
+		rt.Log.Warn("VAULT_ADMIN_DATABASE_URL not set — using VAULT_DATABASE_URL for schema migration (not for production)")
 	}
-	tlsCfg, err := btls.FromFiles(
-		envFirst("VAULT_ADMIN_DB_CERT", "VAULT_DB_CERT"),
-		envFirst("VAULT_ADMIN_DB_KEY", "VAULT_DB_KEY"),
-		envFirst("VAULT_ADMIN_DB_CA", "VAULT_DB_CA", "VAULT_WORKLOAD_CA"),
-	)
+	tlsCfg, err := btls.FromFiles(rt.AdminDB.CertFile, rt.AdminDB.KeyFile, rt.AdminDB.CAFile)
 	if err != nil {
 		return fmt.Errorf("vault admin db TLS: %w", err)
 	}
 	if tlsCfg != nil {
-		log.Info("vault db: schema migration with mTLS client cert")
+		rt.Log.Info("vault db: schema migration with mTLS client cert")
 	} else {
-		log.Info("vault db: running schema migrations")
+		rt.Log.Info("vault db: running schema migrations")
 	}
-	return postgres.Migrate(adminDSN, tlsCfg)
+	return postgres.Migrate(rt.AdminDB.URL, tlsCfg)
 }
 
-func openStore(log *slog.Logger) (store.Store, error) {
-	if dsn := os.Getenv("VAULT_DATABASE_URL"); dsn != "" {
-		if err := migrateVaultDB(log); err != nil {
-			return nil, fmt.Errorf("vault db migration: %w", err)
-		}
-		tlsCfg, err := btls.FromFiles(
-			os.Getenv("VAULT_DB_CERT"),
-			os.Getenv("VAULT_DB_KEY"),
-			envFirst("VAULT_DB_CA", "VAULT_WORKLOAD_CA"),
-		)
-		if err != nil {
-			return nil, fmt.Errorf("postgres TLS config: %w", err)
-		}
-		if tlsCfg != nil {
-			log.Info("using Postgres store with client certificate auth")
-		} else {
-			log.Info("using Postgres store")
-		}
-		return postgres.OpenWithTLS(dsn, tlsCfg)
+// openStore selects the store backend from VAULT_DATABASE_URL: a "sqlite:<path>"
+// URL uses the embedded SQLite backend (dev/test; "sqlite::memory:" is ephemeral),
+// anything else is a Postgres DSN. Unset defaults to defaultDatabaseURL. For
+// Postgres, schema migrations run with the admin DSN first (see migrateVaultDB),
+// then the runtime connection opens with VAULT_DB_CERT/KEY/CA (CA falling back to
+// VAULT_WORKLOAD_CA) for client-certificate auth.
+func openStore(rt cli.Runtime) (store.Store, error) {
+	dsn := rt.DB.URL
+	if dsn == "" {
+		dsn = defaultDatabaseURL
 	}
-	dbPath := os.Getenv("VAULT_DB_PATH")
-	if dbPath == "" {
-		dbPath = "vault.db"
+	if path, ok := strings.CutPrefix(dsn, "sqlite:"); ok {
+		rt.Log.Info("using SQLite store", "path", path)
+		return sqlite.Open(path)
 	}
-	log.Info("using SQLite store", "path", dbPath)
-	return sqlite.Open(dbPath)
+	if err := migrateVaultDB(rt); err != nil {
+		return nil, fmt.Errorf("vault db migration: %w", err)
+	}
+	tlsCfg, err := btls.FromFiles(rt.DB.CertFile, rt.DB.KeyFile, rt.DB.CAFile)
+	if err != nil {
+		return nil, fmt.Errorf("postgres TLS config: %w", err)
+	}
+	if tlsCfg != nil {
+		rt.Log.Info("using Postgres store with client certificate auth")
+	} else {
+		rt.Log.Info("using Postgres store")
+	}
+	return postgres.OpenWithTLS(dsn, tlsCfg)
 }
 
 // parseTrustedProxies reads VAULT_TRUSTED_PROXIES (comma-separated CIDRs) and

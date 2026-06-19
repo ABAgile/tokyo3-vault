@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/abagile/tokyo3-base/cli"
 	"github.com/abagile/tokyo3-base/journal/jetstream"
 	btls "github.com/abagile/tokyo3-base/tls"
 	"github.com/abagile/tokyo3-vault/internal/audit"
@@ -14,32 +15,28 @@ import (
 // runAuditQuery prints the most recent N audit events from the vault_audit
 // JetStream stream as one JSON object per line on stdout, then exits.
 //
-// Connects to NATS via VAULT_NATS_URL + VAULT_NATS_CERT/KEY/CA — same
-// credentials the publisher uses, since vault_audit is the authoritative
-// store and there is no separate projection. Reuses journal/jetstream.Source
-// (the same primitive backing the portal admin live-tail page) so the CLI
-// and the UI share one read path.
+// Connects to NATS via the resolved material in n (VAULT_NATS_URL +
+// VAULT_NATS_CERT/KEY/CA, each cert/key/CA falling back to VAULT_WORKLOAD_*) —
+// the same source of truth the publisher uses, since vault_audit is the
+// authoritative store and there is no separate projection. Reuses
+// journal/jetstream.Source (the same primitive backing the portal admin
+// live-tail page) so the CLI and the UI share one read path.
 //
 // Filtering (--action, --actor, --project, --since) is intentionally not
 // surfaced yet; add it as flags here when the use case demands.
-func runAuditQuery(ctx context.Context, limit int) error {
+func runAuditQuery(ctx context.Context, n cli.NATS, limit int) error {
 	if limit < 1 || limit > 1000 {
 		return fmt.Errorf("--limit must be between 1 and 1000")
 	}
-	url := os.Getenv("VAULT_NATS_URL")
-	if url == "" {
+	if n.URL == "" {
 		return fmt.Errorf("VAULT_NATS_URL is not set — cannot query audit journal")
 	}
-	tlsCfg, err := btls.FromFiles(
-		os.Getenv("VAULT_NATS_CERT"),
-		os.Getenv("VAULT_NATS_KEY"),
-		os.Getenv("VAULT_NATS_CA"),
-	)
+	tlsCfg, err := btls.FromFiles(n.CertFile, n.KeyFile, n.CAFile)
 	if err != nil {
 		return fmt.Errorf("nats audit TLS: %w", err)
 	}
 	src, err := jetstream.NewSource(jetstream.SourceConfig{
-		URL:        url,
+		URL:        n.URL,
 		StreamName: audit.StreamName,
 		Subject:    audit.Subject,
 		TLS:        tlsCfg,

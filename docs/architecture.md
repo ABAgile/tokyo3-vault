@@ -69,7 +69,7 @@ Subcommands:
 **`vaultd serve` startup sequence:**
 
 1. Parse key provider from env (`VAULT_MASTER_KEY` or `VAULT_KMS_KEY_ID`)
-2. Open the main store: for Postgres, run schema migrations with `VAULT_ADMIN_DATABASE_URL` (owner/DDL role; skipped when unset) then open the runtime connection with `VAULT_DATABASE_URL` (DML-only `vault_app` role); for SQLite, open `VAULT_DB_PATH` directly (migrations run inline)
+2. Open the main store, selected by `VAULT_DATABASE_URL` (defaults to `sqlite:vault.db`): a `sqlite:<path>` URL opens the embedded SQLite backend directly (migrations run inline); any other value is a Postgres DSN, where schema migrations run with `VAULT_ADMIN_DATABASE_URL` (owner/DDL role; falls back to `VAULT_DATABASE_URL`) before the runtime connection opens with `VAULT_DATABASE_URL` (DML-only `vault_app` role)
 3. Create `ProjectKeyCache` with configurable TTL (default 5 minutes)
 4. Dispatch `migrate-keys` → `runMigrateKeys(); exit` if that subcommand was requested
 5. Open `audit.JetStreamSink` (publisher credential, PUBLISH-only on `vault.audit.events`); falls back to `NoopSink` when `VAULT_NATS_URL` is unset
@@ -177,8 +177,7 @@ Key relationships:
 | `VAULT_ADMIN_DB_CERT` | no | — | Client cert for admin DB mTLS |
 | `VAULT_ADMIN_DB_KEY` | no | — | Client key for admin DB mTLS |
 | `VAULT_ADMIN_DB_CA` | no | — | CA cert to verify admin Postgres server |
-| `VAULT_DATABASE_URL` | one of two | — | Postgres DSN (DML-only `vault_app` role) |
-| `VAULT_DB_PATH` | one of two | `vault.db` | SQLite file path |
+| `VAULT_DATABASE_URL` | no | `sqlite:vault.db` | Store selector: `sqlite:<path>` (embedded SQLite) or a Postgres DSN (DML-only `vault_app` role) |
 | `VAULT_ADDR` | no | `:8443` | Listen address |
 | `VAULT_API_CERT` | no | — | TLS certificate PEM (hot-reloaded) |
 | `VAULT_API_KEY` | no | — | TLS private key PEM |

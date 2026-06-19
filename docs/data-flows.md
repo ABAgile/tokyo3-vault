@@ -5,15 +5,16 @@
 ## Server startup (`vaultd serve`)
 
 ```
-main()
+runServe()                   — the cobra `serve` subcommand (default when bare `vaultd` is run)
+ ├─ cli.App.Setup(ctx)       — app logger (+ NATS op-log shipping), SIGINT/SIGTERM ctx,
+ │                            resolved NATS/DB material, optional VAULT_DEBUG_ADDR diag server
  ├─ openKeyProvider()        — parse VAULT_MASTER_KEY / VAULT_KMS_KEY_ID
- ├─ openStore()
- │   ├─ Postgres: migrateVaultDB(VAULT_ADMIN_DATABASE_URL, admin cred) → run migrations
- │   │            OpenWithTLS(VAULT_DATABASE_URL, vault_app cred)       → runtime pool
- │   └─ SQLite:  sqlite.Open(VAULT_DB_PATH) — migrations run inline
+ ├─ openStore(rt)            — backend selected by VAULT_DATABASE_URL (default sqlite:vault.db)
+ │   ├─ sqlite:<path>: sqlite.Open(path) — embedded backend; migrations run inline
+ │   └─ Postgres DSN: migrateVaultDB(rt.AdminDB) → run migrations (admin cred)
+ │                    OpenWithTLS(rt.DB.URL, vault_app cred) → runtime pool
  ├─ NewProjectKeyCache(kp)   — in-memory PEK cache, TTL from VAULT_PROJECT_KEY_CACHE_TTL
- ├─ [migrate-keys subcommand] → runMigrateKeys(); exit
- ├─ openAuditSink()          — NATS JetStream publisher (PUBLISH-only); NoopSink if VAULT_NATS_URL unset
+ ├─ cli.AuditSink(rt, ...)   — NATS JetStream publisher (PUBLISH-only); NoopSink if VAULT_NATS_URL unset
  ├─ NewRevoker(...)          — background goroutine: sweep expired leases immediately,
  │                            then every 60 s
  ├─ newPEKRotator(...)       — background goroutine: sweep stale PEKs immediately,
