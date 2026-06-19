@@ -28,12 +28,13 @@ BIN_DIR     := bin
 VAULTD_BIN  := $(BIN_DIR)/vaultd
 VAULT_BIN   := $(BIN_DIR)/vault
 
-# Version/Commit/BuildTime are all read from embedded build info — no ldflags needed.
+# Version is injected into main.Version; version.Resolve (tokyo3-base/version)
+# returns it verbatim, falling back to runtime/debug.BuildInfo when unset.
 GIT_TAG     := $(shell git describe --tags --exact-match 2>/dev/null || true)
 GIT_COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 VERSION     := $(if $(GIT_TAG),$(GIT_TAG),dev-$(GIT_COMMIT))
 
-LDFLAGS := -s -w
+LDFLAGS := -s -w -X main.Version=$(VERSION)
 
 GO      := go
 GOFLAGS :=

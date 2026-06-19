@@ -11,6 +11,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// Version is overridden at build time via -ldflags "-X main.Version=...";
+// version.Resolve falls back to runtime/debug.BuildInfo when it isn't.
+var Version = "dev"
+
 func main() {
 	root := &cobra.Command{
 		Use:   "vault",
@@ -39,7 +43,7 @@ Getting started:
 		commands.NewExportCmd(),
 		commands.NewTokensCmd(),
 		commands.NewKeygenCmd(),
-		commands.NewVersionCmd(),
+		commands.NewVersionCmd(Version),
 		commands.NewMembersCmd(),
 		commands.NewUsersCmd(),
 		commands.NewChangePasswordCmd(),

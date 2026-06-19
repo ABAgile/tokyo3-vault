@@ -941,7 +941,7 @@ vault keygen
 
 #### `vault version`
 
-Print version, commit hash, and build time.
+Print the build version (resolved from the `-ldflags` injection, falling back to embedded build info), with the commit time appended when the toolchain recorded one.
 
 ```sh
 vault version

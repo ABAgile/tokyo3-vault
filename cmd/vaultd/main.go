@@ -146,9 +146,9 @@ import (
 	bcrypto "github.com/abagile/tokyo3-base/crypto"
 	btls "github.com/abagile/tokyo3-base/tls"
 	"github.com/abagile/tokyo3-base/tls/reloader"
+	"github.com/abagile/tokyo3-base/version"
 	"github.com/abagile/tokyo3-vault/internal/api"
 	"github.com/abagile/tokyo3-vault/internal/audit"
-	"github.com/abagile/tokyo3-vault/internal/build"
 	"github.com/abagile/tokyo3-vault/internal/crypto/awskms"
 	"github.com/abagile/tokyo3-vault/internal/dynamic"
 	oidcpkg "github.com/abagile/tokyo3-vault/internal/oidc"
@@ -166,6 +166,12 @@ const (
 	// unset — the embedded SQLite backend at ./vault.db, for zero-config dev.
 	defaultDatabaseURL = "sqlite:vault.db"
 )
+
+// Version is overridden at build time via -ldflags "-X main.Version=...".
+// When that injection is absent, version.Resolve falls back to
+// runtime/debug.BuildInfo: tagged installs report their tag, source-tree
+// builds report "dev-<sha7>[-dirty] (<time>)".
+var Version = "dev"
 
 func main() {
 	if err := rootCmd().Execute(); err != nil {
@@ -426,13 +432,9 @@ func auditQueryCmd() *cobra.Command {
 func versionCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
-		Short: "Print version information and exit",
+		Short: "Print version and exit",
 		Run: func(_ *cobra.Command, _ []string) {
-			commitTime := build.CommitTime
-			if t, err := time.Parse(time.RFC3339, build.CommitTime); err == nil {
-				commitTime = t.Local().Format("2006-01-02 15:04:05 MST")
-			}
-			fmt.Printf("%s %s (commit %s, committed %s)\n", appName, build.Version, build.Commit, commitTime)
+			fmt.Printf("%s %s\n", appName, version.Resolve(Version))
 		},
 	}
 }
