@@ -138,12 +138,14 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/abagile/tokyo3-base/cli"
 	bcrypto "github.com/abagile/tokyo3-base/crypto"
+	"github.com/abagile/tokyo3-base/envutil"
+	"github.com/abagile/tokyo3-base/guard"
+	"github.com/abagile/tokyo3-base/run"
 	btls "github.com/abagile/tokyo3-base/tls"
 	"github.com/abagile/tokyo3-base/tls/reloader"
 	"github.com/abagile/tokyo3-base/version"
@@ -211,6 +213,57 @@ func runServe(ctx context.Context) error {
 	defer rt.Shutdown()
 	log := rt.Log
 
+	// ── configuration ───────────────────────────────────────────────────────────
+	// Parsed and validated up front so a bad value fails fast — before the store
+	// is opened or any background worker starts, which would otherwise log
+	// spurious errors against a half-initialized server as runServe unwinds.
+	cacheTTL := 5 * time.Minute
+	if d, err := envutil.Duration("VAULT_PROJECT_KEY_CACHE_TTL"); err != nil {
+		return err
+	} else if d > 0 {
+		cacheTTL = d
+	}
+
+	trustedProxies, err := envutil.CIDRList("VAULT_TRUSTED_PROXIES")
+	if err != nil {
+		return err
+	}
+
+	authRatePerMin := 5
+	if n, err := envutil.Int("VAULT_AUTH_RATE_PER_MIN"); err != nil {
+		return err
+	} else if n > 0 {
+		authRatePerMin = n
+	}
+
+	pruneMinCount := 10
+	if n, err := envutil.Int("VAULT_VERSION_MIN_KEEP"); err != nil {
+		return err
+	} else if n > 0 {
+		pruneMinCount = n
+	}
+
+	pruneMinDays := 180
+	if n, err := envutil.Int("VAULT_VERSION_MIN_DAYS"); err != nil {
+		return err
+	} else if n > 0 {
+		pruneMinDays = n
+	}
+	pruneMinAge := time.Duration(pruneMinDays) * 24 * time.Hour
+
+	// Unset keeps the 90-day default; an explicit value (including 0, which
+	// disables rotation) overrides it — so the presence check, not just the
+	// parsed duration, decides.
+	rotationPeriod := 90 * 24 * time.Hour
+	if d, err := envutil.Duration("VAULT_PEK_ROTATION_PERIOD"); err != nil {
+		return err
+	} else if os.Getenv("VAULT_PEK_ROTATION_PERIOD") != "" {
+		rotationPeriod = d
+	}
+
+	addr := envutil.Or("VAULT_ADDR", ":8443")
+
+	// ── resources ─────────────────────────────────────────────────────────────
 	kp, err := openKeyProvider(rt.Ctx, log)
 	if err != nil {
 		return fmt.Errorf("key provider: %w", err)
@@ -220,85 +273,29 @@ func runServe(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("open store: %w", err)
 	}
-	if closer, ok := st.(interface{ Close() error }); ok {
-		defer closer.Close()
-	}
+	defer guard.Close(st)
 
-	cacheT := 5 * time.Minute
-	if v := os.Getenv("VAULT_PROJECT_KEY_CACHE_TTL"); v != "" {
-		if d, err := time.ParseDuration(v); err == nil {
-			cacheT = d
-		} else {
-			log.Warn("invalid VAULT_PROJECT_KEY_CACHE_TTL, using default", "value", v, "default", cacheT)
-		}
-	}
-	projectKP := bcrypto.NewKeyProviderCache(kp, cacheT)
+	projectKP := bcrypto.NewKeyProviderCache(kp, cacheTTL)
 
 	auditSink, err := cli.AuditSink[audit.Entry](rt, audit.Subject)
 	if err != nil {
 		return fmt.Errorf("audit sink: %w", err)
 	}
-	defer auditSink.Close()
+	defer guard.Close(auditSink)
 	auditSource, err := cli.AuditSource(rt, audit.StreamName, audit.Subject)
 	if err != nil {
 		return fmt.Errorf("audit source: %w", err)
 	}
-	defer auditSource.Close()
+	defer guard.Close(auditSource)
 
-	revoker := dynamic.NewRevoker(st, kp, projectKP, log)
-	go revoker.Run(rt.Ctx)
-
-	// ── configurable parameters ────────────────────────────────────────────────
-
-	trustedProxies := parseTrustedProxies(log)
-
-	authRatePerMin := 5
-	if v := os.Getenv("VAULT_AUTH_RATE_PER_MIN"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			authRatePerMin = n
-		} else {
-			log.Warn("invalid VAULT_AUTH_RATE_PER_MIN, using default", "value", v, "default", authRatePerMin)
-		}
-	}
-
-	pruneMinCount := 10
-	if v := os.Getenv("VAULT_VERSION_MIN_KEEP"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			pruneMinCount = n
-		} else {
-			log.Warn("invalid VAULT_VERSION_MIN_KEEP, using default", "value", v, "default", pruneMinCount)
-		}
-	}
-
-	pruneMinDays := 180
-	if v := os.Getenv("VAULT_VERSION_MIN_DAYS"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			pruneMinDays = n
-		} else {
-			log.Warn("invalid VAULT_VERSION_MIN_DAYS, using default", "value", v, "default", pruneMinDays)
-		}
-	}
-	pruneMinAge := time.Duration(pruneMinDays) * 24 * time.Hour
-
-	go newVersionPruner(st, log, pruneMinCount, pruneMinAge).Run(rt.Ctx)
-	go newTokenPruner(st, log).Run(rt.Ctx)
-
-	rotationPeriod := 90 * 24 * time.Hour
-	if v := os.Getenv("VAULT_PEK_ROTATION_PERIOD"); v != "" {
-		if d, err := time.ParseDuration(v); err == nil {
-			rotationPeriod = d
-		} else {
-			log.Warn("invalid VAULT_PEK_ROTATION_PERIOD, using default", "value", v, "default", rotationPeriod)
-		}
-	}
+	// ── background workers ──────────────────────────────────────────────────────
+	guard.Go(log, "revoker", func() { dynamic.NewRevoker(st, kp, projectKP, log).Run(rt.Ctx) })
+	guard.Go(log, "version-pruner", func() { newVersionPruner(st, log, pruneMinCount, pruneMinAge).Run(rt.Ctx) })
+	guard.Go(log, "token-pruner", func() { newTokenPruner(st, log).Run(rt.Ctx) })
 	if rotationPeriod > 0 {
-		rotator := newPEKRotator(st, kp, projectKP, auditSink, rotationPeriod, log)
-		go rotator.Run(rt.Ctx)
-	}
-
-	addr := os.Getenv("VAULT_ADDR")
-	if addr == "" {
-		addr = ":8443"
+		guard.Go(log, "pek-rotator", func() {
+			newPEKRotator(st, kp, projectKP, auditSink, rotationPeriod, log).Run(rt.Ctx)
+		})
 	}
 
 	tlsCfg, err := buildServerTLS(log)
@@ -322,7 +319,7 @@ func runServe(ctx context.Context) error {
 		// ClientCAs pool. Without this check the warning fires even on
 		// correctly-configured deployments that set VAULT_WORKLOAD_CA and
 		// leave VAULT_SCIM_MTLS_CA unset (the intended simple setup).
-		scimCAFile := envFirst("VAULT_SCIM_MTLS_CA", "VAULT_WORKLOAD_CA")
+		scimCAFile := envutil.First("VAULT_SCIM_MTLS_CA", "VAULT_WORKLOAD_CA")
 		if scimCAFile == "" {
 			log.Warn("VAULT_SCIM_MTLS_SAN_DNS is set but neither VAULT_SCIM_MTLS_CA nor VAULT_WORKLOAD_CA is — inbound SCIM mTLS will not work; the TLS handshake has no CA to verify the IdP cert against")
 		} else {
@@ -358,25 +355,10 @@ func runServe(ctx context.Context) error {
 	}
 
 	log.Info("vaultd starting", "addr", addr, "tls", true)
-	serveErr := make(chan error, 1)
-	go func() {
-		if err := httpSrv.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
-			serveErr <- err
-		}
-	}()
-
-	select {
-	case <-rt.Ctx.Done():
-	case err := <-serveErr:
-		return fmt.Errorf("server error: %w", err)
+	if err := run.Group(rt.Ctx, run.HTTPServer(httpSrv, 10*time.Second, true)); err != nil {
+		return fmt.Errorf("serve: %w", err)
 	}
-
-	log.Info("vaultd shutting down")
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer shutdownCancel()
-	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
-		return fmt.Errorf("shutdown error: %w", err)
-	}
+	log.Info("vaultd stopped")
 	return nil
 }
 
@@ -405,9 +387,7 @@ func runMigrateKeysCmd(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("open store: %w", err)
 	}
-	if closer, ok := st.(interface{ Close() error }); ok {
-		defer closer.Close()
-	}
+	defer guard.Close(st)
 	return runMigrateKeys(rt.Ctx, st, kp, log)
 }
 
@@ -493,8 +473,8 @@ func runMigrateKeys(ctx context.Context, st store.Store, kp bcrypto.KeyProvider,
 func buildServerTLS(log *slog.Logger) (*tls.Config, error) {
 	certFile := os.Getenv("VAULT_API_CERT")
 	keyFile := os.Getenv("VAULT_API_KEY")
-	clientCAFile := envFirst("VAULT_API_CLIENT_CA", "VAULT_WORKLOAD_CA")
-	scimCAFile := envFirst("VAULT_SCIM_MTLS_CA", "VAULT_WORKLOAD_CA")
+	clientCAFile := envutil.First("VAULT_API_CLIENT_CA", "VAULT_WORKLOAD_CA")
+	scimCAFile := envutil.First("VAULT_SCIM_MTLS_CA", "VAULT_WORKLOAD_CA")
 
 	if (certFile == "") != (keyFile == "") {
 		return nil, fmt.Errorf("VAULT_API_CERT and VAULT_API_KEY must both be set or both unset")
@@ -679,44 +659,6 @@ func openStore(rt cli.Runtime) (store.Store, error) {
 		rt.Log.Info("using Postgres store")
 	}
 	return postgres.OpenWithTLS(dsn, tlsCfg)
-}
-
-// parseTrustedProxies reads VAULT_TRUSTED_PROXIES (comma-separated CIDRs) and
-// returns parsed IPNet values. Invalid entries are logged and skipped.
-// Returns nil when the variable is unset, which causes the server to use the
-// built-in loopback + RFC-1918 + ULA defaults.
-func parseTrustedProxies(log *slog.Logger) []*net.IPNet {
-	v := os.Getenv("VAULT_TRUSTED_PROXIES")
-	if v == "" {
-		return nil
-	}
-	var out []*net.IPNet
-	for s := range strings.SplitSeq(v, ",") {
-		s = strings.TrimSpace(s)
-		if s == "" {
-			continue
-		}
-		_, cidr, err := net.ParseCIDR(s)
-		if err != nil {
-			log.Warn("invalid VAULT_TRUSTED_PROXIES entry, skipping", "value", s, "err", err)
-			continue
-		}
-		out = append(out, cidr)
-	}
-	return out
-}
-
-// envFirst returns the value of the first non-empty env var among keys.
-// Used for chained fallbacks (e.g. VAULT_ADMIN_DB_CA → VAULT_DB_CA →
-// VAULT_WORKLOAD_CA) so simple deployments can set one workload-CA env var
-// and let every internal mTLS channel inherit it.
-func envFirst(keys ...string) string {
-	for _, k := range keys {
-		if v := os.Getenv(k); v != "" {
-			return v
-		}
-	}
-	return ""
 }
 
 // splitCSV trims and returns non-empty entries from a comma-separated string.
