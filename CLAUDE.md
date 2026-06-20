@@ -14,7 +14,7 @@ internal/auth/       token hashing, issuance, validation
 internal/crypto/     KEK/PEK/DEK key hierarchy, KMS/local providers
 internal/dynamic/    dynamic credential issuance + background revoker
 internal/model/      all shared types (one file)
-internal/oidc/       OIDC provider wrapper (go-oidc/v3 + oauth2)
+internal/oidc/       OIDC flow orchestration (state token, PKCE, code exchange); token verification delegates to base/oidc
 internal/store/      store.Store interface
 internal/store/postgres/   Postgres backend — split by domain (see below)
 internal/store/sqlite/     SQLite backend  — split by domain (see below)

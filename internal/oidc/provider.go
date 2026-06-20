@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	gooidc "github.com/coreos/go-oidc/v3/oidc"
+	boidc "github.com/abagile/tokyo3-base/oidc"
 	"golang.org/x/oauth2"
 )
 
@@ -31,9 +31,12 @@ type Claims struct {
 	SessionID string
 }
 
-// Provider manages the OIDC Authorization Code + PKCE flow.
+// Provider manages the OIDC Authorization Code + PKCE flow. Token verification
+// (ID tokens and back-channel logout_tokens) is delegated to base/oidc; this
+// type owns only the vault-specific orchestration — the stateless HMAC state
+// token, PKCE, and the code exchange.
 type Provider struct {
-	verifier *gooidc.IDTokenVerifier
+	verifier *boidc.HTTPVerifier
 	oauthCfg oauth2.Config
 	stateKey []byte // HMAC-SHA256 key derived from client secret
 }
@@ -49,7 +52,9 @@ type Config struct {
 // New creates a Provider by fetching the IdP's OIDC discovery document.
 // Returns an error if the issuer is unreachable or the document is invalid.
 func New(ctx context.Context, cfg Config) (*Provider, error) {
-	p, err := gooidc.NewProvider(ctx, cfg.Issuer)
+	// The verifier performs OIDC discovery; its Endpoint() gives us the
+	// authorization/token URLs for the code exchange — one discovery, shared.
+	ver, err := boidc.NewHTTPVerifier(ctx, cfg.Issuer, cfg.ClientID)
 	if err != nil {
 		return nil, fmt.Errorf("oidc discover %s: %w", cfg.Issuer, err)
 	}
@@ -57,12 +62,12 @@ func New(ctx context.Context, cfg Config) (*Provider, error) {
 		ClientID:     cfg.ClientID,
 		ClientSecret: cfg.ClientSecret,
 		RedirectURL:  cfg.RedirectURL,
-		Endpoint:     p.Endpoint(),
-		Scopes:       []string{gooidc.ScopeOpenID, "email", "profile"},
+		Endpoint:     ver.Endpoint(),
+		Scopes:       []string{"openid", "email", "profile"},
 	}
 	key := sha256.Sum256([]byte(cfg.ClientSecret))
 	return &Provider{
-		verifier: p.Verifier(&gooidc.Config{ClientID: cfg.ClientID}),
+		verifier: ver,
 		oauthCfg: oauthCfg,
 		stateKey: key[:],
 	}, nil
@@ -122,98 +127,31 @@ func (p *Provider) CompleteAuth(ctx context.Context, code, state string) (claims
 	if !ok {
 		return nil, "", fmt.Errorf("no id_token in token response")
 	}
-	idToken, err := p.verifier.Verify(ctx, rawIDToken)
+	verified, err := p.verifier.Verify(ctx, rawIDToken)
 	if err != nil {
 		return nil, "", fmt.Errorf("verify id_token: %w", err)
 	}
-	if idToken.Nonce != nonce {
+	if verified.Nonce != nonce {
 		return nil, "", fmt.Errorf("nonce mismatch")
 	}
-
-	var raw struct {
-		Email    string `json:"email"`
-		AuthTime int64  `json:"auth_time"`
-		SID      string `json:"sid"`
-	}
-	if err := idToken.Claims(&raw); err != nil {
-		return nil, "", fmt.Errorf("extract claims: %w", err)
-	}
-	if raw.Email == "" {
+	if verified.Email == "" {
 		return nil, "", fmt.Errorf("id_token missing email claim — ensure the IdP includes email in the token")
-	}
-	var authTime time.Time
-	if raw.AuthTime > 0 {
-		authTime = time.Unix(raw.AuthTime, 0).UTC()
 	}
 
 	return &Claims{
-		Issuer:    idToken.Issuer,
-		Subject:   idToken.Subject,
-		Email:     raw.Email,
-		AuthTime:  authTime,
-		SessionID: raw.SID,
+		Issuer:    verified.Issuer,
+		Subject:   verified.Subject,
+		Email:     verified.Email,
+		AuthTime:  verified.AuthTime,
+		SessionID: verified.SessionID,
 	}, cliCallback, nil
 }
 
-// LogoutClaims is the verified subset of an OIDC Back-Channel Logout 1.0
-// logout_token (§2.4). Subject and/or SessionID will be non-empty after a
-// successful Verify — the spec guarantees at least one of them is present.
-// JTI is exposed so callers can implement replay protection across their
-// own replica set / process boundaries.
-type LogoutClaims struct {
-	Issuer    string
-	Subject   string
-	SessionID string
-	JTI       string
-	IssuedAt  time.Time
-	ExpiresAt time.Time
-}
-
-// VerifyLogoutToken validates an OIDC Back-Channel Logout 1.0 logout_token
-// per §2.6 — signature + standard claims via the same JWKS-backed verifier
-// used for ID tokens, plus the back-channel-specific rules:
-//
-//   - `events` MUST contain the back-channel-logout event URI as a member
-//     whose value is the empty object.
-//   - `nonce` MUST NOT be present (defense against ID-token replay).
-//   - At least one of `sub` and `sid` MUST be present.
-//
-// JTI replay protection is the caller's responsibility (typically a small
-// time-bounded cache keyed on JTI).
-func (p *Provider) VerifyLogoutToken(ctx context.Context, raw string) (*LogoutClaims, error) {
-	tok, err := p.verifier.Verify(ctx, raw)
-	if err != nil {
-		return nil, fmt.Errorf("verify logout token: %w", err)
-	}
-	var body struct {
-		SID    string                    `json:"sid"`
-		Nonce  string                    `json:"nonce"`
-		JTI    string                    `json:"jti"`
-		IAT    int64                     `json:"iat"`
-		Exp    int64                     `json:"exp"`
-		Events map[string]map[string]any `json:"events"`
-	}
-	if err := tok.Claims(&body); err != nil {
-		return nil, fmt.Errorf("decode logout claims: %w", err)
-	}
-	if body.Nonce != "" {
-		return nil, fmt.Errorf("logout_token has nonce claim (forbidden by spec §2.6)")
-	}
-	if _, ok := body.Events["http://schemas.openid.net/event/backchannel-logout"]; !ok {
-		return nil, fmt.Errorf("logout_token missing backchannel-logout event")
-	}
-	if tok.Subject == "" && body.SID == "" {
-		return nil, fmt.Errorf("logout_token missing both sub and sid claims")
-	}
-	if body.JTI == "" {
-		return nil, fmt.Errorf("logout_token missing jti")
-	}
-	return &LogoutClaims{
-		Issuer:    tok.Issuer,
-		Subject:   tok.Subject,
-		SessionID: body.SID,
-		JTI:       body.JTI,
-		IssuedAt:  time.Unix(body.IAT, 0).UTC(),
-		ExpiresAt: time.Unix(body.Exp, 0).UTC(),
-	}, nil
+// VerifyLogoutToken validates an OIDC Back-Channel Logout 1.0 logout_token via
+// the shared base verifier (§2.6: signature + the backchannel-logout event,
+// no nonce, at least one of sub/sid, jti present). The returned
+// [boidc.LogoutClaims] exposes JTI so the caller can apply replay protection
+// (vault does so via its jtiCache).
+func (p *Provider) VerifyLogoutToken(ctx context.Context, raw string) (*boidc.LogoutClaims, error) {
+	return p.verifier.VerifyLogoutToken(ctx, raw)
 }

@@ -86,7 +86,7 @@ Certificate chain verification is handled by Go's TLS stack. Set `VAULT_API_CLIE
 
 ### Rate limiting
 
-Auth endpoints (`POST /auth/login`, `POST /auth/signup`, `PUT /auth/password`) are protected by a per-IP token-bucket rate limiter. The limiter is seeded at server startup and runs in-process; no external state is needed.
+Auth endpoints (`POST /auth/login`, `POST /auth/signup`, `PUT /auth/password`) are protected by a per-IP token-bucket rate limiter (`base/ratelimit`), applied per-route so only the auth endpoints are throttled. The limiter is seeded at server startup and runs in-process; no external state is needed.
 
 | Parameter | Env var | Default |
 |-----------|---------|---------|
@@ -97,11 +97,11 @@ Exceeding the limit returns `HTTP 429`. The limiter is keyed on the extracted cl
 
 ### Trusted proxies and X-Forwarded-For
 
-When a request arrives from a trusted CIDR, the server reads the first value of the `X-Forwarded-For` header as the client IP; otherwise it uses `RemoteAddr` directly.
+Client-IP extraction uses the shared `base/clientip` extractor. When the TCP peer is a trusted CIDR, the server reads the **rightmost `X-Forwarded-For` hop that is not itself trusted** — the real client as seen by infrastructure we control — rather than blindly trusting the first (leftmost) value, which a client can pre-seed to spoof its source. When the peer is not trusted, `X-Forwarded-For` is ignored and `RemoteAddr` is used directly.
 
 The built-in trusted ranges are: `127.0.0.0/8`, `::1/128`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `fc00::/7`. Additional CIDRs can be appended (not replaced) via `VAULT_TRUSTED_PROXIES` (comma-separated). When your reverse proxy sits outside these ranges, set `VAULT_TRUSTED_PROXIES` explicitly so that the client IP in audit logs reflects the real client rather than the proxy.
 
-The extracted IP is used for both audit records and rate limiting.
+The same extractor backs both audit records and rate-limit keying, so they always agree on the source.
 
 Any concurrent requests using invalidated tokens will receive `401` on their next authenticated call.
 
@@ -267,7 +267,7 @@ vaultd serve / mutating handler
 | `env_id` | Environment UUID for env-scoped actions (`secret.*`, `dynamic.*`, `env.*`); empty otherwise |
 | `resource` | Identifies the affected resource (secret key name, user email, SPIFFE ID, etc.) |
 | `metadata` | Free-form JSON string; secret values are masked to first 3 characters + `...`. Portal-originated mutations include `"via":"portal"` (see `portalMeta` in `internal/api/web_portal.go`) |
-| `ip` | Client IP: `X-Forwarded-For` (first value) when the TCP connection arrives from a trusted proxy CIDR (`VAULT_TRUSTED_PROXIES`), otherwise `RemoteAddr` |
+| `ip` | Client IP: the rightmost untrusted `X-Forwarded-For` hop when the TCP peer is a trusted proxy CIDR (`VAULT_TRUSTED_PROXIES` + built-in private ranges), otherwise `RemoteAddr` |
 | `occurred_at` | Server-side UTC timestamp; stored as `created_at` in the audit DB and returned as `created_at` by the API |
 
 Failed login attempts record the submitted email address in `resource` to support forensic analysis without exposing whether the account exists (the 401 response is identical regardless).

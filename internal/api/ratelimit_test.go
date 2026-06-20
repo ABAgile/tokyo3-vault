@@ -3,47 +3,17 @@ package api
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+
+	"github.com/abagile/tokyo3-base/ratelimit"
 )
 
-// TestNewRateLimiter verifies that newRateLimiter creates a limiter and that the
-// background sweep goroutine doesn't panic.
-func TestNewRateLimiter(t *testing.T) {
-	rl := newRateLimiter(60, 5)
-	if rl == nil {
-		t.Fatal("expected non-nil rateLimiter")
-	}
-	if len(rl.ips) != 0 {
-		t.Errorf("expected empty ips map, got %d entries", len(rl.ips))
-	}
-}
-
-// TestRateLimiter_Get verifies the get method creates and returns an IP limiter.
-func TestRateLimiter_Get(t *testing.T) {
-	rl := newRateLimiter(60, 5)
-	lim1 := rl.get("192.168.1.1")
-	if lim1 == nil {
-		t.Fatal("expected non-nil limiter for new IP")
-	}
-	lim2 := rl.get("192.168.1.1")
-	if lim2 != lim1 {
-		t.Error("same IP should return the same limiter instance")
-	}
-	lim3 := rl.get("10.0.0.1")
-	if lim3 == lim1 {
-		t.Error("different IPs should return different limiters")
-	}
-	if len(rl.ips) != 2 {
-		t.Errorf("expected 2 IP entries, got %d", len(rl.ips))
-	}
-}
-
 // TestRateLimit_Allow verifies that the rateLimit middleware allows requests
-// within burst capacity and blocks when exhausted.
+// within burst capacity.
 func TestRateLimit_Allow(t *testing.T) {
-	// High burst: first request should always be allowed.
 	srv := newTestServer(t, &mockStore{})
-	srv.authLimiter = newRateLimiter(600, 10) // 10 req/s, burst=10
+	srv.authLimiter = ratelimit.New(ratelimit.Config{RPS: 10, Burst: 10}) // 10 req/s, burst=10
 
 	called := false
 	handler := srv.rateLimit(func(w http.ResponseWriter, r *http.Request) {
@@ -64,11 +34,19 @@ func TestRateLimit_Allow(t *testing.T) {
 	}
 }
 
-// TestRateLimit_Exhausted verifies that requests are blocked after the burst is exceeded.
+// TestRateLimit_Exhausted verifies that requests are blocked after the burst is
+// exceeded, and that the throttled response is vault's JSON 429.
 func TestRateLimit_Exhausted(t *testing.T) {
 	srv := newTestServer(t, &mockStore{})
-	// Very low rate and burst=1 so the second request is rate-limited.
-	srv.authLimiter = newRateLimiter(1, 1)
+	// Very low rate and burst=1 so the second request is rate-limited. Configure
+	// the JSON OnThrottle exactly as New does, to lock the 429 body contract.
+	srv.authLimiter = ratelimit.New(ratelimit.Config{
+		RPS:   1.0 / 60.0,
+		Burst: 1,
+		OnThrottle: func(w http.ResponseWriter, _ *http.Request) {
+			writeError(w, http.StatusTooManyRequests, "too many requests — try again later")
+		},
+	})
 
 	handler := srv.rateLimit(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -84,12 +62,18 @@ func TestRateLimit_Exhausted(t *testing.T) {
 		t.Fatalf("first request status = %d, want 200", w1.Code)
 	}
 
-	// Second request immediately after should be rate-limited.
+	// Second request immediately after should be rate-limited with a JSON body.
 	r2 := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
 	r2.RemoteAddr = ip
 	w2 := httptest.NewRecorder()
 	handler(w2, r2)
 	if w2.Code != http.StatusTooManyRequests {
 		t.Errorf("second request status = %d, want 429", w2.Code)
+	}
+	if ct := w2.Header().Get("Content-Type"); !strings.Contains(ct, "application/json") {
+		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+	if w2.Header().Get("Retry-After") == "" {
+		t.Error("429 should carry a Retry-After header")
 	}
 }

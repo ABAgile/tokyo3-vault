@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/abagile/tokyo3-base/clientip"
 	bcrypto "github.com/abagile/tokyo3-base/crypto"
 	"github.com/abagile/tokyo3-vault/internal/audit"
 	"github.com/abagile/tokyo3-vault/internal/auth"
@@ -25,11 +26,12 @@ func newTestServer(t *testing.T, st *mockStore) *Server {
 	kp := bcrypto.NewLocalKeyProvider(kek)
 	projectKP := bcrypto.NewKeyProviderCache(kp, time.Minute)
 	return &Server{
-		store:     st,
-		kp:        kp,
-		projectKP: projectKP,
-		log:       slog.Default(),
-		audit:     audit.NoopSink,
+		store:             st,
+		kp:                kp,
+		projectKP:         projectKP,
+		log:               slog.Default(),
+		audit:             audit.NoopSink,
+		clientIPExtractor: clientip.New(privateRanges),
 	}
 }
 

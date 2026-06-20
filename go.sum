@@ -1,7 +1,7 @@
 github.com/BurntSushi/toml v1.6.0 h1:dRaEfpa2VI55EwlIW72hMRHdWouJeRF7TPYhI+AUQjk=
 github.com/BurntSushi/toml v1.6.0/go.mod h1:ukJfTF/6rtPPRCnwkur4qwRxa8vTRFBF0uk2lLoLwho=
-github.com/abagile/tokyo3-base v0.7.4 h1:Zm5LFQg4nFm9wN+Dn+oPydayKGx7RMNi5XmXpONgbPc=
-github.com/abagile/tokyo3-base v0.7.4/go.mod h1:UTngajg4n7y/TjLHlYMBjx+ThgBE3ccyhep2WToaDa8=
+github.com/abagile/tokyo3-base v0.7.5 h1:f/Jl5g39l+NGI5fB2mjUU9SjG2gMaVlo9S1iDuGW4IY=
+github.com/abagile/tokyo3-base v0.7.5/go.mod h1:bCtJWkLH3RJiLar2NOJOH3pwS6ms+RJORmDbSgBjvOA=
 github.com/aws/aws-sdk-go-v2 v1.41.6 h1:1AX0AthnBQzMx1vbmir3Y4WsnJgiydmnJjiLu+LvXOg=
 github.com/aws/aws-sdk-go-v2 v1.41.6/go.mod h1:dy0UzBIfwSeot4grGvY1AqFWN5zgziMmWGzysDnHFcQ=
 github.com/aws/aws-sdk-go-v2/config v1.32.16 h1:Q0iQ7quUgJP0F/SCRTieScnaMdXr9h/2+wze1u3cNeM=

@@ -30,19 +30,6 @@ func init() {
 	}
 }
 
-func isPrivateAddrIn(ip string, proxies []*net.IPNet) bool {
-	parsed := net.ParseIP(ip)
-	if parsed == nil {
-		return false
-	}
-	for _, cidr := range proxies {
-		if cidr.Contains(parsed) {
-			return true
-		}
-	}
-	return false
-}
-
 // isServerAdmin reports whether userID belongs to a user with the server-admin role.
 func (s *Server) isServerAdmin(ctx context.Context, userID string) bool {
 	user, err := s.store.GetUserByID(ctx, userID)
@@ -309,22 +296,11 @@ func roleAtLeast(have, need string) bool {
 	return roleRank[have] >= roleRank[need]
 }
 
-// clientIP extracts the best-guess client IP.
-// X-Forwarded-For is only trusted when r.RemoteAddr falls within the server's
-// configured trusted-proxy CIDR list (s.trustedProxies, defaulting to loopback
-// and RFC-1918/ULA ranges). A direct internet connection cannot spoof its IP
-// this way — we always use r.RemoteAddr for untrusted sources.
+// clientIP extracts the best-guess client IP via the shared base/clientip
+// extractor: the peer IP, or — when the peer is a trusted proxy — the rightmost
+// X-Forwarded-For hop that is not itself trusted (spoof-resistant). The trusted
+// set is the built-in private ranges plus any operator-configured extras (see
+// New). The rate limiter keys on the same extractor, so both agree on the source.
 func (s *Server) clientIP(r *http.Request) string {
-	addr := r.RemoteAddr
-	if i := strings.LastIndex(addr, ":"); i != -1 {
-		addr = addr[:i]
-	}
-	proxies := s.trustedProxies
-	if len(proxies) == 0 {
-		proxies = privateRanges
-	}
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" && isPrivateAddrIn(addr, proxies) {
-		return strings.TrimSpace(strings.SplitN(xff, ",", 2)[0])
-	}
-	return addr
+	return s.clientIPExtractor.FromRequest(r)
 }

@@ -153,7 +153,7 @@ OIDC/user methods are implemented in `postgres_users.go` / `sqlite_users.go`; SC
 
 ### OIDC Package (`internal/oidc/`)
 
-**`provider.go`** — wraps `github.com/coreos/go-oidc/v3`:
+**`provider.go`** — owns the flow orchestration (state token, PKCE, code exchange) and delegates ID-token + logout_token verification to `github.com/abagile/tokyo3-base/oidc` (whose `HTTPVerifier.Endpoint()` also supplies the OAuth2 endpoints for the exchange):
 
 ```go
 type Config struct {
@@ -172,7 +172,7 @@ func (p *Provider) BeginAuth(cliCallback string) (authURL, stateToken string, er
 func (p *Provider) CompleteAuth(ctx context.Context, code, state string) (claims *Claims, cliCallback string, err error)
 ```
 
-The `Claims` type carries `Issuer`, `Subject`, and `Email` from the ID token.
+The `Claims` type carries `Issuer`, `Subject`, `Email`, `AuthTime` (`auth_time`), and `SessionID` (`sid`) from the verified ID token — the last two drive session age-capping and OIDC back-channel logout targeting.
 
 **`state.go`** — stateless OIDC state:
 

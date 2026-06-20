@@ -9,8 +9,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/abagile/tokyo3-base/clientip"
 	bcrypto "github.com/abagile/tokyo3-base/crypto"
 	"github.com/abagile/tokyo3-base/journal"
+	"github.com/abagile/tokyo3-base/ratelimit"
 	"github.com/abagile/tokyo3-vault/internal/audit"
 	oidcpkg "github.com/abagile/tokyo3-vault/internal/oidc"
 	"github.com/abagile/tokyo3-vault/internal/store"
@@ -69,20 +71,20 @@ type Config struct {
 
 // Server holds shared dependencies for all HTTP handlers.
 type Server struct {
-	store          store.Store
-	kp             bcrypto.KeyProvider       // server KEK — used only to wrap/unwrap PEKs
-	projectKP      *bcrypto.KeyProviderCache // project-scoped key cache; wraps/unwraps per-secret DEKs
-	log            *slog.Logger
-	oidc           *oidcpkg.Provider // nil when OIDC is not configured
-	oidcEnforce    bool              // true = local login/signup disabled
-	audit          audit.Sink        // publishes events to NATS JetStream
-	authLimiter    *rateLimiter      // per-IP rate limiter for auth endpoints
-	trustedProxies []*net.IPNet      // nil = built-in defaults only; otherwise defaults + extras
-	pruneMinCount  int               // 0 = use defaultPruneMinCount
-	pruneMinAge    time.Duration     // 0 = use defaultPruneMinAge
-	cookieKey      []byte            // AES-256-GCM key for portal session cookie; nil disables /portal/*
-	portalTmpl     *tmplManager      // lazy-initialised portal template manager (nil when cookieKey is nil)
-	allowReg       bool              // gates /portal/register; ignored when oidcEnforce is true
+	store             store.Store
+	kp                bcrypto.KeyProvider       // server KEK — used only to wrap/unwrap PEKs
+	projectKP         *bcrypto.KeyProviderCache // project-scoped key cache; wraps/unwraps per-secret DEKs
+	log               *slog.Logger
+	oidc              *oidcpkg.Provider   // nil when OIDC is not configured
+	oidcEnforce       bool                // true = local login/signup disabled
+	audit             audit.Sink          // publishes events to NATS JetStream
+	authLimiter       *ratelimit.Limiter  // per-IP rate limiter for auth endpoints (base/ratelimit)
+	clientIPExtractor *clientip.Extractor // shared client-IP/XFF extraction; keys the limiter and audit alike
+	pruneMinCount     int                 // 0 = use defaultPruneMinCount
+	pruneMinAge       time.Duration       // 0 = use defaultPruneMinAge
+	cookieKey         []byte              // AES-256-GCM key for portal session cookie; nil disables /portal/*
+	portalTmpl        *tmplManager        // lazy-initialised portal template manager (nil when cookieKey is nil)
+	allowReg          bool                // gates /portal/register; ignored when oidcEnforce is true
 	// scimAllowedSANs lower-cased; empty = inbound SCIM accepts bearer only.
 	scimAllowedSANs []string
 	auditSrc        journal.Source // backs /portal/admin/audit live stream; NoopSource when not wired
@@ -106,14 +108,21 @@ func New(st store.Store, kp bcrypto.KeyProvider, projectKP *bcrypto.KeyProviderC
 	burst := max(1, ratePerMin)
 
 	// Trusted proxies are additive: always include the built-in private ranges
-	// and append any operator-supplied extras. Leaving trustedProxies nil (when
-	// no extras are configured) lets clientIP fall back to privateRanges lazily.
-	var proxies []*net.IPNet
-	if len(cfg.TrustedProxies) > 0 {
-		proxies = make([]*net.IPNet, 0, len(privateRanges)+len(cfg.TrustedProxies))
-		proxies = append(proxies, privateRanges...)
-		proxies = append(proxies, cfg.TrustedProxies...)
-	}
+	// and append any operator-supplied extras. This set is shared by both the
+	// client-IP extractor and the rate limiter so they key on the same source.
+	proxies := make([]*net.IPNet, 0, len(privateRanges)+len(cfg.TrustedProxies))
+	proxies = append(proxies, privateRanges...)
+	proxies = append(proxies, cfg.TrustedProxies...)
+
+	authLimiter := ratelimit.New(ratelimit.Config{
+		RPS:            float64(ratePerMin) / 60.0,
+		Burst:          burst,
+		TrustedProxies: proxies,
+		Log:            log,
+		OnThrottle: func(w http.ResponseWriter, _ *http.Request) {
+			writeError(w, http.StatusTooManyRequests, "too many requests — try again later")
+		},
+	})
 
 	allowedSANs := make([]string, 0, len(cfg.SCIMAllowedSANDNS))
 	for _, s := range cfg.SCIMAllowedSANDNS {
@@ -124,22 +133,22 @@ func New(st store.Store, kp bcrypto.KeyProvider, projectKP *bcrypto.KeyProviderC
 	}
 
 	srv := &Server{
-		store:           st,
-		kp:              kp,
-		projectKP:       projectKP,
-		log:             log,
-		oidc:            cfg.OIDC,
-		oidcEnforce:     cfg.OIDCEnforce,
-		audit:           sink,
-		authLimiter:     newRateLimiter(ratePerMin, burst),
-		trustedProxies:  proxies,
-		pruneMinCount:   cfg.PruneMinCount,
-		pruneMinAge:     cfg.PruneMinAge,
-		cookieKey:       cfg.CookieKey,
-		allowReg:        cfg.AllowRegistration && !cfg.OIDCEnforce,
-		scimAllowedSANs: allowedSANs,
-		auditSrc:        src,
-		bcLogoutJTI:     newJTICache(),
+		store:             st,
+		kp:                kp,
+		projectKP:         projectKP,
+		log:               log,
+		oidc:              cfg.OIDC,
+		oidcEnforce:       cfg.OIDCEnforce,
+		audit:             sink,
+		authLimiter:       authLimiter,
+		clientIPExtractor: clientip.New(proxies),
+		pruneMinCount:     cfg.PruneMinCount,
+		pruneMinAge:       cfg.PruneMinAge,
+		cookieKey:         cfg.CookieKey,
+		allowReg:          cfg.AllowRegistration && !cfg.OIDCEnforce,
+		scimAllowedSANs:   allowedSANs,
+		auditSrc:          src,
+		bcLogoutJTI:       newJTICache(),
 	}
 	if len(cfg.CookieKey) == 32 {
 		tm, err := newTmplManager("base_portal.html")
